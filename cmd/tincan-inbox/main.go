@@ -88,7 +88,12 @@ func run(command *CLI, selected string) error {
 		if len(messages) > 0 {
 			fmt.Printf("messages[%d]{id,key,created_at}:\n", len(messages))
 			for _, message := range messages {
-				fmt.Printf("  %s,%s,%s\n", message.ID, quote(message.Key), message.CreatedAt.Format("2006-01-02T15:04:05.999999999Z07:00"))
+				fmt.Printf(
+					"  %s,%s,%s\n",
+					message.ID,
+					quote(message.Key),
+					message.CreatedAt.Format("2006-01-02T15:04:05.999999999Z07:00"),
+				)
 			}
 		}
 	case "read <recipient> <id>":
@@ -104,7 +109,14 @@ func run(command *CLI, selected string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("id: %s\nrecipient: %s\nkey: %s\nbody: %s\ncreated_at: %s\n", message.ID, message.Recipient, quote(message.Key), quote(message.Body), message.CreatedAt.Format("2006-01-02T15:04:05.999999999Z07:00"))
+		fmt.Printf(
+			"id: %s\nrecipient: %s\nkey: %s\nbody: %s\ncreated_at: %s\n",
+			message.ID,
+			message.Recipient,
+			quote(message.Key),
+			quote(message.Body),
+			message.CreatedAt.Format("2006-01-02T15:04:05.999999999Z07:00"),
+		)
 	case "ack <recipient> <id>":
 		recipient, err := inbox.ParseRecipient(command.Ack.Recipient)
 		if err != nil {

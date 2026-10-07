@@ -39,7 +39,14 @@ func NotifyOnce(ctx context.Context, store Store, bell Doorbell, recipient inbox
 }
 
 // Run retries the doorbell until messages are acknowledged or the context ends.
-func Run(ctx context.Context, store Store, bell Doorbell, recipient inbox.Recipient, interval time.Duration, report func(error)) error {
+func Run(
+	ctx context.Context,
+	store Store,
+	bell Doorbell,
+	recipient inbox.Recipient,
+	interval time.Duration,
+	report func(error),
+) error {
 	if interval <= 0 {
 		return errors.New("interval must be positive")
 	}

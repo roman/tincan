@@ -42,8 +42,9 @@ func TestSendReadAndAcknowledge(t *testing.T) {
 	if len(listed) != 0 {
 		t.Fatalf("acknowledged message remains pending: %+v", listed)
 	}
-	if _, err := store.Read(mustRecipient(t, "worker-1"), sent.ID); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("read after acknowledgement: %v", err)
+	_, readErr := store.Read(mustRecipient(t, "worker-1"), sent.ID)
+	if !errors.Is(readErr, os.ErrNotExist) {
+		t.Fatalf("read after acknowledgement: %v", readErr)
 	}
 }
 
@@ -77,8 +78,9 @@ func TestSendWithKeyIsIdempotentAcrossAcknowledgement(t *testing.T) {
 	if len(pending) != 0 {
 		t.Fatalf("duplicate restored pending message: %+v", pending)
 	}
-	if _, err := store.Send(mustRecipient(t, "worker"), "operation-1", "different"); !errors.Is(err, ErrKeyConflict) {
-		t.Fatalf("key reuse with different body: %v", err)
+	_, sendErr := store.Send(mustRecipient(t, "worker"), "operation-1", "different")
+	if !errors.Is(sendErr, ErrKeyConflict) {
+		t.Fatalf("key reuse with different body: %v", sendErr)
 	}
 }
 

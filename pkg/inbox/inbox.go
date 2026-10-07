@@ -128,7 +128,12 @@ func syncDirectory(path messageDirectoryPath) error {
 	return directory.Sync()
 }
 
-func findExistingMessage(mailbox mailboxPath, recipient Recipient, id MessageID, key, body string) (Message, bool, error) {
+func findExistingMessage(
+	mailbox mailboxPath,
+	recipient Recipient,
+	id MessageID,
+	key, body string,
+) (Message, bool, error) {
 	for _, directory := range []messageDirectoryPath{mailbox.pendingPath(), mailbox.handledPath()} {
 		existing, err := readMessage(directory.messagePath(id), recipient, id)
 		if errors.Is(err, os.ErrNotExist) {
@@ -137,7 +142,8 @@ func findExistingMessage(mailbox mailboxPath, recipient Recipient, id MessageID,
 		if err != nil {
 			return Message{}, false, err
 		}
-		matchesRequest := existing.Recipient == recipient && existing.Key == key && existing.Body == body
+		matchesRequest := existing.Recipient == recipient && existing.Key == key &&
+			existing.Body == body
 		if !matchesRequest {
 			return Message{}, false, ErrKeyConflict
 		}

@@ -41,12 +41,23 @@ func TestNotifyOnceRingsOnlyForPendingMessages(t *testing.T) {
 		{name: "one message", messages: []inbox.Message{{}}, wantPrompts: 1},
 		{name: "several messages one ring", messages: []inbox.Message{{}, {}}, wantPrompts: 1},
 		{name: "store failure", listErr: errors.New("read failed"), wantErr: ErrList},
-		{name: "doorbell failure", messages: []inbox.Message{{}}, promptErr: errors.New("send failed"), wantPrompts: 1, wantErr: ErrPrompt},
+		{
+			name:        "doorbell failure",
+			messages:    []inbox.Message{{}},
+			promptErr:   errors.New("send failed"),
+			wantPrompts: 1,
+			wantErr:     ErrPrompt,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bell := &fakeDoorbell{err: tt.promptErr}
-			err := NotifyOnce(context.Background(), fakeStore{messages: tt.messages, err: tt.listErr}, bell, mustRecipient("worker"))
+			err := NotifyOnce(
+				context.Background(),
+				fakeStore{messages: tt.messages, err: tt.listErr},
+				bell,
+				mustRecipient("worker"),
+			)
 			if len(bell.prompts) != tt.wantPrompts {
 				t.Fatalf("prompts = %d, want %d", len(bell.prompts), tt.wantPrompts)
 			}
