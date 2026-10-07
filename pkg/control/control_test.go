@@ -48,7 +48,11 @@ func TestInterrupt(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			backend := &fakeBackend{agents: []herdr.Agent{{PaneID: "w1:p2", Status: tt.state, Kind: "codex"}}, errors: []error{nil}, wait: herdr.Agent{PaneID: "w1:p2", Status: herdr.Idle}}
+			backend := &fakeBackend{
+				agents: []herdr.Agent{{PaneID: "w1:p2", Status: tt.state, Kind: "codex"}},
+				errors: []error{nil},
+				wait:   herdr.Agent{PaneID: "w1:p2", Status: herdr.Idle},
+			}
 			_, err := (Controller{Backend: backend}).Interrupt(context.Background(), "worker")
 			if !errors.Is(err, tt.wantError) {
 				t.Fatalf("error = %v, want %v", err, tt.wantError)
@@ -64,7 +68,10 @@ func TestInterrupt(t *testing.T) {
 }
 
 func TestExitFailsClosed(t *testing.T) {
-	backend := &fakeBackend{agents: []herdr.Agent{{PaneID: "w1:p2", Status: herdr.Idle, Kind: "codex"}}, errors: []error{nil}}
+	backend := &fakeBackend{
+		agents: []herdr.Agent{{PaneID: "w1:p2", Status: herdr.Idle, Kind: "codex"}},
+		errors: []error{nil},
+	}
 	err := (Controller{Backend: backend}).Exit(context.Background(), "worker")
 	if !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("error = %v", err)
@@ -75,7 +82,10 @@ func TestExitFailsClosed(t *testing.T) {
 }
 
 func TestExitRefusesUnknown(t *testing.T) {
-	backend := &fakeBackend{agents: []herdr.Agent{{PaneID: "w1:p2", Status: herdr.Unknown}}, errors: []error{nil}}
+	backend := &fakeBackend{
+		agents: []herdr.Agent{{PaneID: "w1:p2", Status: herdr.Unknown}},
+		errors: []error{nil},
+	}
 	err := (Controller{Backend: backend}).Exit(context.Background(), "worker")
 	if !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("error = %v", err)
@@ -86,7 +96,10 @@ func TestExitRefusesUnknown(t *testing.T) {
 }
 
 func TestInterruptRefusesUnknownKind(t *testing.T) {
-	backend := &fakeBackend{agents: []herdr.Agent{{PaneID: "w1:p2", Status: herdr.Working, Kind: "mystery"}}, errors: []error{nil}}
+	backend := &fakeBackend{
+		agents: []herdr.Agent{{PaneID: "w1:p2", Status: herdr.Working, Kind: "mystery"}},
+		errors: []error{nil},
+	}
 	_, err := (Controller{Backend: backend}).Interrupt(context.Background(), "worker")
 	if !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("error = %v", err)

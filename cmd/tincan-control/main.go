@@ -70,9 +70,16 @@ func printAgent(agent herdr.Agent) {
 
 func main() {
 	var options cli
-	command := kong.Parse(&options, kong.Name("tincan-control"), kong.Description("Control Herdr-hosted agents."))
+	command := kong.Parse(
+		&options,
+		kong.Name("tincan-control"),
+		kong.Description("Control Herdr-hosted agents."),
+	)
 	backend := herdr.NewClient(options.Herdr)
-	env := &environment{controller: control.Controller{Backend: backend}, context: context.Background()}
+	env := &environment{
+		controller: control.Controller{Backend: backend},
+		context:    context.Background(),
+	}
 	if err := command.Run(env); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)

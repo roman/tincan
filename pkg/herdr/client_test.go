@@ -36,12 +36,51 @@ func TestGet(t *testing.T) {
 		want      Agent
 		wantError error
 	}{
-		{name: "working agent", response: runResponse{stdout: []byte(`{"result":{"agent":{"agent":"codex","agent_status":"working","pane_id":"w1:p2"}}}`)}, want: Agent{PaneID: "w1:p2", Status: Working, Kind: "codex"}},
-		{name: "unknown is present", response: runResponse{stdout: []byte(`{"result":{"agent":{"agent_status":"unknown","pane_id":"w1:p2"}}}`)}, want: Agent{PaneID: "w1:p2", Status: Unknown}},
-		{name: "missing agent on stdout", response: runResponse{stdout: []byte(`{"error":{"code":"agent_not_found","message":"not found"}}`), err: errors.New("exit status 1")}, wantError: ErrNotFound},
-		{name: "missing agent", response: runResponse{stderr: []byte(`{"error":{"code":"agent_not_found","message":"not found"}}`), err: errors.New("exit status 1")}, wantError: ErrNotFound},
-		{name: "server error", response: runResponse{stderr: []byte(`{"error":{"code":"server_unavailable","message":"offline"}}`), err: errors.New("exit status 1")}, wantError: ErrCommand},
-		{name: "malformed success", response: runResponse{stdout: []byte(`{"result":{}}`)}, wantError: ErrResponse},
+		{
+			name: "working agent",
+			response: runResponse{
+				stdout: []byte(
+					`{"result":{"agent":{"agent":"codex","agent_status":"working","pane_id":"w1:p2"}}}`,
+				),
+			},
+			want: Agent{PaneID: "w1:p2", Status: Working, Kind: "codex"},
+		},
+		{
+			name: "unknown is present",
+			response: runResponse{
+				stdout: []byte(`{"result":{"agent":{"agent_status":"unknown","pane_id":"w1:p2"}}}`),
+			},
+			want: Agent{PaneID: "w1:p2", Status: Unknown},
+		},
+		{
+			name: "missing agent on stdout",
+			response: runResponse{
+				stdout: []byte(`{"error":{"code":"agent_not_found","message":"not found"}}`),
+				err:    errors.New("exit status 1"),
+			},
+			wantError: ErrNotFound,
+		},
+		{
+			name: "missing agent",
+			response: runResponse{
+				stderr: []byte(`{"error":{"code":"agent_not_found","message":"not found"}}`),
+				err:    errors.New("exit status 1"),
+			},
+			wantError: ErrNotFound,
+		},
+		{
+			name: "server error",
+			response: runResponse{
+				stderr: []byte(`{"error":{"code":"server_unavailable","message":"offline"}}`),
+				err:    errors.New("exit status 1"),
+			},
+			wantError: ErrCommand,
+		},
+		{
+			name:      "malformed success",
+			response:  runResponse{stdout: []byte(`{"result":{}}`)},
+			wantError: ErrResponse,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -61,8 +100,15 @@ func TestGet(t *testing.T) {
 }
 
 func TestStartRequiresMissingAgent(t *testing.T) {
-	missing := runResponse{stderr: []byte(`{"error":{"code":"agent_not_found"}}`), err: errors.New("exit status 1")}
-	valid := runResponse{stdout: []byte(`{"result":{"agent":{"agent":"codex","agent_status":"idle","pane_id":"w1:p2"}}}`)}
+	missing := runResponse{
+		stderr: []byte(`{"error":{"code":"agent_not_found"}}`),
+		err:    errors.New("exit status 1"),
+	}
+	valid := runResponse{
+		stdout: []byte(
+			`{"result":{"agent":{"agent":"codex","agent_status":"idle","pane_id":"w1:p2"}}}`,
+		),
+	}
 	tests := []struct {
 		name      string
 		get       runResponse
@@ -71,19 +117,82 @@ func TestStartRequiresMissingAgent(t *testing.T) {
 		wantCalls int
 	}{
 		{name: "missing then start", get: missing, verify: valid, wantCalls: 3},
-		{name: "name lookup missing", get: missing, verify: missing, wantCalls: 3, wantError: ErrNotFound},
-		{name: "different pane after start", get: missing, verify: runResponse{stdout: []byte(`{"result":{"agent":{"agent":"codex","agent_status":"idle","pane_id":"w1:p3"}}}`)}, wantCalls: 3, wantError: ErrResponse},
-		{name: "different kind after start", get: missing, verify: runResponse{stdout: []byte(`{"result":{"agent":{"agent":"claude","agent_status":"idle","pane_id":"w1:p2"}}}`)}, wantCalls: 3, wantError: ErrResponse},
-		{name: "unknown after start", get: missing, verify: runResponse{stdout: []byte(`{"result":{"agent":{"agent":"codex","agent_status":"unknown","pane_id":"w1:p2"}}}`)}, wantCalls: 3, wantError: ErrResponse},
-		{name: "missing kind after start", get: missing, verify: runResponse{stdout: []byte(`{"result":{"agent":{"agent_status":"idle","pane_id":"w1:p2"}}}`)}, wantCalls: 3, wantError: ErrResponse},
-		{name: "unknown agent", get: runResponse{stdout: []byte(`{"result":{"agent":{"agent_status":"unknown","pane_id":"w1:p2"}}}`)}, wantCalls: 1, wantError: ErrAgentPresent},
-		{name: "transient error", get: runResponse{stderr: []byte(`{"error":{"code":"server_unavailable"}}`), err: errors.New("exit status 1")}, wantCalls: 1, wantError: ErrCommand},
+		{
+			name:      "name lookup missing",
+			get:       missing,
+			verify:    missing,
+			wantCalls: 3,
+			wantError: ErrNotFound,
+		},
+		{
+			name: "different pane after start",
+			get:  missing,
+			verify: runResponse{
+				stdout: []byte(
+					`{"result":{"agent":{"agent":"codex","agent_status":"idle","pane_id":"w1:p3"}}}`,
+				),
+			},
+			wantCalls: 3,
+			wantError: ErrResponse,
+		},
+		{
+			name: "different kind after start",
+			get:  missing,
+			verify: runResponse{
+				stdout: []byte(
+					`{"result":{"agent":{"agent":"claude","agent_status":"idle","pane_id":"w1:p2"}}}`,
+				),
+			},
+			wantCalls: 3,
+			wantError: ErrResponse,
+		},
+		{
+			name: "unknown after start",
+			get:  missing,
+			verify: runResponse{
+				stdout: []byte(
+					`{"result":{"agent":{"agent":"codex","agent_status":"unknown","pane_id":"w1:p2"}}}`,
+				),
+			},
+			wantCalls: 3,
+			wantError: ErrResponse,
+		},
+		{
+			name: "missing kind after start",
+			get:  missing,
+			verify: runResponse{
+				stdout: []byte(`{"result":{"agent":{"agent_status":"idle","pane_id":"w1:p2"}}}`),
+			},
+			wantCalls: 3,
+			wantError: ErrResponse,
+		},
+		{
+			name: "unknown agent",
+			get: runResponse{
+				stdout: []byte(`{"result":{"agent":{"agent_status":"unknown","pane_id":"w1:p2"}}}`),
+			},
+			wantCalls: 1,
+			wantError: ErrAgentPresent,
+		},
+		{
+			name: "transient error",
+			get: runResponse{
+				stderr: []byte(`{"error":{"code":"server_unavailable"}}`),
+				err:    errors.New("exit status 1"),
+			},
+			wantCalls: 1,
+			wantError: ErrCommand,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			responses := []runResponse{tt.get}
 			if tt.wantCalls == 3 {
-				responses = append(responses, runResponse{stdout: []byte(`{"result":{}}`)}, tt.verify)
+				responses = append(
+					responses,
+					runResponse{stdout: []byte(`{"result":{}}`)},
+					tt.verify,
+				)
 			}
 			runner := &fakeRunner{responses: responses}
 			err := (Client{Runner: runner}).Start(context.Background(), "w1:p2", "worker", "codex")
@@ -114,7 +223,10 @@ func TestWaitSettled(t *testing.T) {
 	if err != nil || agent.Status != Done {
 		t.Fatalf("WaitSettled = %+v, %v", agent, err)
 	}
-	if !reflect.DeepEqual(runner.calls[0], []string{"agent", "wait", "worker", "--timeout", "10000"}) {
+	if !reflect.DeepEqual(
+		runner.calls[0],
+		[]string{"agent", "wait", "worker", "--timeout", "10000"},
+	) {
 		t.Fatalf("wait call = %v", runner.calls[0])
 	}
 }
@@ -135,16 +247,38 @@ func TestStartWithArgs(t *testing.T) {
 	runner := &fakeRunner{responses: []runResponse{
 		{stderr: []byte(`{"error":{"code":"agent_not_found"}}`), err: errors.New("exit status 1")},
 		{stdout: []byte(`{"result":{}}`)},
-		{stdout: []byte(`{"result":{"agent":{"agent":"codex","agent_status":"idle","pane_id":"w1:p2"}}}`)},
+		{
+			stdout: []byte(
+				`{"result":{"agent":{"agent":"codex","agent_status":"idle","pane_id":"w1:p2"}}}`,
+			),
+		},
 	}}
-	err := (Client{Runner: runner}).StartWithArgs(context.Background(), "w1:p2", "worker", "codex", []string{"--model", "gpt-6", "resume"})
+	err := (Client{Runner: runner}).StartWithArgs(
+		context.Background(),
+		"w1:p2",
+		"worker",
+		"codex",
+		[]string{"--model", "gpt-6", "resume"},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if runner.calls[2][2] != "worker" {
 		t.Fatalf("verification lookup = %v, want worker name", runner.calls[2])
 	}
-	want := []string{"agent", "start", "worker", "--kind", "codex", "--pane", "w1:p2", "--", "--model", "gpt-6", "resume"}
+	want := []string{
+		"agent",
+		"start",
+		"worker",
+		"--kind",
+		"codex",
+		"--pane",
+		"w1:p2",
+		"--",
+		"--model",
+		"gpt-6",
+		"resume",
+	}
 	if !reflect.DeepEqual(runner.calls[1], want) {
 		t.Fatalf("start call = %v, want %v", runner.calls[1], want)
 	}

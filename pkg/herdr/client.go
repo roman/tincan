@@ -121,7 +121,11 @@ func (c Client) Get(ctx context.Context, target string) (Agent, error) {
 	if err := json.Unmarshal(stdout, &response); err != nil {
 		return Agent{}, fmt.Errorf("%w: %v", ErrResponse, err)
 	}
-	agent := Agent{PaneID: response.Result.Agent.PaneID, Status: response.Result.Agent.Status, Kind: response.Result.Agent.Kind}
+	agent := Agent{
+		PaneID: response.Result.Agent.PaneID,
+		Status: response.Result.Agent.Status,
+		Kind:   response.Result.Agent.Kind,
+	}
 	if agent.PaneID == "" || !validState(agent.Status) {
 		return Agent{}, fmt.Errorf("%w: missing pane or state", ErrResponse)
 	}
@@ -143,7 +147,11 @@ func (c Client) Start(ctx context.Context, paneID, name, kind string) error {
 	return c.StartWithArgs(ctx, paneID, name, kind, nil)
 }
 
-func (c Client) StartWithArgs(ctx context.Context, paneID, name, kind string, agentArgs []string) error {
+func (c Client) StartWithArgs(
+	ctx context.Context,
+	paneID, name, kind string,
+	agentArgs []string,
+) error {
 	if paneID == "" || name == "" || kind == "" {
 		return fmt.Errorf("%w: missing start argument", ErrResponse)
 	}
