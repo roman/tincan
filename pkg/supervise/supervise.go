@@ -47,7 +47,8 @@ func Run(ctx context.Context, worker Worker, config Config) error {
 	if config.Interval <= 0 {
 		return errors.New("interval must be positive")
 	}
-	if config.RestartTolerance < 0 || uint64(config.RestartTolerance) > 1<<32-1 || config.RestartWindow <= 0 {
+	if config.RestartTolerance < 0 || uint64(config.RestartTolerance) > 1<<32-1 ||
+		config.RestartWindow <= 0 {
 		return errors.New("invalid restart tolerance")
 	}
 	monitor := cap.NewWorker("worker-health", func(workerCtx context.Context) error {
@@ -67,7 +68,11 @@ func Run(ctx context.Context, worker Worker, config Config) error {
 			}
 		}
 	}, cap.WithRestart(cap.Transient))
-	spec := cap.NewSupervisorSpec("tincan", cap.WithNodes(monitor), cap.WithRestartTolerance(uint32(config.RestartTolerance), config.RestartWindow))
+	spec := cap.NewSupervisorSpec(
+		"tincan",
+		cap.WithNodes(monitor),
+		cap.WithRestartTolerance(uint32(config.RestartTolerance), config.RestartWindow),
+	)
 	supervisor, err := spec.Start(ctx)
 	if err != nil {
 		return err

@@ -56,8 +56,18 @@ func main() {
 	kong.Parse(&args)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	worker := herdrWorker{client: herdr.NewClient(args.Herdr), pane: args.Pane, name: args.Name, kind: args.Kind, args: args.AgentArgs}
-	config := supervise.Config{Interval: args.Interval, RestartTolerance: args.RestartTolerance, RestartWindow: args.RestartWindow}
+	worker := herdrWorker{
+		client: herdr.NewClient(args.Herdr),
+		pane:   args.Pane,
+		name:   args.Name,
+		kind:   args.Kind,
+		args:   args.AgentArgs,
+	}
+	config := supervise.Config{
+		Interval:         args.Interval,
+		RestartTolerance: args.RestartTolerance,
+		RestartWindow:    args.RestartWindow,
+	}
 	if err := supervise.Run(ctx, worker, config); err != nil {
 		fmt.Fprintln(os.Stderr, "tincan-supervise:", err)
 		os.Exit(1)

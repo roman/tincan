@@ -14,7 +14,11 @@ type fakeWorker struct {
 }
 
 func (worker *fakeWorker) Observe(context.Context) error { return worker.observeErr }
-func (worker *fakeWorker) Restart(context.Context) error { worker.restarts++; return worker.restartErr }
+
+func (worker *fakeWorker) Restart(context.Context) error {
+	worker.restarts++
+	return worker.restartErr
+}
 
 func TestCheckRestartsOnlyMissingWorker(t *testing.T) {
 	tests := []struct {
@@ -27,7 +31,13 @@ func TestCheckRestartsOnlyMissingWorker(t *testing.T) {
 		{name: "healthy"},
 		{name: "probe error", observeErr: errors.New("transport failed"), wantErr: ErrProbe},
 		{name: "missing", observeErr: ErrMissing, wantRestarts: 1, wantErr: ErrRestarted},
-		{name: "restart failure", observeErr: ErrMissing, restartErr: errors.New("cannot start"), wantRestarts: 1, wantErr: ErrRestart},
+		{
+			name:         "restart failure",
+			observeErr:   ErrMissing,
+			restartErr:   errors.New("cannot start"),
+			wantRestarts: 1,
+			wantErr:      ErrRestart,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -65,7 +75,11 @@ func TestRunStopsAfterRestartTolerance(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	worker := &fakeWorker{observeErr: errors.New("probe unavailable")}
-	err := Run(ctx, worker, Config{Interval: time.Millisecond, RestartTolerance: 0, RestartWindow: time.Second})
+	err := Run(
+		ctx,
+		worker,
+		Config{Interval: time.Millisecond, RestartTolerance: 0, RestartWindow: time.Second},
+	)
 	if err == nil {
 		t.Fatal("Run returned nil after monitor failure")
 	}
@@ -75,7 +89,11 @@ func TestRunCountsSuccessfulExternalRestarts(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	worker := &fakeWorker{observeErr: ErrMissing}
-	err := Run(ctx, worker, Config{Interval: time.Millisecond, RestartTolerance: 2, RestartWindow: time.Second})
+	err := Run(
+		ctx,
+		worker,
+		Config{Interval: time.Millisecond, RestartTolerance: 2, RestartWindow: time.Second},
+	)
 	if err == nil {
 		t.Fatal("Run returned nil after repeated external restarts")
 	}
