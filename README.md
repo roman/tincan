@@ -43,8 +43,9 @@ sequenceDiagram
 ```
 
 The inbox works independently of a terminal adapter. The notifier selects an
-adapter with `--adapter`. The notifier, control, and supervisor programs accept
-a `--herdr` path if the Herdr command is not on `PATH`. The supervisor
+adapter with `--adapter` and an agent name or pane ID with `--target`. The
+`--recipient` value selects the mailbox. The notifier, control, and supervisor
+programs accept a `--herdr` path if the Herdr command is not on `PATH`. The supervisor
 uses `go-capataz` to run the health monitor and tolerate repeated restarts and
 monitor failures. Herdr's `unknown` agent status does not trigger
 a restart. The supervisor starts an agent only
@@ -89,7 +90,7 @@ Use one state directory for the sender, recipient, and notifier:
 
 ```sh
 tincan-inbox --root ./tincan-state send worker-1 --key task-42 --body 'Please check the task.'
-tincan-notify --root ./tincan-state --recipient worker-1 --adapter herdr
+tincan-notify --root ./tincan-state --recipient worker-1 --target w1:p2 --adapter herdr
 ```
 
 The second command keeps running. The worker reads the pending message and

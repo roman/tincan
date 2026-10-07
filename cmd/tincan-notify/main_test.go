@@ -25,7 +25,9 @@ func TestAdapterSelection(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			args := append([]string{"--root", t.TempDir(), "--recipient", "worker"}, test.args...)
+			args := append(
+				[]string{"--root", t.TempDir(), "--recipient", "worker", "--target", "worker"},
+				test.args...)
 			if _, err := parser.Parse(args); err != nil {
 				t.Fatal(err)
 			}
@@ -44,6 +46,38 @@ func TestAdapterSelection(t *testing.T) {
 			}
 			if _, ok := bell.(herdr.Client); !ok {
 				t.Fatalf("selected doorbell type = %T", bell)
+			}
+		})
+	}
+}
+
+func TestTargetOption(t *testing.T) {
+	tests := []struct {
+		name      string
+		target    string
+		wantError bool
+	}{
+		{name: "missing", wantError: true},
+		{name: "agent name", target: "agent-one"},
+		{name: "pane ID", target: "w1:p2"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var options cli
+			parser, err := kong.New(&options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"--root", t.TempDir(), "--recipient", "worker"}
+			if test.target != "" {
+				args = append(args, "--target", test.target)
+			}
+			_, err = parser.Parse(args)
+			if (err != nil) != test.wantError {
+				t.Fatalf("Parse error = %v, wantError %v", err, test.wantError)
+			}
+			if err == nil && options.Target != test.target {
+				t.Fatalf("target = %q, want %q", options.Target, test.target)
 			}
 		})
 	}

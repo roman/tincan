@@ -16,7 +16,8 @@ import (
 
 type cli struct {
 	Root      string        `help:"Inbox state directory." required:"" type:"path"`
-	Recipient string        `help:"Inbox recipient and terminal agent target." required:""`
+	Recipient string        `help:"Inbox recipient." required:""`
+	Target    string        `help:"Agent name or pane ID to ring." required:""`
 	Interval  time.Duration `help:"Time between doorbell attempts." default:"5s"`
 	Adapter   string        `help:"Terminal adapter for notifications." default:"herdr"`
 	Herdr     string        `help:"Herdr executable path." default:"herdr"`
@@ -52,7 +53,18 @@ func main() {
 		report(err)
 		os.Exit(1)
 	}
-	err = notify.Run(ctx, store, doorbell, recipient, args.Interval, report)
+	target, err := notify.ParseTarget(args.Target)
+	if err != nil {
+		report(err)
+		os.Exit(1)
+	}
+	notifier := notify.Notifier{
+		Store:     store,
+		Doorbell:  doorbell,
+		Recipient: recipient,
+		Target:    target,
+	}
+	err = notifier.Run(ctx, args.Interval, report)
 	if err != nil {
 		report(err)
 		os.Exit(1)
