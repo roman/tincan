@@ -14,6 +14,7 @@
       ];
       forEachSystem = function:
         nixpkgs.lib.genAttrs systems (system: function (import nixpkgs { inherit system; }));
+      golinesFlags = "-m 100 --no-reformat-tags --base-formatter=gofmt";
       goModule = pkgs: {
         version = "0.1.0";
         src = self;
@@ -50,12 +51,35 @@
           inherit tincan tincan-inbox tincan-notify tincan-control tincan-supervise;
         });
 
+      formatter = forEachSystem (pkgs: pkgs.writeShellApplication {
+        name = "tincan-format";
+        runtimeInputs = [ pkgs.golines pkgs.go_1_25 ];
+        text = ''
+          if [ "$#" -eq 0 ]; then
+            set -- .
+          fi
+          exec golines ${golinesFlags} -w "$@"
+        '';
+      });
+
       checks = forEachSystem (pkgs:
         let
           packages = self.packages.${pkgs.stdenv.hostPlatform.system};
         in
         {
           inherit (packages) tincan-inbox tincan-notify tincan-control tincan-supervise;
+          go-format = pkgs.runCommand "tincan-go-format" {
+            nativeBuildInputs = [ pkgs.golines pkgs.go_1_25 ];
+            src = self;
+          } ''
+            cd "$src"
+            unformatted="$(golines ${golinesFlags} -l .)"
+            if [ -n "$unformatted" ]; then
+              printf 'Go files need formatting:\n%s\n' "$unformatted" >&2
+              exit 1
+            fi
+            touch "$out"
+          '';
           go-tests = pkgs.buildGoModule ((goModule pkgs) // {
             pname = "tincan-go-tests";
             subPackages = [ "cmd/..." ];
@@ -69,7 +93,7 @@
 
       devShells = forEachSystem (pkgs: {
         default = pkgs.mkShell {
-          packages = [ pkgs.go_1_25 pkgs.gopls herdr.packages.${pkgs.stdenv.hostPlatform.system}.default ];
+          packages = [ pkgs.go_1_25 pkgs.gopls pkgs.golines herdr.packages.${pkgs.stdenv.hostPlatform.system}.default ];
         };
       });
     };

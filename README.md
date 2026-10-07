@@ -60,14 +60,16 @@ that the agent input line is empty. Herdr 0.9.3 does not expose that state.
 ## Build and test
 
 The flake pins Nixpkgs, Herdr, and the Go module dependencies. The
-development shell provides Go 1.25 and Herdr. Each command has its own package
-output, so an inbox installation does not bring Herdr into its runtime path.
+development shell provides Go 1.25, golines, and Herdr.
+Each command has its own package output, so an inbox installation does not bring
+Herdr into its runtime path.
 The notifier, control, and supervisor packages include the pinned Herdr command.
 
 ```sh
 nix develop
+nix fmt
 go test ./...
-nix flake check
+nix flake check --no-write-lock-file
 nix build .#tincan-inbox
 nix build .#tincan-notify
 nix build .#tincan-control
@@ -77,8 +79,9 @@ nix build .#tincan-supervise
 Each build places exactly one command in `result/bin/`. To install one command
 in a user profile, use `nix profile install .#tincan-inbox` (or another output
 name). `nix build` and `nix profile install .#tincan` provide all four commands.
-The flake check builds every separate output and runs the complete Go test
-suite once in a dedicated check.
+`nix fmt` formats Go files with golines at 100 columns. The flake check
+verifies that formatting, builds every separate output, and runs the complete
+Go test suite once in a dedicated check.
 
 ## Example
 
