@@ -21,9 +21,10 @@ const (
 )
 
 type Agent struct {
-	PaneID string
-	Status AgentState
-	Kind   string
+	PaneID           string
+	Status           AgentState
+	Kind             string
+	InteractiveReady bool
 }
 
 var (
@@ -67,9 +68,10 @@ func (r commandRunner) Run(ctx context.Context, args ...string) ([]byte, []byte,
 type responseEnvelope struct {
 	Result struct {
 		Agent struct {
-			PaneID string     `json:"pane_id"`
-			Status AgentState `json:"agent_status"`
-			Kind   string     `json:"agent"`
+			PaneID           string     `json:"pane_id"`
+			Status           AgentState `json:"agent_status"`
+			Kind             string     `json:"agent"`
+			InteractiveReady bool       `json:"interactive_ready"`
 		} `json:"agent"`
 	} `json:"result"`
 	Error struct {
@@ -122,9 +124,10 @@ func (c Client) Get(ctx context.Context, target string) (Agent, error) {
 		return Agent{}, fmt.Errorf("%w: %v", ErrResponse, err)
 	}
 	agent := Agent{
-		PaneID: response.Result.Agent.PaneID,
-		Status: response.Result.Agent.Status,
-		Kind:   response.Result.Agent.Kind,
+		PaneID:           response.Result.Agent.PaneID,
+		Status:           response.Result.Agent.Status,
+		Kind:             response.Result.Agent.Kind,
+		InteractiveReady: response.Result.Agent.InteractiveReady,
 	}
 	if agent.PaneID == "" || !validState(agent.Status) {
 		return Agent{}, fmt.Errorf("%w: missing pane or state", ErrResponse)
@@ -173,7 +176,10 @@ func (c Client) StartWithArgs(
 	if err != nil {
 		return fmt.Errorf("start verification: %w", err)
 	}
-	if agent.PaneID != paneID || agent.Status == Unknown {
+	// Herdr can mark Codex interactive before it can classify the screen. Its startup
+	// accepts that unknown state only for Codex; other agents need a known state.
+	codexInteractive := kind == "codex" && agent.Status == Unknown && agent.InteractiveReady
+	if agent.PaneID != paneID || (agent.Status == Unknown && !codexInteractive) {
 		return fmt.Errorf("start verification: %w", ErrResponse)
 	}
 	if agent.Kind != kind {

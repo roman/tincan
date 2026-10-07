@@ -214,6 +214,39 @@ func TestStartRequiresMissingAgent(t *testing.T) {
 	}
 }
 
+func TestStartUnknownInteractiveReadiness(t *testing.T) {
+	tests := []struct {
+		name      string
+		kind      string
+		ready     bool
+		wantError error
+	}{
+		{name: "Codex ready", kind: "codex", ready: true},
+		{name: "Codex not ready", kind: "codex", ready: false, wantError: ErrResponse},
+		{name: "other agent ready", kind: "claude", ready: true, wantError: ErrResponse},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &fakeRunner{responses: []runResponse{
+				{
+					stderr: []byte(`{"error":{"code":"agent_not_found"}}`),
+					err:    errors.New("exit status 1"),
+				},
+				{stdout: []byte(`{"result":{}}`)},
+				{stdout: []byte(fmt.Sprintf(
+					`{"result":{"agent":{"agent":%q,"agent_status":"unknown","pane_id":"w1:p2","interactive_ready":%t}}}`,
+					tt.kind,
+					tt.ready,
+				))},
+			}}
+			err := (Client{Runner: runner}).Start(context.Background(), "w1:p2", "worker", tt.kind)
+			if !errors.Is(err, tt.wantError) {
+				t.Fatalf("Start error = %v, want %v", err, tt.wantError)
+			}
+		})
+	}
+}
+
 func TestWaitSettled(t *testing.T) {
 	runner := &fakeRunner{responses: []runResponse{
 		{stdout: []byte(`{"result":{}}`)},
