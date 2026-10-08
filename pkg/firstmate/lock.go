@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -16,7 +17,10 @@ var (
 	ErrInvalidLock  = errors.New("invalid task metadata lock")
 )
 
-const lockPollInterval = 100 * time.Millisecond
+const (
+	lockPollInterval = 100 * time.Millisecond
+	missingPIDGrace  = 2 * time.Second
+)
 
 // TaskLock holds one Firstmate-compatible task metadata lock.
 type TaskLock struct {
@@ -33,7 +37,7 @@ type taskLockReleaseState struct {
 }
 
 // AcquireTaskLock waits at most timeout to claim the task's metadata lock.
-// Existing locks, including abandoned ones, remain untouched and cause a timeout.
+// Dead owners are reclaimed under Firstmate's steal lock.
 func AcquireTaskLock(stateDir AbsolutePath, id TaskID, timeout time.Duration) (*TaskLock, error) {
 	if stateDir.value == "" {
 		return nil, ErrInvalidPath
@@ -58,9 +62,15 @@ func AcquireTaskLock(stateDir AbsolutePath, id TaskID, timeout time.Duration) (*
 	path := filepath.Join(state, ".meta-"+id.value+".lock")
 	deadline := time.Now().Add(timeout)
 	for {
-		lock, err := tryCreateTaskLock(path)
+		lock, err := tryCreateTaskLock(path, nil)
 		if err != nil {
 			return nil, err
+		}
+		if lock == nil {
+			lock, err = recoverTaskLock(path)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if lock != nil {
 			return lock, nil
@@ -98,7 +108,7 @@ func (lock *TaskLock) Release() error {
 	return lock.discardOwner()
 }
 
-func tryCreateTaskLock(path string) (*TaskLock, error) {
+func tryCreateTaskLock(path string, allowedSteal *TaskLock) (*TaskLock, error) {
 	lock, err := createOwner(path)
 	if err != nil {
 		return nil, err
@@ -110,7 +120,9 @@ func tryCreateTaskLock(path string) (*TaskLock, error) {
 		}
 		return nil, err
 	}
-	if !lock.owns() || pathExists(path+".steal") {
+	stealBlocked := pathExists(path+".steal") &&
+		(allowedSteal == nil || allowedSteal.path != path+".steal" || !allowedSteal.owns())
+	if !lock.owns() || stealBlocked {
 		if pointsTo(path, lock.ownerPath) {
 			_ = os.Remove(path)
 		}
@@ -214,4 +226,264 @@ func pointsTo(path, owner string) bool {
 func pathExists(path string) bool {
 	_, err := os.Lstat(path)
 	return !errors.Is(err, os.ErrNotExist)
+}
+
+// lockObservation pins an owner directory while its PID and lock link are checked.
+type lockObservation struct {
+	path         string
+	pathInfo     os.FileInfo
+	linkTarget   string
+	ownerPath    string
+	ownerInfo    os.FileInfo
+	ownerRoot    *os.Root
+	ownerMissing bool
+	pid          int
+}
+
+func observeLock(path string) (*lockObservation, error) {
+	pathInfo, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	observation := &lockObservation{path: path, pathInfo: pathInfo, ownerPath: path}
+	if pathInfo.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(path)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		owner, err := resolvedOwnerPath(path, target)
+		if err != nil {
+			if !pathSnapshotMatches(path, pathInfo, target) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		observation.linkTarget = target
+		observation.ownerPath = owner
+	} else if !pathInfo.IsDir() {
+		if !pathSnapshotMatches(path, pathInfo, "") {
+			return nil, nil
+		}
+		return nil, ErrInvalidLock
+	}
+	ownerInfo, err := os.Lstat(observation.ownerPath)
+	if !pathSnapshotMatches(path, pathInfo, observation.linkTarget) {
+		return nil, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		observation.ownerMissing = true
+		return observation, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !ownerInfo.IsDir() || ownerInfo.Mode()&os.ModeSymlink != 0 {
+		return nil, ErrInvalidLock
+	}
+	root, err := os.OpenRoot(observation.ownerPath)
+	if err != nil {
+		if !pathSnapshotMatches(path, pathInfo, observation.linkTarget) ||
+			errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	opened, err := root.Stat(".")
+	if err != nil || !os.SameFile(ownerInfo, opened) ||
+		!pathSnapshotMatches(path, pathInfo, observation.linkTarget) {
+		root.Close()
+		return nil, nil
+	}
+	observation.ownerInfo = ownerInfo
+	observation.ownerRoot = root
+	observation.pid = (&TaskLock{ownerRoot: root}).ownerPID()
+	return observation, nil
+}
+
+func pathSnapshotMatches(path string, expected os.FileInfo, target string) bool {
+	current, err := os.Lstat(path)
+	if err != nil || !os.SameFile(expected, current) {
+		return false
+	}
+	if expected.Mode()&os.ModeSymlink == 0 {
+		return true
+	}
+	actual, err := os.Readlink(path)
+	return err == nil && actual == target
+}
+
+func (observation *lockObservation) close() {
+	if observation != nil && observation.ownerRoot != nil {
+		_ = observation.ownerRoot.Close()
+	}
+}
+
+func (observation *lockObservation) unchanged() bool {
+	if !pathSnapshotMatches(observation.path, observation.pathInfo, observation.linkTarget) {
+		return false
+	}
+	if observation.ownerMissing {
+		_, err := os.Lstat(observation.ownerPath)
+		return errors.Is(err, os.ErrNotExist)
+	}
+	currentOwner, err := os.Lstat(observation.ownerPath)
+	if err != nil || !currentOwner.IsDir() ||
+		!os.SameFile(observation.ownerInfo, currentOwner) {
+		return false
+	}
+	return observation.pid == (&TaskLock{ownerRoot: observation.ownerRoot}).ownerPID()
+}
+
+func (observation *lockObservation) stale() bool {
+	if observation == nil || pidAlive(observation.pid) {
+		return false
+	}
+	return observation.pid != 0 || time.Since(observation.pathInfo.ModTime()) >= missingPIDGrace
+}
+
+func pidAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+func resolvedOwnerPath(path, target string) (string, error) {
+	owner := target
+	if !filepath.IsAbs(owner) {
+		owner = filepath.Join(filepath.Dir(path), owner)
+	}
+	owner = filepath.Clean(owner)
+	if filepath.Dir(owner) != filepath.Dir(path) ||
+		!strings.HasPrefix(filepath.Base(owner), filepath.Base(path)+".owner.") ||
+		filepath.Base(owner) == filepath.Base(path)+".owner." {
+		return "", ErrInvalidLock
+	}
+	return owner, nil
+}
+
+func recoverTaskLock(path string) (*TaskLock, error) {
+	initial, err := observeLock(path)
+	if err != nil {
+		return nil, err
+	}
+	if initial == nil {
+		return nil, nil
+	}
+	stale := initial.stale()
+	initial.close()
+	if !stale {
+		return nil, nil
+	}
+	steal, err := tryCreateTaskLock(path+".steal", nil)
+	if err != nil || steal == nil {
+		return nil, err
+	}
+	recovered, recoveryErr := reclaimUnderSteal(path, steal)
+	releaseErr := steal.Release()
+	if releaseErr != nil {
+		if recovered != nil {
+			_ = recovered.Release()
+		}
+		return nil, releaseErr
+	}
+	return recovered, recoveryErr
+}
+
+func reclaimUnderSteal(path string, steal *TaskLock) (*TaskLock, error) {
+	if !steal.owns() {
+		return nil, ErrNotLockOwner
+	}
+	observation, err := observeLock(path)
+	if err != nil || observation == nil {
+		return nil, err
+	}
+	defer observation.close()
+	if !observation.stale() || !observation.unchanged() {
+		return nil, nil
+	}
+	if observation.linkTarget != "" {
+		if observation.ownerMissing {
+			ambiguous, err := ownerTombstoneExists(observation.ownerPath)
+			if err != nil || ambiguous {
+				return nil, err
+			}
+		}
+		if !sameLink(observation) {
+			return nil, nil
+		}
+		if err := os.Remove(path); err != nil {
+			return nil, err
+		}
+		if !observation.ownerMissing {
+			cleanKnownOwnerFiles(observation.ownerRoot)
+			if sameDirectory(observation.ownerPath, observation.ownerInfo) {
+				if err := os.Remove(observation.ownerPath); err != nil &&
+					!errors.Is(err, syscall.ENOTEMPTY) {
+					return nil, err
+				}
+			}
+		}
+	} else {
+		if err := removeLegacyLock(observation); err != nil {
+			return nil, err
+		}
+	}
+	return tryCreateTaskLock(path, steal)
+}
+
+func ownerTombstoneExists(owner string) (bool, error) {
+	entries, err := os.ReadDir(filepath.Dir(owner))
+	if err != nil {
+		return false, err
+	}
+	prefix := filepath.Base(owner) + ".reaped."
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), prefix) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func removeLegacyLock(observation *lockObservation) error {
+	if !observation.unchanged() || !observation.stale() {
+		return ErrInvalidLock
+	}
+	cleanKnownOwnerFiles(observation.ownerRoot)
+	if !sameDirectory(observation.path, observation.ownerInfo) {
+		return ErrInvalidLock
+	}
+	if err := os.Remove(observation.path); err != nil && !errors.Is(err, syscall.ENOTEMPTY) {
+		return err
+	}
+	return nil
+}
+
+func sameLink(observation *lockObservation) bool {
+	info, err := os.Lstat(observation.path)
+	if err != nil || !os.SameFile(observation.pathInfo, info) {
+		return false
+	}
+	target, err := os.Readlink(observation.path)
+	return err == nil && target == observation.linkTarget
+}
+
+func sameDirectory(path string, expected os.FileInfo) bool {
+	current, err := os.Lstat(path)
+	return err == nil && current.IsDir() && current.Mode()&os.ModeSymlink == 0 &&
+		os.SameFile(expected, current)
+}
+
+func cleanKnownOwnerFiles(root *os.Root) {
+	for _, name := range []string{"pid", "fm-home", "pid-identity", "role", "watcher-path"} {
+		_ = root.Remove(name)
+	}
 }

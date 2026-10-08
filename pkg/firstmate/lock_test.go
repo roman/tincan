@@ -58,7 +58,7 @@ func TestTaskLockLiveContentionAndRelease(t *testing.T) {
 	}
 }
 
-func TestTaskLockAbandonedLockFailsClosed(t *testing.T) {
+func TestTaskLockReclaimsDeadOwner(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		legacy bool
@@ -83,14 +83,12 @@ func TestTaskLockAbandonedLockFailsClosed(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, err := AcquireTaskLock(state, id, 50*time.Millisecond); !errors.Is(
-				err,
-				ErrLockTimeout,
-			) {
-				t.Fatalf("abandoned lock acquire = %v", err)
+			lock, err := AcquireTaskLock(state, id, time.Second)
+			if err != nil {
+				t.Fatal(err)
 			}
-			if _, err := os.Lstat(path); err != nil {
-				t.Fatalf("abandoned lock was changed: %v", err)
+			if err := lock.Release(); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}
@@ -329,5 +327,291 @@ func TestTaskLockBashInteroperability(t *testing.T) {
 	}
 	if err := last.Release(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTaskLockMissingPIDGrace(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		pid  string
+	}{
+		{name: "missing"},
+		{name: "malformed", pid: "not-a-pid\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state, id, path := testLockInputs(t)
+			if err := os.Mkdir(path, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if test.pid != "" {
+				if err := os.WriteFile(filepath.Join(path, "pid"), []byte(test.pid), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := AcquireTaskLock(state, id, 50*time.Millisecond); !errors.Is(
+				err,
+				ErrLockTimeout,
+			) {
+				t.Fatalf("fresh invalid-PID lock = %v", err)
+			}
+			old := time.Now().Add(-3 * time.Second)
+			if err := os.Chtimes(path, old, old); err != nil {
+				t.Fatal(err)
+			}
+			lock, err := AcquireTaskLock(state, id, time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := lock.Release(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func createDeadLink(t *testing.T, path string) string {
+	t.Helper()
+	owner := path + ".owner.dead"
+	if err := os.Mkdir(owner, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(owner, "pid"), []byte("99999999\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(owner, path); err != nil {
+		t.Fatal(err)
+	}
+	return owner
+}
+
+func TestTaskLockStaleStealFailsClosed(t *testing.T) {
+	state, id, path := testLockInputs(t)
+	createDeadLink(t, path)
+	steal := path + ".steal"
+	createDeadLink(t, steal)
+	if _, err := AcquireTaskLock(state, id, 100*time.Millisecond); !errors.Is(err, ErrLockTimeout) {
+		t.Fatalf("stale steal lock = %v", err)
+	}
+	if _, err := os.Lstat(steal); err != nil {
+		t.Fatalf("stale steal lock changed: %v", err)
+	}
+}
+
+func TestTaskLockPrimaryTombstoneFailsClosed(t *testing.T) {
+	state, id, path := testLockInputs(t)
+	owner := createDeadLink(t, path)
+	if err := os.Rename(owner, owner+".reaped.99999999"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2100 * time.Millisecond)
+	if _, err := AcquireTaskLock(state, id, 100*time.Millisecond); !errors.Is(err, ErrLockTimeout) {
+		t.Fatalf("interrupted primary tombstone = %v", err)
+	}
+	if _, err := os.Lstat(path); err != nil {
+		t.Fatalf("primary tombstone link changed: %v", err)
+	}
+}
+
+func TestTaskLockStaleSymlinkOwnerPreservesVictim(t *testing.T) {
+	state, id, path := testLockInputs(t)
+	victim := filepath.Join(state.String(), "victim")
+	if err := os.Mkdir(victim, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(victim, "pid"), []byte("99999999\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	owner := path + ".owner.malicious"
+	if err := os.Symlink(victim, owner); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(owner, path); err != nil {
+		t.Fatal(err)
+	}
+	_, err := AcquireTaskLock(state, id, 50*time.Millisecond)
+	if err == nil {
+		t.Fatal("malicious owner was acquired")
+	}
+	if _, err := os.Stat(filepath.Join(victim, "pid")); err != nil {
+		t.Fatalf("victim PID changed: %v", err)
+	}
+}
+
+func TestTaskLockConcurrentStaleReclaim(t *testing.T) {
+	state, id, path := testLockInputs(t)
+	createDeadLink(t, path)
+	const workers = 8
+	var group sync.WaitGroup
+	results := make(chan error, workers)
+	for range workers {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			lock, err := AcquireTaskLock(state, id, 3*time.Second)
+			if err != nil {
+				results <- err
+				return
+			}
+			time.Sleep(time.Millisecond)
+			results <- lock.Release()
+		}()
+	}
+	group.Wait()
+	close(results)
+	for err := range results {
+		if err != nil {
+			t.Error(err)
+		}
+	}
+}
+
+func TestTaskLockPreservesSuccessorLink(t *testing.T) {
+	_, _, path := testLockInputs(t)
+	createDeadLink(t, path)
+	stale, err := observeLock(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stale.close()
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	successorOwner := path + ".owner.successor"
+	if err := os.Mkdir(successorOwner, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(successorOwner, "pid"), []byte(strconv.Itoa(os.Getpid())+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(successorOwner, path); err != nil {
+		t.Fatal(err)
+	}
+	if stale.unchanged() || sameLink(stale) {
+		t.Fatal("stale snapshot accepted successor link")
+	}
+	steal, err := tryCreateTaskLock(path+".steal", nil)
+	if err != nil || steal == nil {
+		t.Fatalf("claim steal lock = %+v, %v", steal, err)
+	}
+	recovered, err := reclaimUnderSteal(path, steal)
+	if err != nil || recovered != nil {
+		t.Fatalf("reclaim successor = %+v, %v", recovered, err)
+	}
+	if err := steal.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if target, err := os.Readlink(path); err != nil || target != successorOwner {
+		t.Fatalf("successor link = %q, %v", target, err)
+	}
+}
+
+func TestTaskLockBashStaleRecovery(t *testing.T) {
+	source := os.Getenv("FIRSTMATE_SOURCE")
+	if source == "" {
+		t.Skip("set FIRSTMATE_SOURCE to run Bash interoperability test")
+	}
+	state, id, path := testLockInputs(t)
+	library := filepath.Join(source, "bin", "fm-wake-lib.sh")
+	if _, err := os.Stat(library); err != nil {
+		t.Fatal(err)
+	}
+	bashCreate := exec.Command(
+		"bash",
+		"-c",
+		". \"$1\"; owner=$(mktemp -d \"$2.owner.XXXXXX\") || exit; printf '99999999\\n' > \"$owner/pid\"; ln -s \"$owner\" \"$2\"",
+		"bash",
+		library,
+		path,
+	)
+	bashCreate.Env = append(os.Environ(), "FM_STATE_OVERRIDE="+state.String())
+	if output, err := bashCreate.CombinedOutput(); err != nil {
+		t.Fatalf("Bash stale fixture: %v: %s", err, output)
+	}
+	goLock, err := AcquireTaskLock(state, id, time.Second)
+	if err != nil {
+		t.Fatalf("Go could not recover Bash lock: %v", err)
+	}
+	if err := goLock.Release(); err != nil {
+		t.Fatal(err)
+	}
+	createDeadLink(t, path)
+	bashRecover := exec.Command("bash", "-c",
+		". \"$1\"; fm_lock_try_acquire \"$2\" || exit 2; fm_lock_release \"$2\"",
+		"bash", library, path)
+	bashRecover.Env = append(os.Environ(), "FM_STATE_OVERRIDE="+state.String())
+	if output, err := bashRecover.CombinedOutput(); err != nil {
+		t.Fatalf("Bash could not recover Go-format lock: %v: %s", err, output)
+	}
+}
+
+func TestTaskLockAgedDanglingPrimary(t *testing.T) {
+	state, id, path := testLockInputs(t)
+	oldOwner := path + ".owner.missing"
+	if err := os.Symlink(oldOwner, path); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2100 * time.Millisecond)
+	lock, err := AcquireTaskLock(state, id, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lock.ownerPath == oldOwner {
+		t.Fatal("recovery kept the missing owner")
+	}
+	if target, err := os.Readlink(path); err != nil || target != lock.ownerPath {
+		t.Fatalf("recovery replaced the wrong link: %q, %v", target, err)
+	}
+	if err := lock.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTaskLockUnknownOwnerFilePreserved(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		legacy bool
+	}{
+		{name: "symlink owner"},
+		{name: "legacy directory", legacy: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state, id, path := testLockInputs(t)
+			owner := path
+			if !test.legacy {
+				owner = path + ".owner.stale"
+			}
+			if err := os.Mkdir(owner, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(owner, "pid"), []byte("99999999\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			sentinel := filepath.Join(owner, "leave-alone")
+			if err := os.WriteFile(sentinel, []byte("preserve"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if !test.legacy {
+				if err := os.Symlink(owner, path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			lock, err := AcquireTaskLock(state, id, 100*time.Millisecond)
+			if test.legacy {
+				if !errors.Is(err, ErrLockTimeout) {
+					t.Fatalf("legacy directory with unrelated file = %v", err)
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := lock.Release(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			data, err := os.ReadFile(sentinel)
+			if err != nil || string(data) != "preserve" {
+				t.Fatalf("unrelated owner file = %q, %v", data, err)
+			}
+		})
 	}
 }
