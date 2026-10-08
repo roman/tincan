@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -40,20 +41,41 @@ type Runner interface {
 }
 
 type Client struct {
-	Runner Runner
+	Runner        Runner
+	SessionRunner SessionRunner
+	Processes     ProcessInspector
 }
 
 func NewClient(executable string) Client {
 	if executable == "" {
 		executable = "herdr"
 	}
-	return Client{Runner: commandRunner{executable: executable}}
+	runner := commandRunner{executable: executable}
+	return Client{Runner: runner, SessionRunner: runner, Processes: psInspector{}}
 }
 
 type commandRunner struct{ executable string }
 
 func (r commandRunner) Run(ctx context.Context, args ...string) ([]byte, []byte, error) {
 	command := exec.CommandContext(ctx, r.executable, args...)
+	stdout, err := command.Output()
+	if err == nil {
+		return stdout, nil, nil
+	}
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) {
+		return stdout, exitError.Stderr, err
+	}
+	return stdout, nil, err
+}
+
+func (r commandRunner) RunSession(
+	ctx context.Context,
+	session string,
+	args ...string,
+) ([]byte, []byte, error) {
+	command := exec.CommandContext(ctx, r.executable, args...)
+	command.Env = append(os.Environ(), "HERDR_SESSION="+session)
 	stdout, err := command.Output()
 	if err == nil {
 		return stdout, nil, nil
