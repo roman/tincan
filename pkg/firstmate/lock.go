@@ -62,15 +62,9 @@ func AcquireTaskLock(stateDir AbsolutePath, id TaskID, timeout time.Duration) (*
 	path := filepath.Join(state, ".meta-"+id.value+".lock")
 	deadline := time.Now().Add(timeout)
 	for {
-		lock, err := tryCreateTaskLock(path, nil)
+		lock, err := tryAcquirePathLock(path)
 		if err != nil {
 			return nil, err
-		}
-		if lock == nil {
-			lock, err = recoverTaskLock(path)
-			if err != nil {
-				return nil, err
-			}
 		}
 		if lock != nil {
 			return lock, nil
@@ -84,6 +78,14 @@ func AcquireTaskLock(stateDir AbsolutePath, id TaskID, timeout time.Duration) (*
 		}
 		time.Sleep(remaining)
 	}
+}
+
+func tryAcquirePathLock(path string) (*TaskLock, error) {
+	lock, err := tryCreateTaskLock(path, nil)
+	if err != nil || lock != nil {
+		return lock, err
+	}
+	return recoverTaskLock(path)
 }
 
 // Release removes the link only while this process still owns its original directory.
