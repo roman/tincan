@@ -48,6 +48,58 @@ func TestSendReadAndAcknowledge(t *testing.T) {
 	}
 }
 
+func TestSendBodyContract(t *testing.T) {
+	tests := []struct {
+		name      string
+		key       string
+		body      string
+		seedBody  string
+		wantBlank bool
+	}{
+		{name: "empty", wantBlank: true},
+		{name: "whitespace only", key: "retry", body: " \t\n", wantBlank: true},
+		{name: "blank retry key", key: "retry", seedBody: "original", body: " \n", wantBlank: true},
+		{name: "preserve whitespace and newlines", body: "  first\nsecond \t"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := newTestStore(t)
+			recipient := mustRecipient(t, "worker")
+			if test.seedBody != "" {
+				if _, err := store.Send(recipient, test.key, test.seedBody); err != nil {
+					t.Fatal(err)
+				}
+			}
+			message, err := store.Send(recipient, test.key, test.body)
+			if test.wantBlank {
+				if !errors.Is(err, ErrBlankBody) {
+					t.Fatalf("Send error = %v, want blank body", err)
+				}
+				if test.seedBody == "" {
+					entries, readErr := os.ReadDir(store.Root())
+					if readErr != nil {
+						t.Fatal(readErr)
+					}
+					if len(entries) != 0 {
+						t.Fatalf("blank send created files: %v", entries)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			stored, err := store.Read(recipient, message.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stored.Body != test.body {
+				t.Fatalf("stored body = %q, want %q", stored.Body, test.body)
+			}
+		})
+	}
+}
+
 func TestSendWithKeyIsIdempotentAcrossAcknowledgement(t *testing.T) {
 	store := newTestStore(t)
 	first, err := store.Send(mustRecipient(t, "worker"), "operation-1", "body")

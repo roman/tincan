@@ -19,6 +19,7 @@ import (
 var (
 	ErrInvalidRecipient = errors.New("invalid recipient")
 	ErrInvalidID        = errors.New("invalid message ID")
+	ErrBlankBody        = errors.New("blank message body")
 	ErrKeyConflict      = errors.New("message key already has a different body")
 	ErrCorruptMessage   = errors.New("message record does not match its inbox path")
 )
@@ -180,13 +181,16 @@ func persistPendingMessage(pending messageDirectoryPath, message Message) error 
 	return syncDirectory(pending)
 }
 
-// Send stores a message until acknowledgement. A repeated key with the same body returns the original record.
+// Send stores a nonblank message until acknowledgement. A repeated key with the same body returns the original record.
 func (store *Store) Send(recipient Recipient, key, body string) (Message, error) {
 	if store == nil || store.root == (rootPath{}) {
 		return Message{}, ErrInvalidRoot
 	}
 	if !recipient.valid() {
 		return Message{}, ErrInvalidRecipient
+	}
+	if strings.TrimSpace(body) == "" {
+		return Message{}, ErrBlankBody
 	}
 	id, err := generateMessageID(key)
 	if err != nil {
