@@ -382,7 +382,7 @@ func recoverTaskLock(path string) (*TaskLock, error) {
 	if !stale {
 		return nil, nil
 	}
-	steal, err := tryCreateTaskLock(path+".steal", nil)
+	steal, err := acquireStealLock(path + ".steal")
 	if err != nil || steal == nil {
 		return nil, err
 	}
@@ -395,6 +395,21 @@ func recoverTaskLock(path string) (*TaskLock, error) {
 		return nil, releaseErr
 	}
 	return recovered, recoveryErr
+}
+
+func acquireStealLock(path string) (*TaskLock, error) {
+	lock, err := tryCreateTaskLock(path, nil)
+	if err != nil || lock != nil {
+		return lock, err
+	}
+	// A dead nested steal marker can block the claim of this steal lock.
+	if _, err := reapDeadLink(path + ".steal"); err != nil {
+		return nil, err
+	}
+	if _, err := reapDeadLink(path); err != nil {
+		return nil, err
+	}
+	return tryCreateTaskLock(path, nil)
 }
 
 func reclaimUnderSteal(path string, steal *TaskLock) (*TaskLock, error) {
@@ -411,18 +426,27 @@ func reclaimUnderSteal(path string, steal *TaskLock) (*TaskLock, error) {
 	}
 	if observation.linkTarget != "" {
 		if observation.ownerMissing {
-			ambiguous, err := ownerTombstoneExists(observation.ownerPath)
-			if err != nil || ambiguous {
+			interrupted, err := ownerTombstoneExists(observation.ownerPath)
+			if err != nil {
 				return nil, err
 			}
-		}
-		if !sameLink(observation) {
-			return nil, nil
-		}
-		if err := os.Remove(path); err != nil {
-			return nil, err
-		}
-		if !observation.ownerMissing {
+			if interrupted {
+				reaped, err := reapDeadLink(path)
+				if err != nil || !reaped {
+					return nil, err
+				}
+			} else if sameLink(observation) {
+				if err := os.Remove(path); err != nil {
+					return nil, err
+				}
+			}
+		} else {
+			if !sameLink(observation) {
+				return nil, nil
+			}
+			if err := os.Remove(path); err != nil {
+				return nil, err
+			}
 			cleanKnownOwnerFiles(observation.ownerRoot)
 			if sameDirectory(observation.ownerPath, observation.ownerInfo) {
 				if err := os.Remove(observation.ownerPath); err != nil &&
@@ -486,4 +510,154 @@ func cleanKnownOwnerFiles(root *os.Root) {
 	for _, name := range []string{"pid", "fm-home", "pid-identity", "role", "watcher-path"} {
 		_ = root.Remove(name)
 	}
+}
+
+type reaperGate struct {
+	mutex      sync.Mutex
+	references int
+}
+
+var reaperGates = struct {
+	sync.Mutex
+	byPath map[string]*reaperGate
+}{byPath: make(map[string]*reaperGate)}
+
+// tryLockReaper coordinates Go reapers for one lock path without extending
+// acquisition waits. The filesystem steal lock still coordinates processes.
+func tryLockReaper(path string) (func(), bool) {
+	reaperGates.Lock()
+	gate := reaperGates.byPath[path]
+	if gate == nil {
+		gate = &reaperGate{}
+		reaperGates.byPath[path] = gate
+	}
+	gate.references++
+	reaperGates.Unlock()
+
+	if !gate.mutex.TryLock() {
+		releaseReaperReference(path, gate)
+		return nil, false
+	}
+	return func() {
+		gate.mutex.Unlock()
+		releaseReaperReference(path, gate)
+	}, true
+}
+
+func releaseReaperReference(path string, gate *reaperGate) {
+	reaperGates.Lock()
+	gate.references--
+	if gate.references == 0 {
+		delete(reaperGates.byPath, path)
+	}
+	reaperGates.Unlock()
+}
+
+// reapDeadLink elects one reaper by atomically moving a dead owner directory.
+// A dead reaper's tombstone can be re-elected. Live reapers and ambiguous
+// tombstones remain untouched.
+func reapDeadLink(path string) (bool, error) {
+	releaseReaper, acquired := tryLockReaper(path)
+	if !acquired {
+		return false, nil
+	}
+	defer releaseReaper()
+
+	observation, err := observeLock(path)
+	if err != nil || observation == nil {
+		return false, err
+	}
+	defer observation.close()
+	if observation.linkTarget == "" {
+		return false, nil
+	}
+	owner := observation.ownerPath
+	token := owner
+	if observation.ownerMissing {
+		var found bool
+		token, found, err = deadOwnerTombstone(owner)
+		if err != nil || !found {
+			return false, err
+		}
+	} else if !observation.stale() || !observation.unchanged() {
+		return false, nil
+	}
+	tomb := owner + ".reaped." + strconv.Itoa(os.Getpid())
+	if token != tomb {
+		if pathExists(tomb) {
+			return false, nil
+		}
+		if err := os.Rename(token, tomb); err != nil {
+			if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrExist) {
+				return false, nil
+			}
+			return false, err
+		}
+	}
+	if sameLink(observation) {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return false, err
+		}
+	}
+	if err := discardPinnedOwner(tomb); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func deadOwnerTombstone(owner string) (string, bool, error) {
+	entries, err := os.ReadDir(filepath.Dir(owner))
+	if err != nil {
+		return "", false, err
+	}
+	prefix := filepath.Base(owner) + ".reaped."
+	var candidate string
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), prefix) {
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimPrefix(entry.Name(), prefix))
+		if err != nil || pid <= 0 || !entry.IsDir() {
+			return "", false, ErrInvalidLock
+		}
+		if pid != os.Getpid() && pidAlive(pid) {
+			return "", false, nil
+		}
+		if candidate != "" {
+			return "", false, ErrInvalidLock
+		}
+		candidate = filepath.Join(filepath.Dir(owner), entry.Name())
+	}
+	return candidate, candidate != "", nil
+}
+
+func discardPinnedOwner(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return ErrInvalidLock
+	}
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	defer root.Close()
+	opened, err := root.Stat(".")
+	if err != nil || !os.SameFile(info, opened) {
+		return ErrInvalidLock
+	}
+	cleanKnownOwnerFiles(root)
+	if !sameDirectory(path, info) {
+		return ErrInvalidLock
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, syscall.ENOTEMPTY) &&
+		!errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }

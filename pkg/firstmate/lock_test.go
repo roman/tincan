@@ -384,31 +384,33 @@ func createDeadLink(t *testing.T, path string) string {
 	return owner
 }
 
-func TestTaskLockStaleStealFailsClosed(t *testing.T) {
+func TestTaskLockReclaimsStaleSteal(t *testing.T) {
 	state, id, path := testLockInputs(t)
 	createDeadLink(t, path)
 	steal := path + ".steal"
 	createDeadLink(t, steal)
-	if _, err := AcquireTaskLock(state, id, 100*time.Millisecond); !errors.Is(err, ErrLockTimeout) {
-		t.Fatalf("stale steal lock = %v", err)
+	lock, err := AcquireTaskLock(state, id, time.Second)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Lstat(steal); err != nil {
-		t.Fatalf("stale steal lock changed: %v", err)
+	if err := lock.Release(); err != nil {
+		t.Fatal(err)
 	}
 }
 
-func TestTaskLockPrimaryTombstoneFailsClosed(t *testing.T) {
+func TestTaskLockReclaimsPrimaryTombstone(t *testing.T) {
 	state, id, path := testLockInputs(t)
 	owner := createDeadLink(t, path)
 	if err := os.Rename(owner, owner+".reaped.99999999"); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(2100 * time.Millisecond)
-	if _, err := AcquireTaskLock(state, id, 100*time.Millisecond); !errors.Is(err, ErrLockTimeout) {
-		t.Fatalf("interrupted primary tombstone = %v", err)
+	lock, err := AcquireTaskLock(state, id, time.Second)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Lstat(path); err != nil {
-		t.Fatalf("primary tombstone link changed: %v", err)
+	if err := lock.Release(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -613,5 +615,179 @@ func TestTaskLockUnknownOwnerFilePreserved(t *testing.T) {
 				t.Fatalf("unrelated owner file = %q, %v", data, err)
 			}
 		})
+	}
+}
+
+func TestTaskLockReclaimsNestedSteal(t *testing.T) {
+	state, id, path := testLockInputs(t)
+	createDeadLink(t, path)
+	createDeadLink(t, path+".steal")
+	createDeadLink(t, path+".steal.steal")
+	lock, err := AcquireTaskLock(state, id, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lock.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTaskLockReclaimsLiteralTombstonePrefix(t *testing.T) {
+	state, id, path := testLockInputs(t)
+	owner := path + ".owner.[literal]"
+	if err := os.Mkdir(owner, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(owner, "pid"), []byte("99999999\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(owner, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(owner, owner+".reaped.99999999"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2100 * time.Millisecond)
+	lock, err := AcquireTaskLock(state, id, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lock.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTaskLockAbandonedSamePIDTombstoneResumes(t *testing.T) {
+	state, id, path := testLockInputs(t)
+	owner := createDeadLink(t, path)
+	tomb := owner + ".reaped." + strconv.Itoa(os.Getpid())
+	if err := os.Rename(owner, tomb); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2100 * time.Millisecond)
+	lock, err := AcquireTaskLock(state, id, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lock.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTaskLockActiveSamePathReaperCannotBeStolen(t *testing.T) {
+	state, id, path := testLockInputs(t)
+	owner := createDeadLink(t, path)
+	tomb := owner + ".reaped." + strconv.Itoa(os.Getpid())
+	if err := os.Rename(owner, tomb); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2100 * time.Millisecond)
+
+	releaseReaper, acquired := tryLockReaper(path)
+	if !acquired {
+		t.Fatal("could not reserve reaper")
+	}
+	if _, err := AcquireTaskLock(state, id, 100*time.Millisecond); !errors.Is(err, ErrLockTimeout) {
+		t.Fatalf("active reaper acquisition = %v", err)
+	}
+	if _, err := os.Lstat(path); err != nil {
+		t.Fatalf("active reaper link changed: %v", err)
+	}
+	if _, err := os.Stat(tomb); err != nil {
+		t.Fatalf("active reaper tombstone changed: %v", err)
+	}
+	otherID, err := ParseTaskID("task-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherPath := filepath.Join(state.String(), ".meta-task-2.lock")
+	createDeadLink(t, otherPath)
+	otherLock, err := AcquireTaskLock(state, otherID, time.Second)
+	if err != nil {
+		t.Fatalf("unrelated recovery: %v", err)
+	}
+	if err := otherLock.Release(); err != nil {
+		t.Fatal(err)
+	}
+	releaseReaper()
+
+	lock, err := AcquireTaskLock(state, id, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lock.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTaskLockConcurrentInterruptedRecovery(t *testing.T) {
+	state, id, path := testLockInputs(t)
+	createDeadLink(t, path)
+	createDeadLink(t, path+".steal")
+	createDeadLink(t, path+".steal.steal")
+	const workers = 8
+	var group sync.WaitGroup
+	results := make(chan error, workers)
+	for range workers {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			lock, err := AcquireTaskLock(state, id, 3*time.Second)
+			if err != nil {
+				results <- err
+				return
+			}
+			time.Sleep(time.Millisecond)
+			results <- lock.Release()
+		}()
+	}
+	group.Wait()
+	close(results)
+	for err := range results {
+		if err != nil {
+			t.Error(err)
+		}
+	}
+}
+
+func TestTaskLockBashInterruptedRecovery(t *testing.T) {
+	source := os.Getenv("FIRSTMATE_SOURCE")
+	if source == "" {
+		t.Skip("set FIRSTMATE_SOURCE to run Bash interoperability test")
+	}
+	state, id, path := testLockInputs(t)
+	library := filepath.Join(source, "bin", "fm-wake-lib.sh")
+	if _, err := os.Stat(library); err != nil {
+		t.Fatal(err)
+	}
+	bashCreate := exec.Command(
+		"bash",
+		"-c",
+		". \"$1\"; owner=$(mktemp -d \"$2.owner.XXXXXX\") || exit; printf '99999999\\n' > \"$owner/pid\"; ln -s \"$owner\" \"$2\"; mv \"$owner\" \"$owner.reaped.99999999\"",
+		"bash",
+		library,
+		path,
+	)
+	bashCreate.Env = append(os.Environ(), "FM_STATE_OVERRIDE="+state.String())
+	if output, err := bashCreate.CombinedOutput(); err != nil {
+		t.Fatalf("Bash tombstone fixture: %v: %s", err, output)
+	}
+	time.Sleep(2100 * time.Millisecond)
+	goLock, err := AcquireTaskLock(state, id, time.Second)
+	if err != nil {
+		t.Fatalf("Go could not recover Bash tombstone: %v", err)
+	}
+	if err := goLock.Release(); err != nil {
+		t.Fatal(err)
+	}
+	createDeadLink(t, path)
+	createDeadLink(t, path+".steal")
+	createDeadLink(t, path+".steal.steal")
+	bashRecover := exec.Command("bash", "-c",
+		". \"$1\"; fm_lock_try_acquire \"$2\" || exit 2; fm_lock_release \"$2\"",
+		"bash", library, path)
+	bashRecover.Env = append(os.Environ(), "FM_STATE_OVERRIDE="+state.String())
+	if output, err := bashRecover.CombinedOutput(); err != nil {
+		t.Fatalf("Bash could not recover Go-format steal markers: %v: %s", err, output)
 	}
 }
