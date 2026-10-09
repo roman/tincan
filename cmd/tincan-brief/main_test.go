@@ -11,6 +11,11 @@ import (
 	"github.com/roman/tincan/pkg/inbox"
 )
 
+const briefTaskMetadata = "window=crew:pane-1\nendpoint_task_id=task-1\nworktree=/repo/worktree\n" +
+	"project=/repo\nharness=codex\nkind=ship\nspawn_gen=s123.456.7\nbackend=herdr\n" +
+	"herdr_session=crew\nherdr_workspace_id=workspace-1\nherdr_tab_id=tab:1\n" +
+	"herdr_pane_id=pane-1\n"
+
 func TestBriefShowsEmptyState(t *testing.T) {
 	t.Chdir(t.TempDir())
 	t.Setenv("TINCAN_HOME", "")
@@ -45,6 +50,51 @@ func TestBriefUsesWorkspaceStateByDefault(t *testing.T) {
 	if code := run(nil, &output); code != 0 ||
 		!strings.Contains(output.String(), "workspace wake") {
 		t.Fatalf("code %d, output %q", code, output.String())
+	}
+}
+
+func TestBriefShowsLocalTasks(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, "tasks")
+	if err := os.Mkdir(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "task-1.meta"), []byte(briefTaskMetadata), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if code := run([]string{"--root", root}, &output); code != 0 {
+		t.Fatalf("code=%d output=%s", code, output.String())
+	}
+	for _, text := range []string{"tasks: 1 found", "tasks[1]{task,kind,worktree}:",
+		"\"task-1\",\"ship\",\"/repo/worktree\""} {
+		if !strings.Contains(output.String(), text) {
+			t.Fatalf("missing %q in %s", text, output.String())
+		}
+	}
+}
+
+func TestBriefLimitsLocalTaskRows(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, "tasks")
+	if err := os.Mkdir(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range []string{"task-1", "task-2"} {
+		metadata := strings.ReplaceAll(briefTaskMetadata, "task-1", task)
+		if err := os.WriteFile(filepath.Join(state, task+".meta"), []byte(metadata), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var output bytes.Buffer
+	if code := run([]string{"--root", root, "--limit", "1"}, &output); code != 0 {
+		t.Fatalf("code=%d output=%s", code, output.String())
+	}
+	if !strings.Contains(output.String(), "tasks: 1 of 2 found") ||
+		!strings.Contains(output.String(), "tasks[1]{task,kind,worktree}:") ||
+		!strings.Contains(output.String(), "tincan-task --root") ||
+		strings.Contains(output.String(), `"task-2","ship"`) {
+		t.Fatalf("limited tasks: %s", output.String())
 	}
 }
 
@@ -92,10 +142,11 @@ func TestBriefShowsPendingWakesAndRegisteredCrew(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "bin: " + quoted(executable) + "\n" +
-		"description: \"Pending primary wakes and registered local workers\"\n" +
+		"description: \"Pending primary wakes, local tasks, and registered workers\"\n" +
 		"wakes: 1 pending for firstmate\n" +
 		"wakes[1]{id,body}:\n" +
 		"  \"" + message.ID.String() + "\",\"task: task-1\\nrecord: 001.msg\\n\"\n" +
+		"tasks: 0 found\n" +
 		"crew: 1 registered\n" +
 		"crew[1]{task,name,session,pane_id}:\n" +
 		"  \"task-1\",\"true\",\"null\",\"42\"\n" +

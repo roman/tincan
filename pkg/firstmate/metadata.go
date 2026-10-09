@@ -18,6 +18,8 @@ var (
 	ErrMetadataConflict = errors.New("task metadata already has different content")
 )
 
+const maximumTaskMetadataBytes = 1 << 20
+
 // TaskID is a validated Firstmate task selector.
 type TaskID struct{ value string }
 
@@ -147,9 +149,12 @@ func readTaskDataFromRoot(root *os.Root, expected TaskID) ([]byte, error) {
 	if !opened.Mode().IsRegular() || !os.SameFile(selected, opened) {
 		return nil, fmt.Errorf("%w: metadata file changed during open", ErrInvalidMetadata)
 	}
-	data, err := io.ReadAll(file)
+	data, err := io.ReadAll(io.LimitReader(file, maximumTaskMetadataBytes+1))
 	if err != nil {
 		return nil, err
+	}
+	if len(data) > maximumTaskMetadataBytes {
+		return nil, fmt.Errorf("%w: metadata exceeds 1 MiB", ErrInvalidMetadata)
 	}
 	return data, nil
 }

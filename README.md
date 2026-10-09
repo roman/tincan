@@ -12,8 +12,9 @@ The programs share reusable packages under `pkg/`.
 | Program | Responsibility |
 | --- | --- |
 | `tincan-inbox` | Store, list, read, and acknowledge messages for a recipient. |
-| `tincan-brief` | Show pending primary wakes and registered local workers at session start. |
+| `tincan-brief` | Show pending primary wakes, local tasks, and registered workers at session start. |
 | `tincan-crew` | Record and inspect local worker launch identities. |
+| `tincan-task` | Adopt a live local worker, cancel an incomplete adoption, or list task records. |
 | `tincan-notify` | Ring an agent while its inbox has pending messages. |
 | `tincan-control` | Inspect, start, or interrupt an agent. |
 | `tincan-supervise` | Check an agent and restart it after confirmed absence. |
@@ -80,6 +81,7 @@ nix flake check --no-write-lock-file
 nix build .#tincan-inbox
 nix build .#tincan-brief
 nix build .#tincan-crew
+nix build .#tincan-task
 nix build .#tincan-notify
 nix build .#tincan-control
 nix build .#tincan-supervise
@@ -91,7 +93,7 @@ nix build .#tincan-firstmate-show
 
 Each build places exactly one command in `result/bin/`. To install one command
 in a user profile, use `nix profile install .#tincan-inbox` (or another output
-name). `nix build` and `nix profile install .#tincan` provide all ten commands.
+name). `nix build` and `nix profile install .#tincan` provide all eleven commands.
 `nix fmt` formats Go files with golines at 100 columns. The flake check
 verifies that formatting, builds every separate output, checks the Firstmate
 executables, and runs the complete Go test suite once in a dedicated check.
@@ -105,7 +107,7 @@ tincan-inbox --root ./tincan-state send worker-1 --key task-42 --body 'Please ch
 tincan-notify --root ./tincan-state --recipient worker-1 --target w1:p2 --session work --adapter herdr
 ```
 
-At session start, show pending primary wakes and registered workers. With no
+At session start, show pending primary wakes, local tasks, and registered workers. With no
 flags, the brief reads `.tincan` in the current directory. `--root` or
 `TINCAN_HOME` selects another absolute state root. The brief limits each list
 to ten rows by default and reports the full count. Use `--limit` for up to 100
@@ -113,6 +115,7 @@ rows. It reads state without creating it.
 
 ```sh
 tincan-brief --root /absolute/tincan-state
+tincan-task --root /absolute/tincan-state list
 ```
 
 The second command keeps running. The worker reads the pending message and

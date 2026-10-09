@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/alecthomas/kong"
 	"github.com/roman/tincan/pkg/crew"
+	"github.com/roman/tincan/pkg/firstmate"
 	"github.com/roman/tincan/pkg/herdr"
 )
 
@@ -15,7 +17,10 @@ type cli struct {
 	Root   string        `help:"Absolute Tincan state root." required:""`
 	Adopt  adoptCommand  `cmd:"" help:"Record a live local Herdr worker as a task."`
 	Cancel cancelCommand `cmd:"" help:"Release a pending adoption without task metadata."`
+	List   listCommand   `cmd:"" help:"List local task metadata."`
 }
+
+type listCommand struct{}
 
 type cancelCommand struct {
 	TaskID string `arg:"" help:"Pending local task ID."`
@@ -33,7 +38,7 @@ type adoptCommand struct {
 }
 
 func help() string {
-	return "usage: tincan-task --root ROOT adopt TASK_ID --session SESSION --pane PANE --name NAME --project PROJECT --worktree WORKTREE --agent-arg ARG; or cancel TASK_ID"
+	return "usage: tincan-task --root ROOT adopt TASK_ID --session SESSION --pane PANE --name NAME --project PROJECT --worktree WORKTREE --agent-arg ARG; or cancel TASK_ID; or list"
 }
 
 func fail(output io.Writer, code int, err error, next string) int {
@@ -81,6 +86,22 @@ func run(ctx context.Context, arguments []string, output io.Writer, client herdr
 			)
 		}
 		fmt.Fprintf(output, "task: %s\nstate: cancelled\n", command.Cancel.TaskID)
+	case "list":
+		state, err := firstmate.ParseAbsolutePath(filepath.Join(command.Root, "tasks"))
+		if err != nil {
+			return fail(output, 2, err, "use an absolute, clean --root path")
+		}
+		tasks, err := firstmate.ListTasks(state)
+		if err != nil {
+			return fail(output, 1, err, "inspect the Tincan task state")
+		}
+		fmt.Fprintf(output, "tasks: %d found\n", len(tasks))
+		if len(tasks) > 0 {
+			fmt.Fprintf(output, "tasks[%d]{task,kind,worktree}:\n", len(tasks))
+			for _, task := range tasks {
+				fmt.Fprintf(output, "  %q,%q,%q\n", task.TaskID(), task.Kind(), task.Worktree())
+			}
+		}
 	default:
 		return fail(output, 2, fmt.Errorf("unknown command %q", selected.Command()), help())
 	}

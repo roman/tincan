@@ -17,6 +17,9 @@ func CreateTaskMetadataLocked(root *os.Root, id TaskID, data []byte) (published 
 	if root == nil {
 		return false, ErrInvalidPath
 	}
+	if len(data) > maximumTaskMetadataBytes {
+		return false, fmt.Errorf("%w: metadata exceeds 1 MiB", ErrInvalidMetadata)
+	}
 	if _, err := Parse(data, id); err != nil {
 		return false, err
 	}
@@ -95,6 +98,9 @@ func publishTaskMetadata(root *os.Root, name string, data []byte) (bool, error) 
 }
 
 func stageTaskMetadata(root *os.Root, name string, data []byte) (string, error) {
+	if len(data) > maximumTaskMetadataBytes {
+		return "", fmt.Errorf("%w: metadata exceeds 1 MiB", ErrInvalidMetadata)
+	}
 	random := make([]byte, 16)
 	if _, err := rand.Read(random); err != nil {
 		return "", err

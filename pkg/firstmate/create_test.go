@@ -50,6 +50,8 @@ func TestCreateTaskMetadataLockedRefusesConflictsAndUnsafeTargets(t *testing.T) 
 		wantErr  error
 	}{
 		{name: "invalid input", input: "endpoint_task_id=task-1\n", wantErr: ErrInvalidMetadata},
+		{name: "oversized metadata", input: validMetadata + "padding=" + strings.Repeat("a", 1<<20),
+			wantErr: ErrInvalidMetadata},
 		{name: "different metadata", existing: validMetadata,
 			input:   strings.Replace(validMetadata, "spawn_gen=s123.456.7", "spawn_gen=s123.456.8", 1),
 			wantErr: ErrMetadataConflict},

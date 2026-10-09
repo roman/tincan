@@ -156,6 +156,37 @@ func TestAdoptPublishesTaskAndCrewAndRetries(t *testing.T) {
 	}
 }
 
+func TestListReportsAdoptedAndEmptyTaskState(t *testing.T) {
+	root := t.TempDir()
+	var output bytes.Buffer
+	if code := run(context.Background(), []string{"--root", root, "list"}, &output, herdr.Client{}); code != 0 ||
+		!strings.Contains(output.String(), "tasks: 0 found") {
+		t.Fatalf("empty code=%d output=%s", code, output.String())
+	}
+	worktree := filepath.Join(root, "worktree")
+	if err := os.Mkdir(worktree, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "tasks"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runner := &liveRunner{worktree: worktree, status: "working", process: "codex"}
+	if code := run(context.Background(), adoptionArguments(root, worktree), &output,
+		herdr.Client{SessionRunner: runner}); code != 0 {
+		t.Fatalf("adopt code=%d output=%s", code, output.String())
+	}
+	output.Reset()
+	if code := run(context.Background(), []string{"--root", root, "list"}, &output, herdr.Client{}); code != 0 {
+		t.Fatalf("list code=%d output=%s", code, output.String())
+	}
+	for _, text := range []string{"tasks: 1 found", "tasks[1]{task,kind,worktree}:",
+		fmt.Sprintf("  %q,%q,%q\n", "task-1", "crewmate", worktree)} {
+		if !strings.Contains(output.String(), text) {
+			t.Fatalf("list missing %q: %s", text, output.String())
+		}
+	}
+}
+
 func TestAdoptRefusesUnverifiedWorkerWithoutPublishing(t *testing.T) {
 	for _, test := range []struct{ name, directory, status, process string }{
 		{name: "wrong directory", directory: "/other", status: "working", process: "codex"},

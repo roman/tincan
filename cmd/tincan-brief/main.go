@@ -66,6 +66,14 @@ func printBrief(output io.Writer, root string, recipient inbox.Recipient, limit 
 	if err != nil {
 		return err
 	}
+	taskState, err := firstmate.ParseAbsolutePath(filepath.Join(root, "tasks"))
+	if err != nil {
+		return err
+	}
+	tasks, err := firstmate.ListTasks(taskState)
+	if err != nil {
+		return err
+	}
 	var workers, pending []crew.Record
 	for _, record := range allRecords {
 		if record.PendingAdoption {
@@ -75,6 +83,7 @@ func printBrief(output io.Writer, root string, recipient inbox.Recipient, limit 
 		workers = append(workers, record)
 	}
 	wakeCount := min(len(wakes), limit)
+	taskCount := min(len(tasks), limit)
 	workerCount := min(len(workers), limit)
 	pendingCount := min(len(pending), limit)
 	executable, err := os.Executable()
@@ -85,7 +94,7 @@ func printBrief(output io.Writer, root string, recipient inbox.Recipient, limit 
 	fmt.Fprintf(
 		output,
 		"description: %s\n",
-		quoted("Pending primary wakes and registered local workers"),
+		quoted("Pending primary wakes, local tasks, and registered workers"),
 	)
 	if wakeCount == len(wakes) {
 		fmt.Fprintf(output, "wakes: %d pending for %s\n", wakeCount, recipient)
@@ -96,6 +105,18 @@ func printBrief(output io.Writer, root string, recipient inbox.Recipient, limit 
 		fmt.Fprintf(output, "wakes[%d]{id,body}:\n", wakeCount)
 		for _, wake := range wakes[:wakeCount] {
 			fmt.Fprintf(output, "  %s,%s\n", quoted(wake.ID.String()), quoted(preview(wake.Body)))
+		}
+	}
+	if taskCount == len(tasks) {
+		fmt.Fprintf(output, "tasks: %d found\n", taskCount)
+	} else {
+		fmt.Fprintf(output, "tasks: %d of %d found\n", taskCount, len(tasks))
+	}
+	if taskCount > 0 {
+		fmt.Fprintf(output, "tasks[%d]{task,kind,worktree}:\n", taskCount)
+		for _, task := range tasks[:taskCount] {
+			fmt.Fprintf(output, "  %s,%s,%s\n", quoted(task.TaskID().String()),
+				quoted(task.Kind()), quoted(task.Worktree().String()))
 		}
 	}
 	if workerCount == len(workers) {
@@ -127,6 +148,9 @@ func printBrief(output io.Writer, root string, recipient inbox.Recipient, limit 
 		hints = append(hints, "tincan-inbox --root "+shellQuote(root)+
 			" list "+recipient.String())
 	}
+	if taskCount > 0 {
+		hints = append(hints, "tincan-task --root "+shellQuote(root)+" list")
+	}
 	if workerCount > 0 || pendingCount > 0 {
 		hints = append(hints, "tincan-crew --root "+shellQuote(root)+" show <task-id>")
 	}
@@ -150,7 +174,7 @@ func run(args []string, output io.Writer) int {
 	}
 	var options cli
 	parser, err := kong.New(&options, kong.Name("tincan-brief"),
-		kong.Description("Show pending primary wakes and registered local workers."),
+		kong.Description("Show pending primary wakes, local tasks, and registered workers."),
 		kong.Writers(output, io.Discard))
 	if err != nil {
 		return failure(output, 2, err, "tincan-brief --root ROOT [--recipient NAME] [--limit N]")
