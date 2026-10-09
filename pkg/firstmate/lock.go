@@ -60,6 +60,29 @@ func AcquireTaskLock(stateDir AbsolutePath, id TaskID, timeout time.Duration) (*
 		return nil, ErrInvalidPath
 	}
 	path := filepath.Join(state, ".meta-"+id.value+".lock")
+	return AcquirePathLock(path, timeout)
+}
+
+// AcquirePathLock claims an absolute Firstmate-compatible path lock.
+func AcquirePathLock(path string, timeout time.Duration) (*TaskLock, error) {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return nil, ErrInvalidLock
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(parent)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, ErrInvalidLock
+	}
+	path = filepath.Join(parent, filepath.Base(path))
+	if timeout <= 0 {
+		return nil, ErrLockTimeout
+	}
 	deadline := time.Now().Add(timeout)
 	for {
 		lock, err := tryAcquirePathLock(path)
