@@ -3,6 +3,7 @@
 > [!NOTE]
 > Herdr is currently the only terminal adapter supported by `tincan-notify`.
 > `tincan-control` and `tincan-supervise` use Herdr directly.
+> The optional Firstmate compatibility commands support local Herdr tasks only.
 
 Tincan is inspired by Firstmate's communication scripts. It provides small Go
 programs for agent messaging and control. Each program can run on its own.
@@ -64,7 +65,8 @@ The flake pins Nixpkgs, Herdr, and the Go module dependencies. The
 development shell provides Go 1.25, golines, and Herdr.
 Each command has its own package output, so an inbox installation does not bring
 Herdr into its runtime path.
-The notifier, control, and supervisor packages include the pinned Herdr command.
+The notifier, control, supervisor, and Firstmate compatibility packages include
+the pinned Herdr command.
 
 ```sh
 nix develop
@@ -75,14 +77,16 @@ nix build .#tincan-inbox
 nix build .#tincan-notify
 nix build .#tincan-control
 nix build .#tincan-supervise
+nix build .#tincan-firstmate-send
+nix build .#tincan-firstmate-check
 ```
 
 Each build places exactly one command in `result/bin/`. To install one command
 in a user profile, use `nix profile install .#tincan-inbox` (or another output
-name). `nix build` and `nix profile install .#tincan` provide all four commands.
+name). `nix build` and `nix profile install .#tincan` provide all six commands.
 `nix fmt` formats Go files with golines at 100 columns. The flake check
-verifies that formatting, builds every separate output, and runs the complete
-Go test suite once in a dedicated check.
+verifies that formatting, builds every separate output, checks both Firstmate
+executables, and runs the complete Go test suite once in a dedicated check.
 
 ## Example
 
@@ -115,3 +119,41 @@ Its default health interval is five seconds. Use `--interval`,
 `--restart-tolerance`, and `--restart-window` to adjust the check and failure
 policy. A tolerance of two permits two failures; the third stops
 supervision. The supervisor does not create panes.
+
+## Optional Firstmate task compatibility
+
+`tincan-firstmate-send` and `tincan-firstmate-check` use Firstmate's ordinary
+`.msg` task inbox format. This format is separate from the JSON mailbox used by
+`tincan-inbox`. Both compatibility commands require an explicit absolute
+`--state` directory and a task ID bound to a local task metadata file.
+
+```sh
+tincan-firstmate-send --state /absolute/firstmate/state task-1 --body 'Please check the task.'
+tincan-firstmate-check --state /absolute/firstmate/state task-1
+```
+
+The send command commits a numbered `.msg` record before it tries a terminal
+doorbell. A committed record returns exit 0 even when the doorbell is deferred,
+fails, or finds the endpoint unavailable. The recipient reads the record and
+acknowledges it by moving it into its inbox's `handled/` directory. The send
+command returns exit 2 for usage errors, exit 6 for an opposing live supervision
+lease, and exit 1 for an operational error before the record commits.
+
+The check command runs once. It examines the oldest ordinary pending record.
+After the default 90-second grace period, it waits for a busy agent or tries a
+doorbell. Each sent, deferred, or failed ring consumes one watcher attempt.
+The default budget is three attempts. A missing or dead endpoint, or an idle
+agent with a spent budget, produces an escalation outcome. Set
+`--grace-seconds` and `--max-attempts` to change the policy. Their environment
+defaults are `FM_TASK_INBOX_GRACE_SECS` and `FM_TASK_INBOX_RING_MAX`. The check
+command returns exit 0 for quiet, wait, ring, and escalation outcomes; usage
+errors return exit 2 and operational errors return exit 1.
+
+A fresh doorbell is deferred. The conservative Herdr ring can press Enter only
+when it sees the exact doorbell on a single visible composer row. Full
+Firstmate composer and terminal behavior remains unsupported. These commands
+do not replace `fm-send` or `fm-watch`. They do not support remote or secondmate
+delivery, correlations, `--resolve-key`, fire-and-forget delivery, typed
+commands, or other backends. There is no resident watcher or durable wake
+publisher. The check command only prints an escalation outcome. It does not
+write the `.escalated` marker because no wake was published.
