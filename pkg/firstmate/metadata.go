@@ -115,48 +115,62 @@ func ReadTask(stateDir AbsolutePath, expected TaskID) (Metadata, error) {
 
 // ReadTaskFromRoot reads metadata through a selected task directory handle.
 func ReadTaskFromRoot(root *os.Root, expected TaskID) (Metadata, error) {
-	data, err := readTaskDataFromRoot(root, expected)
+	metadata, _, err := ReadTaskWithInfoFromRoot(root, expected)
+	return metadata, err
+}
+
+// ReadTaskWithInfoFromRoot returns the identity of the file that supplied the metadata.
+func ReadTaskWithInfoFromRoot(root *os.Root, expected TaskID) (Metadata, os.FileInfo, error) {
+	data, info, err := readTaskDataAndInfoFromRoot(root, expected)
 	if err != nil {
-		return Metadata{}, err
+		return Metadata{}, nil, err
 	}
-	return Parse(data, expected)
+	metadata, err := Parse(data, expected)
+	return metadata, info, err
 }
 
 func readTaskDataFromRoot(root *os.Root, expected TaskID) ([]byte, error) {
+	data, _, err := readTaskDataAndInfoFromRoot(root, expected)
+	return data, err
+}
+
+func readTaskDataAndInfoFromRoot(
+	root *os.Root, expected TaskID,
+) ([]byte, os.FileInfo, error) {
 	if root == nil {
-		return nil, ErrInvalidPath
+		return nil, nil, ErrInvalidPath
 	}
 	if expected.value == "" {
-		return nil, ErrInvalidTaskID
+		return nil, nil, ErrInvalidTaskID
 	}
 	name := expected.value + ".meta"
 	selected, err := root.Lstat(name)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !selected.Mode().IsRegular() {
-		return nil, fmt.Errorf("%w: metadata file is not regular", ErrInvalidMetadata)
+		return nil, nil, fmt.Errorf("%w: metadata file is not regular", ErrInvalidMetadata)
 	}
 	file, err := root.Open(name)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer file.Close()
 	opened, err := file.Stat()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !opened.Mode().IsRegular() || !os.SameFile(selected, opened) {
-		return nil, fmt.Errorf("%w: metadata file changed during open", ErrInvalidMetadata)
+		return nil, nil, fmt.Errorf("%w: metadata file changed during open", ErrInvalidMetadata)
 	}
 	data, err := io.ReadAll(io.LimitReader(file, maximumTaskMetadataBytes+1))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(data) > maximumTaskMetadataBytes {
-		return nil, fmt.Errorf("%w: metadata exceeds 1 MiB", ErrInvalidMetadata)
+		return nil, nil, fmt.Errorf("%w: metadata exceeds 1 MiB", ErrInvalidMetadata)
 	}
-	return data, nil
+	return data, opened, nil
 }
 
 // Parse validates one local Herdr task record against the expected task ID.

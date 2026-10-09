@@ -67,6 +67,11 @@ func (registry *Registry) WithCurrentTask(
 		!sameDirectory(crewInfo, filepath.Join(registry.root, "crew")) {
 		return fmt.Errorf("%w: task or crew directory changed", ErrStaleRecord)
 	}
+	if pending, err := completionPending(taskRoot, id); err != nil {
+		return err
+	} else if pending {
+		return fmt.Errorf("%w: task completion is pending", ErrStaleRecord)
+	}
 	record, err := readRecord(crewRoot, taskID)
 	if err != nil {
 		return err

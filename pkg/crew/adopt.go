@@ -54,6 +54,11 @@ func (registry *Registry) AdoptLocalTask(
 		return err
 	}
 	return registry.withLockedTask(id.String(), func(root *os.Root, check func() error) error {
+		if pending, err := completionPending(root, id); err != nil {
+			return err
+		} else if pending {
+			return ErrConflict
+		}
 		if recovered, err := registry.recoverAdoption(input, id, root, check); recovered ||
 			err != nil {
 			return err

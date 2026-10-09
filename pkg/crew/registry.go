@@ -193,39 +193,44 @@ func (registry *Registry) openCrew() (*os.Root, error) {
 }
 
 func readRecord(root *os.Root, taskID string) (Record, error) {
+	record, _, err := readRecordWithInfo(root, taskID)
+	return record, err
+}
+
+func readRecordWithInfo(root *os.Root, taskID string) (Record, os.FileInfo, error) {
 	name := taskID + ".json"
 	selected, err := root.Lstat(name)
 	if err != nil {
-		return Record{}, err
+		return Record{}, nil, err
 	}
 	if !selected.Mode().IsRegular() {
-		return Record{}, fmt.Errorf("%w: record is not a regular file", ErrInvalidRecord)
+		return Record{}, nil, fmt.Errorf("%w: record is not a regular file", ErrInvalidRecord)
 	}
 	file, err := root.Open(name)
 	if err != nil {
-		return Record{}, err
+		return Record{}, nil, err
 	}
 	defer file.Close()
 	opened, err := file.Stat()
 	if err != nil {
-		return Record{}, err
+		return Record{}, nil, err
 	}
 	if !opened.Mode().IsRegular() || !os.SameFile(selected, opened) {
-		return Record{}, fmt.Errorf("%w: record changed during open", ErrInvalidRecord)
+		return Record{}, nil, fmt.Errorf("%w: record changed during open", ErrInvalidRecord)
 	}
 	data, err := io.ReadAll(io.LimitReader(file, maximumRecordBytes+1))
 	if err != nil {
-		return Record{}, err
+		return Record{}, nil, err
 	}
 	if len(data) > maximumRecordBytes {
-		return Record{}, fmt.Errorf("%w: record exceeds 1 MiB", ErrInvalidRecord)
+		return Record{}, nil, fmt.Errorf("%w: record exceeds 1 MiB", ErrInvalidRecord)
 	}
 	var record Record
 	if err := json.Unmarshal(data, &record); err != nil || !validRecord(record) ||
 		record.TaskID != taskID {
-		return Record{}, fmt.Errorf("%w: malformed record for %s", ErrInvalidRecord, taskID)
+		return Record{}, nil, fmt.Errorf("%w: malformed record for %s", ErrInvalidRecord, taskID)
 	}
-	return record, nil
+	return record, opened, nil
 }
 
 func listRecords(root *os.Root) ([]Record, error) {
