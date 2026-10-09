@@ -38,6 +38,7 @@
             '';
           });
           tincan-inbox = mkProgram { name = "tincan-inbox"; };
+          tincan-brief = mkProgram { name = "tincan-brief"; };
           tincan-crew = mkProgram { name = "tincan-crew"; };
           tincan-notify = mkProgram { name = "tincan-notify"; runtime = herdrPackage; };
           tincan-control = mkProgram { name = "tincan-control"; runtime = herdrPackage; };
@@ -48,12 +49,12 @@
           tincan-firstmate-show = mkProgram { name = "tincan-firstmate-show"; };
           tincan = pkgs.symlinkJoin {
             name = "tincan-0.1.0";
-            paths = [ tincan-inbox tincan-crew tincan-notify tincan-control tincan-supervise tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show ];
+            paths = [ tincan-inbox tincan-brief tincan-crew tincan-notify tincan-control tincan-supervise tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show ];
           };
         in
         {
           default = tincan;
-          inherit tincan tincan-inbox tincan-crew tincan-notify tincan-control tincan-supervise tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show;
+          inherit tincan tincan-inbox tincan-brief tincan-crew tincan-notify tincan-control tincan-supervise tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show;
         });
 
       formatter = forEachSystem (pkgs: pkgs.writeShellApplication {
@@ -72,9 +73,10 @@
           packages = self.packages.${pkgs.stdenv.hostPlatform.system};
         in
         {
-          inherit (packages) tincan-inbox tincan-crew tincan-notify tincan-control tincan-supervise tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show;
+          inherit (packages) tincan-inbox tincan-brief tincan-crew tincan-notify tincan-control tincan-supervise tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show;
           firstmate-smoke = pkgs.runCommand "tincan-firstmate-smoke" { } ''
             ${packages.tincan-crew}/bin/tincan-crew --help >/dev/null
+            ${packages.tincan}/bin/tincan-brief --help >/dev/null
             ${packages.tincan-firstmate-send}/bin/tincan-firstmate-send --help >/dev/null
             ${packages.tincan-firstmate-check}/bin/tincan-firstmate-check --help >/dev/null
             ${packages.tincan-firstmate-watch}/bin/tincan-firstmate-watch --help >/dev/null
