@@ -6,17 +6,26 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 
 	"github.com/alecthomas/kong"
 	"github.com/roman/tincan/pkg/firstmate"
+	"github.com/roman/tincan/pkg/herdr"
 )
 
 type cli struct {
 	State    string  `help:"Absolute Firstmate state directory." required:""`
 	Actor    string  `help:"Supervision actor (main or branch)." env:"FM_SUPERVISION_ACTOR" default:"main"`
+	Herdr    string  `help:"Herdr executable." env:"TINCAN_HERDR" default:"herdr"`
 	TaskID   string  `arg:"" help:"Firstmate task ID."`
 	Body     *string `help:"Message body."`
 	BodyFile string  `help:"Read message body from file; use - for stdin."`
+}
+
+type failedDoorbell struct{ err error }
+
+func (doorbell failedDoorbell) Ring(context.Context, herdr.Target, string) herdr.RingResult {
+	return herdr.RingResult{Outcome: herdr.RingFailed, Err: doorbell.err}
 }
 
 func bodyFor(command cli, stdin io.Reader) (string, int, error) {
@@ -77,10 +86,17 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "tincan-firstmate-send:", err)
 		return 2
 	}
+	var terminalDoorbell firstmate.Doorbell = herdr.NewClient(command.Herdr)
+	if _, err := exec.LookPath(command.Herdr); err != nil {
+		terminalDoorbell = failedDoorbell{
+			err: fmt.Errorf("Herdr executable %q: %w", command.Herdr, err),
+		}
+	}
 	sender := firstmate.Sender{
 		StateDir: state,
 		TaskID:   id,
 		Actor:    actor,
+		Doorbell: terminalDoorbell,
 	}
 	result, err := sender.Send(context.Background(), body)
 	if err != nil {
@@ -93,11 +109,28 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if result.CleanupErr != nil {
 		fmt.Fprintln(stderr, "tincan-firstmate-send: cleanup:", result.CleanupErr)
 	}
+	doorbell := "deferred"
+	switch result.Doorbell.Outcome {
+	case herdr.RingSent:
+		doorbell = "sent"
+	case herdr.RingFailed:
+		doorbell = "failed"
+	case herdr.RingUnavailable:
+		doorbell = "unavailable"
+	case herdr.RingSkipped, herdr.RingNotAttempted:
+	default:
+		doorbell = "failed"
+	}
+	if result.Doorbell.Err != nil {
+		fmt.Fprintln(stderr, "tincan-firstmate-send: doorbell:", result.Doorbell.Err)
+	} else if doorbell == "failed" || doorbell == "unavailable" {
+		fmt.Fprintln(stderr, "tincan-firstmate-send: doorbell:", doorbell)
+	}
 	fmt.Fprintf(
 		stdout,
 		"status: recorded\nrecord: %s\ndoorbell: %s\n",
 		result.RecordPath,
-		"deferred",
+		doorbell,
 	)
 	return 0
 }
