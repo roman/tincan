@@ -119,14 +119,19 @@ tincan-brief --root /absolute/tincan-state
 tincan-task --root /absolute/tincan-state list
 ```
 
-Queue a task in the root backlog with `tasks-axi` 0.2.6 or newer installed on
+Queue a task in the root backlog with pinned `tasks-axi` 0.2.6 installed on
 `PATH`. The command creates `backlog.md` under the existing Tincan state root
 when the file is absent. A repeated task ID returns an error and leaves the
-existing task unchanged. The command only creates queued work; dispatch and
-task completion still need separate lifecycle commands.
+existing task unchanged. After adopting a live local worker with `tincan-task`,
+start the queued backlog row. The start command requires matching task metadata
+and a current crew record. It rejects blocked or held work and can be retried
+after an interrupted transition. The start command requires version 0.2.6
+because it uses that version's backlog lock protocol. Task completion still
+needs a lifecycle command.
 
 ```sh
 tincan-backlog --root /absolute/tincan-state add task-1 'Fix startup' --kind ship --repo exmachina
+tincan-backlog --root /absolute/tincan-state start task-1
 ```
 
 The second command keeps running. The worker reads the pending message and

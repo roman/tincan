@@ -14,8 +14,13 @@ import (
 )
 
 type cli struct {
-	Root string     `help:"Absolute Tincan state root." required:""`
-	Add  addCommand `cmd:"" help:"Queue a task in the root backlog."`
+	Root  string       `help:"Absolute Tincan state root." required:""`
+	Add   addCommand   `cmd:"" help:"Queue a task in the root backlog."`
+	Start startCommand `cmd:"" help:"Start a queued task with a current worker binding."`
+}
+
+type startCommand struct {
+	TaskID string `arg:"" help:"Queued task ID."`
 }
 
 type addCommand struct {
@@ -40,7 +45,7 @@ type addResult struct {
 }
 
 func help() string {
-	return "usage: tincan-backlog --root ROOT add ID TITLE --kind KIND --repo REPO [--body-file PATH] [--blocked-by ID]"
+	return "usage: tincan-backlog --root ROOT add ID TITLE --kind KIND --repo REPO; or start ID"
 }
 
 func fail(output io.Writer, code int, err error, next string) int {
@@ -58,7 +63,7 @@ func run(arguments []string, output io.Writer) int {
 	if err != nil {
 		return fail(output, 2, err, help())
 	}
-	if selected.Command() != "add <task-id> <title>" {
+	if selected.Command() != "add <task-id> <title>" && selected.Command() != "start <task-id>" {
 		return fail(output, 2, fmt.Errorf("unknown command %q", selected.Command()), help())
 	}
 	root, err := firstmate.ParseAbsolutePath(command.Root)
@@ -84,6 +89,24 @@ func run(arguments []string, output io.Writer) int {
 		)
 	} else if err != nil && !os.IsNotExist(err) {
 		return fail(output, 1, err, "inspect the backlog path")
+	}
+	if selected.Command() == "start <task-id>" {
+		result, err := startTask(root.String(), command.Start.TaskID, backlogFile)
+		if err != nil {
+			return fail(
+				output,
+				1,
+				err,
+				"inspect the task row and current worker binding; retry after correcting them",
+			)
+		}
+		fmt.Fprintf(
+			output,
+			"task: %q\nstate: in_flight\nalready: %t\n",
+			command.Start.TaskID,
+			result.Already,
+		)
+		return 0
 	}
 	args := []string{
 		"add",
