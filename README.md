@@ -12,6 +12,7 @@ The programs share reusable packages under `pkg/`.
 | Program | Responsibility |
 | --- | --- |
 | `tincan-inbox` | Store, list, read, and acknowledge messages for a recipient. |
+| `tincan-crew` | Record and inspect local worker launch identities. |
 | `tincan-notify` | Ring an agent while its inbox has pending messages. |
 | `tincan-control` | Inspect, start, or interrupt an agent. |
 | `tincan-supervise` | Check an agent and restart it after confirmed absence. |
@@ -74,6 +75,7 @@ nix fmt
 go test ./...
 nix flake check --no-write-lock-file
 nix build .#tincan-inbox
+nix build .#tincan-crew
 nix build .#tincan-notify
 nix build .#tincan-control
 nix build .#tincan-supervise
@@ -85,7 +87,7 @@ nix build .#tincan-firstmate-show
 
 Each build places exactly one command in `result/bin/`. To install one command
 in a user profile, use `nix profile install .#tincan-inbox` (or another output
-name). `nix build` and `nix profile install .#tincan` provide all eight commands.
+name). `nix build` and `nix profile install .#tincan` provide all nine commands.
 `nix fmt` formats Go files with golines at 100 columns. The flake check
 verifies that formatting, builds every separate output, checks the Firstmate
 executables, and runs the complete Go test suite once in a dedicated check.
@@ -123,6 +125,22 @@ policy. A tolerance of two permits two failures; the third stops
 supervision. The supervisor does not create panes.
 
 ## Optional Firstmate task compatibility
+
+The crew registry records the launch details for an existing local task. It
+copies the pane, project, worktree, harness, and spawn generation from the task
+metadata. Supply the Herdr name and the exact agent launch arguments used for
+resumption. Repeated registration with identical details succeeds; changed
+details require an explicit future transition and produce a conflict now.
+
+```sh
+tincan-crew --root /absolute/tincan-state register task-1 --name worker-1 --agent-arg resume --agent-arg THREAD_ID
+tincan-crew --root /absolute/tincan-state list
+tincan-crew --root /absolute/tincan-state show task-1
+```
+
+The registry is an inventory. The current supervisor does not yet read it or
+verify that a recorded worker remains bound to the live pane. Do not restart a
+worker solely from a registry entry until that check exists.
 
 `tincan-firstmate-send`, `tincan-firstmate-check`,
 `tincan-firstmate-watch`, and `tincan-firstmate-show` use Firstmate's ordinary
