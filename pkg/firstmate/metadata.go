@@ -236,6 +236,14 @@ func validSpawnGeneration(value string) bool {
 	return value != "" && value[0] != '.' && validCharacters(value, allowed)
 }
 
+// ValidateSpawnGeneration checks the Firstmate task incarnation format.
+func ValidateSpawnGeneration(value string) error {
+	if !validSpawnGeneration(value) {
+		return ErrInvalidMetadata
+	}
+	return nil
+}
+
 func hasControl(value string) bool {
 	for _, character := range value {
 		if unicode.IsControl(character) {

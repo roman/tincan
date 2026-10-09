@@ -12,10 +12,25 @@ import (
 
 var ErrStaleRecord = errors.New("crew record does not match current task")
 
+// CurrentTask keeps one validated worker binding under its task metadata lock.
+type CurrentTask struct {
+	record   Record
+	id       firstmate.TaskID
+	taskRoot *os.Root
+	crewRoot *os.Root
+}
+
+// Record returns the current launch details.
+func (task *CurrentTask) Record() Record {
+	record := task.record
+	record.AgentArgs = append([]string(nil), record.AgentArgs...)
+	return record
+}
+
 // WithCurrentTask holds the task metadata lock while a caller uses its crew record.
 func (registry *Registry) WithCurrentTask(
 	taskID string,
-	operation func(Record) error,
+	operation func(*CurrentTask) error,
 ) (result error) {
 	if registry == nil || registry.root == "" || operation == nil {
 		return ErrInvalidRecord
@@ -52,23 +67,37 @@ func (registry *Registry) WithCurrentTask(
 		!sameDirectory(crewInfo, filepath.Join(registry.root, "crew")) {
 		return fmt.Errorf("%w: task or crew directory changed", ErrStaleRecord)
 	}
-	metadata, err := firstmate.ReadTaskFromRoot(taskRoot, id)
-	if err != nil {
-		return err
-	}
 	record, err := readRecord(crewRoot, taskID)
 	if err != nil {
 		return err
 	}
-	if record.Project != metadata.Project().String() ||
-		record.Worktree != metadata.Worktree().String() ||
-		record.Kind != metadata.Harness() ||
-		record.HerdrSession != metadata.HerdrSession() ||
-		record.PaneID != metadata.HerdrPaneID() ||
-		record.SpawnGeneration != metadata.SpawnGeneration() {
+	if record.PendingGeneration != "" {
+		record, err = recoverPendingGeneration(taskRoot, crewRoot, id, record)
+		if err != nil {
+			return err
+		}
+	}
+	metadata, err := firstmate.ReadTaskFromRoot(taskRoot, id)
+	if err != nil {
+		return err
+	}
+	if !matchesTask(record, metadata) {
 		return fmt.Errorf("%w: %s", ErrStaleRecord, taskID)
 	}
-	return operation(record)
+	return operation(&CurrentTask{record: record, id: id, taskRoot: taskRoot, crewRoot: crewRoot})
+}
+
+func matchesTask(record Record, metadata firstmate.Metadata) bool {
+	return sameTaskIdentity(record, metadata) &&
+		record.SpawnGeneration == metadata.SpawnGeneration()
+}
+
+func sameTaskIdentity(record Record, metadata firstmate.Metadata) bool {
+	return record.Project == metadata.Project().String() &&
+		record.Worktree == metadata.Worktree().String() &&
+		record.Kind == metadata.Harness() &&
+		record.HerdrSession == metadata.HerdrSession() &&
+		record.PaneID == metadata.HerdrPaneID()
 }
 
 func openSelectedDirectory(root *os.Root, name string) (*os.Root, os.FileInfo, error) {

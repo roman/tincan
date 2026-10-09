@@ -225,6 +225,9 @@ func printRecord(stdout io.Writer, record crew.Record) {
 	fmt.Fprintf(stdout, "project: %s\n", quoted(record.Project))
 	fmt.Fprintf(stdout, "worktree: %s\n", quoted(record.Worktree))
 	fmt.Fprintf(stdout, "spawn_generation: %s\n", record.SpawnGeneration)
+	if record.PendingGeneration != "" {
+		fmt.Fprintf(stdout, "pending_generation: %s\n", record.PendingGeneration)
+	}
 	fmt.Fprintf(stdout, "agent_args[%d]:\n", len(record.AgentArgs))
 	for _, argument := range record.AgentArgs {
 		fmt.Fprintf(stdout, "  %s\n", quoted(argument))

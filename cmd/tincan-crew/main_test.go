@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,37 @@ import (
 	"github.com/roman/tincan/pkg/crew"
 	"github.com/roman/tincan/pkg/firstmate"
 )
+
+func TestShowReportsPendingGeneration(t *testing.T) {
+	root := t.TempDir()
+	registry, err := crew.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := crew.Record{
+		TaskID: "task-1", Name: "worker-1", Kind: "codex", PaneID: "pane-1",
+		HerdrSession: "work", Project: "/project", Worktree: "/project-worktree",
+		SpawnGeneration: "gen-1", AgentArgs: []string{"resume", "thread-1"},
+	}
+	if err := registry.Register(record); err != nil {
+		t.Fatal(err)
+	}
+	record.PendingGeneration = "gen-2"
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "crew", "task-1.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if code := run([]string{"--root", root, "show", "task-1"}, &output); code != 0 {
+		t.Fatalf("show code %d: %s", code, output.String())
+	}
+	if !strings.Contains(output.String(), "pending_generation: gen-2\n") {
+		t.Fatalf("pending transition missing from %q", output.String())
+	}
+}
 
 func writeTaskMetadata(t *testing.T, state string) {
 	t.Helper()

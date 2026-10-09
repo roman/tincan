@@ -32,15 +32,16 @@ const registryLockTimeout = 2 * time.Second
 
 // Record binds a local task to the exact worker launch details needed for recovery.
 type Record struct {
-	TaskID          string   `json:"task_id"`
-	Name            string   `json:"name"`
-	Kind            string   `json:"kind"`
-	PaneID          string   `json:"pane_id"`
-	HerdrSession    string   `json:"herdr_session"`
-	Project         string   `json:"project"`
-	Worktree        string   `json:"worktree"`
-	SpawnGeneration string   `json:"spawn_generation"`
-	AgentArgs       []string `json:"agent_args"`
+	TaskID            string   `json:"task_id"`
+	Name              string   `json:"name"`
+	Kind              string   `json:"kind"`
+	PaneID            string   `json:"pane_id"`
+	HerdrSession      string   `json:"herdr_session"`
+	Project           string   `json:"project"`
+	Worktree          string   `json:"worktree"`
+	SpawnGeneration   string   `json:"spawn_generation"`
+	PendingGeneration string   `json:"pending_generation,omitempty"`
+	AgentArgs         []string `json:"agent_args"`
 }
 
 type Registry struct{ root string }
@@ -87,7 +88,12 @@ func validRecord(record Record) bool {
 		return false
 	}
 	if ValidateLaunch(record.Name, record.AgentArgs) != nil || !safeAtom(record.Kind) ||
-		!safeAtom(record.SpawnGeneration) {
+		firstmate.ValidateSpawnGeneration(record.SpawnGeneration) != nil {
+		return false
+	}
+	if record.PendingGeneration != "" &&
+		(firstmate.ValidateSpawnGeneration(record.PendingGeneration) != nil ||
+			record.PendingGeneration == record.SpawnGeneration) {
 		return false
 	}
 	if _, err := herdr.ParseTarget(record.HerdrSession, record.PaneID); err != nil {
@@ -279,7 +285,7 @@ func acquireLock(file *os.File) error {
 
 // Register publishes a launch record once. The same record is an idempotent retry.
 func (registry *Registry) Register(record Record) error {
-	if !validRecord(record) {
+	if !validRecord(record) || record.PendingGeneration != "" {
 		return ErrInvalidRecord
 	}
 	data, err := json.Marshal(record)

@@ -41,7 +41,8 @@ func TestWithCurrentTaskHoldsMetadataLockDuringOperation(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := errors.New("operation failed")
-	err = registry.WithCurrentTask("task-1", func(record Record) error {
+	err = registry.WithCurrentTask("task-1", func(task *CurrentTask) error {
+		record := task.Record()
 		if record.TaskID != "task-1" {
 			t.Fatalf("record = %+v", record)
 		}
@@ -101,7 +102,7 @@ func TestWithCurrentTaskRejectsStaleBinding(t *testing.T) {
 				t.Fatal(err)
 			}
 			called := false
-			err = registry.WithCurrentTask("task-1", func(Record) error {
+			err = registry.WithCurrentTask("task-1", func(*CurrentTask) error {
 				called = true
 				return nil
 			})
