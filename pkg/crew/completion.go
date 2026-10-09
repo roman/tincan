@@ -131,6 +131,14 @@ func (completion *Completion) checkCurrent() error {
 	return nil
 }
 
+// CheckCurrent confirms the selected task and crew records still name active directories.
+func (completion *Completion) CheckCurrent() error {
+	if completion == nil {
+		return ErrInvalidRecord
+	}
+	return completion.checkCurrent()
+}
+
 func (completion *Completion) load() error {
 	marker, info, err := readCompletionMarker(completion.taskRoot, completion.id)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {

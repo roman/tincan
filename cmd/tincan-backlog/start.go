@@ -77,7 +77,7 @@ func startTask(root, taskID, backlogFile string) (startResult, error) {
 		if confirmed.State != "in_flight" {
 			return fmt.Errorf("task remains %s after tasks-axi start", confirmed.State)
 		}
-		if err := syncStartedBacklog(staged, selected.Mode().Perm()); err != nil {
+		if err := syncStagedBacklog(staged, selected.Mode().Perm()); err != nil {
 			return err
 		}
 		current, err := os.Lstat(backlogFile)
@@ -106,7 +106,7 @@ func startTask(root, taskID, backlogFile string) (startResult, error) {
 	return result, nil
 }
 
-func syncStartedBacklog(path string, mode os.FileMode) error {
+func syncStagedBacklog(path string, mode os.FileMode) error {
 	if err := os.Chmod(path, mode); err != nil {
 		return err
 	}
@@ -138,7 +138,7 @@ func stageBacklog(backlogFile string) (string, os.FileInfo, error) {
 	if !os.SameFile(selected, opened) {
 		return "", nil, fmt.Errorf("backlog changed during open")
 	}
-	stagingDirectory, err := os.MkdirTemp(filepath.Dir(backlogFile), ".backlog-start-*")
+	stagingDirectory, err := os.MkdirTemp(filepath.Dir(backlogFile), ".backlog-stage-*")
 	if err != nil {
 		return "", nil, err
 	}

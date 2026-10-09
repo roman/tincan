@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,16 +12,23 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/roman/tincan/pkg/firstmate"
+	"github.com/roman/tincan/pkg/herdr"
 )
 
 type cli struct {
-	Root  string       `help:"Absolute Tincan state root." required:""`
-	Add   addCommand   `cmd:"" help:"Queue a task in the root backlog."`
-	Start startCommand `cmd:"" help:"Start a queued task with a current worker binding."`
+	Root   string        `help:"Absolute Tincan state root." required:""`
+	Add    addCommand    `cmd:"" help:"Queue a task in the root backlog."`
+	Start  startCommand  `cmd:"" help:"Start a queued task with a current worker binding."`
+	Finish finishCommand `cmd:"" help:"Complete a local task after its Herdr pane is gone."`
 }
 
 type startCommand struct {
 	TaskID string `arg:"" help:"Queued task ID."`
+}
+
+type finishCommand struct {
+	TaskID string `arg:"" help:"In-flight task ID."`
+	Mode   string `help:"Close the row or retain a held row in the queue." enum:"close,retain" default:"close"`
 }
 
 type addCommand struct {
@@ -45,7 +53,7 @@ type addResult struct {
 }
 
 func help() string {
-	return "usage: tincan-backlog --root ROOT add ID TITLE --kind KIND --repo REPO; or start ID"
+	return "usage: tincan-backlog --root ROOT add ID TITLE --kind KIND --repo REPO; or start ID; or finish ID --mode close|retain"
 }
 
 func fail(output io.Writer, code int, err error, next string) int {
@@ -54,6 +62,15 @@ func fail(output io.Writer, code int, err error, next string) int {
 }
 
 func run(arguments []string, output io.Writer) int {
+	return runWithClient(context.Background(), arguments, output, herdr.NewClient(""))
+}
+
+func runWithClient(
+	ctx context.Context,
+	arguments []string,
+	output io.Writer,
+	client herdr.Client,
+) int {
 	var command cli
 	parser, err := kong.New(&command, kong.Name("tincan-backlog"), kong.Writers(output, io.Discard))
 	if err != nil {
@@ -63,7 +80,8 @@ func run(arguments []string, output io.Writer) int {
 	if err != nil {
 		return fail(output, 2, err, help())
 	}
-	if selected.Command() != "add <task-id> <title>" && selected.Command() != "start <task-id>" {
+	if selected.Command() != "add <task-id> <title>" &&
+		selected.Command() != "start <task-id>" && selected.Command() != "finish <task-id>" {
 		return fail(output, 2, fmt.Errorf("unknown command %q", selected.Command()), help())
 	}
 	root, err := firstmate.ParseAbsolutePath(command.Root)
@@ -105,6 +123,25 @@ func run(arguments []string, output io.Writer) int {
 			"task: %q\nstate: in_flight\nalready: %t\n",
 			command.Start.TaskID,
 			result.Already,
+		)
+		return 0
+	}
+	if selected.Command() == "finish <task-id>" {
+		result, err := finishTask(
+			ctx, root.String(), command.Finish.TaskID, backlogFile,
+			command.Finish.Mode, client,
+		)
+		if err != nil {
+			return fail(
+				output,
+				1,
+				err,
+				"inspect the backlog row, completion marker, and recorded Herdr pane; retry after correcting them",
+			)
+		}
+		fmt.Fprintf(
+			output, "task: %q\nstate: %s\nalready: %t\n",
+			command.Finish.TaskID, result.State, result.Already,
 		)
 		return 0
 	}
