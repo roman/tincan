@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ type liveRunner struct {
 	worktree  string
 	status    string
 	process   string
+	paneGone  bool
 	commands  []string
 	onCommand func([]string)
 }
@@ -34,13 +36,32 @@ func (runner *liveRunner) RunSession(
 		return nil, nil, fmt.Errorf("wrong session %s", session)
 	}
 	switch strings.Join(args[:2], " ") {
+	case "session list":
+		return []byte(
+			fmt.Sprintf(
+				`{"sessions":[{"name":"work","running":true,"socket_path":%q}]}`,
+				filepath.Join(runner.worktree, "herdr.sock"),
+			),
+		), nil, nil
+	case "workspace list":
+		return []byte(
+			`{"result":{"workspaces":[{"workspace_id":"ws-captain","focused":true,"active_tab_id":"tab-captain"}]}}`,
+		), nil, nil
+	case "tab list":
+		return []byte(`{"result":{"tabs":[{"tab_id":"tab-captain","focused":true}]}}`), nil, nil
 	case "pane get":
+		if runner.paneGone {
+			return nil, []byte(`{"error":{"code":"pane_not_found"}}`), fmt.Errorf("missing pane")
+		}
 		return []byte(
 			fmt.Sprintf(
 				`{"result":{"pane":{"pane_id":"pane-1","foreground_cwd":%q,"workspace_id":"ws-1","tab_id":"tab-1"}}}`,
 				runner.worktree,
 			),
 		), nil, nil
+	case "pane close":
+		runner.paneGone = true
+		return nil, nil, nil
 	case "agent get":
 		return []byte(
 			fmt.Sprintf(
@@ -58,6 +79,123 @@ func (runner *liveRunner) RunSession(
 		), nil, nil
 	}
 	return nil, nil, fmt.Errorf("unexpected command %v", args)
+}
+
+func TestStopPaneKeepsTaskRecordsAndRetries(t *testing.T) {
+	root := t.TempDir()
+	worktree := filepath.Join(root, "worktree")
+	if err := os.Mkdir(worktree, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "tasks"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runner := &liveRunner{worktree: worktree, status: "working", process: "codex"}
+	client := herdr.Client{SessionRunner: runner}
+	var output bytes.Buffer
+	if code := run(context.Background(), adoptionArguments(root, worktree), &output, client); code != 0 {
+		t.Fatalf("adopt code=%d output=%s", code, output.String())
+	}
+	arguments := []string{"--root", root, "stop", "task-1"}
+	for attempt := 0; attempt < 2; attempt++ {
+		output.Reset()
+		if code := run(context.Background(), arguments, &output, client); code != 0 ||
+			!strings.Contains(output.String(), "state: pane_closed") {
+			t.Fatalf("stop attempt %d code=%d output=%s", attempt, code, output.String())
+		}
+	}
+	for _, path := range []string{"tasks/task-1.meta", "crew/task-1.json"} {
+		if _, err := os.Stat(filepath.Join(root, path)); err != nil {
+			t.Fatalf("task record %s: %v", path, err)
+		}
+	}
+	count := 0
+	for _, command := range runner.commands {
+		if strings.Contains(command, "pane close pane-1") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("pane close count=%d commands=%v", count, runner.commands)
+	}
+}
+
+func TestStopPaneRefusesBindingChangedDuringHerdrLock(t *testing.T) {
+	for _, changed := range []string{"crew", "metadata"} {
+		t.Run(changed, func(t *testing.T) {
+			root := t.TempDir()
+			worktree := filepath.Join(root, "worktree")
+			if err := os.Mkdir(worktree, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(root, "tasks"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			runner := &liveRunner{worktree: worktree, status: "working", process: "codex"}
+			client := herdr.Client{SessionRunner: runner}
+			var output bytes.Buffer
+			if code := run(context.Background(), adoptionArguments(root, worktree), &output, client); code != 0 {
+				t.Fatalf("adopt code=%d output=%s", code, output.String())
+			}
+			runner.onCommand = func(args []string) {
+				if len(args) < 2 || args[0] != "session" || args[1] != "list" {
+					return
+				}
+				runner.onCommand = nil
+				if changed == "crew" {
+					registry, err := crew.New(root)
+					if err != nil {
+						t.Fatal(err)
+					}
+					record, err := registry.Get("task-1")
+					if err != nil {
+						t.Fatal(err)
+					}
+					record.Name = "replacement-worker"
+					data, err := json.Marshal(record)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(root, "crew", "task-1.json"), data, 0o600); err != nil {
+						t.Fatal(err)
+					}
+					return
+				}
+				path := filepath.Join(root, "tasks", "task-1.meta")
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				updated := strings.Replace(
+					string(data),
+					"herdr_tab_id=tab-1",
+					"herdr_tab_id=tab-other",
+					1,
+				)
+				if updated == string(data) {
+					t.Fatal("metadata fixture lacks the selected tab")
+				}
+				if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			output.Reset()
+			code := run(
+				context.Background(),
+				[]string{"--root", root, "stop", "task-1"},
+				&output,
+				client,
+			)
+			if code == 0 || runner.paneGone {
+				t.Fatalf(
+					"stale stop code=%d pane gone=%v output=%s",
+					code,
+					runner.paneGone,
+					output.String(),
+				)
+			}
+		})
+	}
 }
 
 func adoptionArguments(root, worktree string) []string {

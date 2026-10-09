@@ -1,23 +1,34 @@
 package crew
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"time"
 
 	"github.com/roman/tincan/pkg/firstmate"
+	"github.com/roman/tincan/pkg/herdr"
+	"github.com/roman/tincan/pkg/presentation"
 )
 
 var ErrStaleRecord = errors.New("crew record does not match current task")
 
 // CurrentTask keeps one validated worker binding under its task metadata lock.
 type CurrentTask struct {
-	record   Record
-	id       firstmate.TaskID
-	taskRoot *os.Root
-	crewRoot *os.Root
+	record     Record
+	metadata   firstmate.Metadata
+	id         firstmate.TaskID
+	taskRoot   *os.Root
+	crewRoot   *os.Root
+	taskPath   string
+	crewPath   string
+	taskInfo   os.FileInfo
+	crewInfo   os.FileInfo
+	metaInfo   os.FileInfo
+	recordInfo os.FileInfo
 }
 
 // Record returns the current launch details.
@@ -25,6 +36,35 @@ func (task *CurrentTask) Record() Record {
 	record := task.record
 	record.AgentArgs = append([]string(nil), record.AgentArgs...)
 	return record
+}
+
+// CheckCurrent rejects task or crew replacement after a blocking operation.
+func (task *CurrentTask) CheckCurrent() error {
+	if task == nil || !sameDirectory(task.taskInfo, task.taskPath) ||
+		!sameDirectory(task.crewInfo, task.crewPath) {
+		return ErrStaleRecord
+	}
+	metadata, metaInfo, err := firstmate.ReadTaskWithInfoFromRoot(task.taskRoot, task.id)
+	if err != nil || !os.SameFile(metaInfo, task.metaInfo) ||
+		!reflect.DeepEqual(metadata, task.metadata) {
+		return ErrStaleRecord
+	}
+	record, recordInfo, err := readRecordWithInfo(task.crewRoot, task.id.String())
+	if err != nil || !os.SameFile(recordInfo, task.recordInfo) ||
+		!reflect.DeepEqual(record, task.record) {
+		return ErrStaleRecord
+	}
+	return nil
+}
+
+// StopPane closes the worker pane while retaining the task records for finish.
+func (task *CurrentTask) StopPane(ctx context.Context, client herdr.Client) error {
+	target, err := herdr.ParseTarget(task.record.HerdrSession, task.record.PaneID)
+	if err != nil {
+		return err
+	}
+	return presentation.CloseBoundPane(ctx, client, target,
+		task.metadata.HerdrWorkspaceID(), task.metadata.HerdrTabID(), task.CheckCurrent)
 }
 
 // WithCurrentTask holds the task metadata lock while a caller uses its crew record.
@@ -85,14 +125,22 @@ func (registry *Registry) WithCurrentTask(
 			return err
 		}
 	}
-	metadata, err := firstmate.ReadTaskFromRoot(taskRoot, id)
+	metadata, metaInfo, err := firstmate.ReadTaskWithInfoFromRoot(taskRoot, id)
+	if err != nil {
+		return err
+	}
+	record, recordInfo, err := readRecordWithInfo(crewRoot, taskID)
 	if err != nil {
 		return err
 	}
 	if !matchesTask(record, metadata) {
 		return fmt.Errorf("%w: %s", ErrStaleRecord, taskID)
 	}
-	return operation(&CurrentTask{record: record, id: id, taskRoot: taskRoot, crewRoot: crewRoot})
+	return operation(&CurrentTask{
+		record: record, metadata: metadata, id: id, taskRoot: taskRoot, crewRoot: crewRoot,
+		taskPath: state.String(), crewPath: filepath.Join(registry.root, "crew"),
+		taskInfo: taskInfo, crewInfo: crewInfo, metaInfo: metaInfo, recordInfo: recordInfo,
+	})
 }
 
 func matchesTask(record Record, metadata firstmate.Metadata) bool {

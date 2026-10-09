@@ -70,6 +70,36 @@ func TestWithCurrentTaskHoldsMetadataLockDuringOperation(t *testing.T) {
 	}
 }
 
+func TestCurrentTaskCheckRejectsReplacedCrewRecord(t *testing.T) {
+	root := t.TempDir()
+	writeCurrentTask(t, root)
+	registry, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Register(testRecord()); err != nil {
+		t.Fatal(err)
+	}
+	err = registry.WithCurrentTask("task-1", func(task *CurrentTask) error {
+		if err := task.CheckCurrent(); err != nil {
+			t.Fatal(err)
+		}
+		replacement := testRecord()
+		replacement.Name = "replacement-worker"
+		data, err := json.Marshal(replacement)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "crew", "task-1.json"), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return task.CheckCurrent()
+	})
+	if !errors.Is(err, ErrStaleRecord) {
+		t.Fatalf("replacement check error = %v", err)
+	}
+}
+
 func TestWithCurrentTaskRejectsStaleBinding(t *testing.T) {
 	for _, test := range []struct {
 		name         string
