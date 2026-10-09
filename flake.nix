@@ -43,14 +43,15 @@
           tincan-supervise = mkProgram { name = "tincan-supervise"; runtime = herdrPackage; };
           tincan-firstmate-send = mkProgram { name = "tincan-firstmate-send"; runtime = herdrPackage; };
           tincan-firstmate-check = mkProgram { name = "tincan-firstmate-check"; runtime = herdrPackage; };
+          tincan-firstmate-watch = mkProgram { name = "tincan-firstmate-watch"; runtime = herdrPackage; };
           tincan = pkgs.symlinkJoin {
             name = "tincan-0.1.0";
-            paths = [ tincan-inbox tincan-notify tincan-control tincan-supervise tincan-firstmate-send tincan-firstmate-check ];
+            paths = [ tincan-inbox tincan-notify tincan-control tincan-supervise tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch ];
           };
         in
         {
           default = tincan;
-          inherit tincan tincan-inbox tincan-notify tincan-control tincan-supervise tincan-firstmate-send tincan-firstmate-check;
+          inherit tincan tincan-inbox tincan-notify tincan-control tincan-supervise tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch;
         });
 
       formatter = forEachSystem (pkgs: pkgs.writeShellApplication {
@@ -69,10 +70,11 @@
           packages = self.packages.${pkgs.stdenv.hostPlatform.system};
         in
         {
-          inherit (packages) tincan-inbox tincan-notify tincan-control tincan-supervise tincan-firstmate-send tincan-firstmate-check;
+          inherit (packages) tincan-inbox tincan-notify tincan-control tincan-supervise tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch;
           firstmate-smoke = pkgs.runCommand "tincan-firstmate-smoke" { } ''
             ${packages.tincan-firstmate-send}/bin/tincan-firstmate-send --help >/dev/null
             ${packages.tincan-firstmate-check}/bin/tincan-firstmate-check --help >/dev/null
+            ${packages.tincan-firstmate-watch}/bin/tincan-firstmate-watch --help >/dev/null
             touch "$out"
           '';
           go-format = pkgs.runCommand "tincan-go-format" {

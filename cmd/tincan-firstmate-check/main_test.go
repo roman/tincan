@@ -296,6 +296,27 @@ func TestCheckCLILeavesEscalationOpenWhenWakeFails(t *testing.T) {
 	}
 }
 
+func TestCheckCLIRefusesConcurrentWriter(t *testing.T) {
+	state, log := checkCLIFixture(t)
+	pendingCheckRecord(t, state)
+	statePath, err := firstmate.ParseAbsolutePath(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := firstmate.AcquireRetryWriter(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Release()
+	code, _, diagnostic := callCheck("--state", state, "--grace-seconds", "0", "task-1")
+	if code != 1 || !strings.Contains(diagnostic, "another Tincan writer") {
+		t.Fatalf("code=%d diagnostic=%q", code, diagnostic)
+	}
+	if _, err := os.Stat(log); !os.IsNotExist(err) {
+		t.Fatalf("Herdr ran while writer lock held: %v", err)
+	}
+}
+
 func TestCheckCLIDeferredAttemptReachesBudget(t *testing.T) {
 	state, log := checkCLIFixture(t)
 	inbox := pendingCheckRecord(t, state)

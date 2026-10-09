@@ -79,13 +79,14 @@ nix build .#tincan-control
 nix build .#tincan-supervise
 nix build .#tincan-firstmate-send
 nix build .#tincan-firstmate-check
+nix build .#tincan-firstmate-watch
 ```
 
 Each build places exactly one command in `result/bin/`. To install one command
 in a user profile, use `nix profile install .#tincan-inbox` (or another output
-name). `nix build` and `nix profile install .#tincan` provide all six commands.
+name). `nix build` and `nix profile install .#tincan` provide all seven commands.
 `nix fmt` formats Go files with golines at 100 columns. The flake check
-verifies that formatting, builds every separate output, checks both Firstmate
+verifies that formatting, builds every separate output, checks the Firstmate
 executables, and runs the complete Go test suite once in a dedicated check.
 
 ## Example
@@ -122,15 +123,18 @@ supervision. The supervisor does not create panes.
 
 ## Optional Firstmate task compatibility
 
-`tincan-firstmate-send` and `tincan-firstmate-check` use Firstmate's ordinary
+`tincan-firstmate-send`, `tincan-firstmate-check`, and
+`tincan-firstmate-watch` use Firstmate's ordinary
 `.msg` task inbox format. This format is separate from the JSON mailbox used by
-`tincan-inbox`. Both compatibility commands require an explicit absolute
-`--state` directory and a task ID bound to a local task metadata file.
+`tincan-inbox`. The compatibility commands require an explicit absolute
+`--state` directory. Send and check also require a task ID bound to a local
+task metadata file. Watch scans the metadata files in the state directory.
 
 ```sh
 tincan-firstmate-send --state /absolute/firstmate/state task-1 --body 'Please check the task.'
 tincan-firstmate-check --state /absolute/firstmate/state task-1
 tincan-firstmate-check --state /absolute/firstmate/state --wake-root /absolute/tincan-state task-1
+tincan-firstmate-watch --state /absolute/firstmate/state --wake-root /absolute/tincan-state
 ```
 
 The send command commits a numbered `.msg` record before it tries a terminal
@@ -155,7 +159,14 @@ when it sees the exact doorbell on a single visible composer row. Full
 Firstmate composer and terminal behavior remains unsupported. These commands
 do not replace `fm-send` or `fm-watch`. They do not support remote or secondmate
 delivery, correlations, `--resolve-key`, fire-and-forget delivery, typed
-commands, or other backends. There is no resident watcher.
+commands, or other backends. The resident watcher scans local task metadata and
+checks each task on a five-second interval. `--once` runs one sweep for a
+scheduled check or a diagnostic. It continues checking other tasks when one
+task fails. The one-shot check and resident watcher share one Tincan retry
+writer lock. A second Tincan writer exits without changing retry state.
+
+The Tincan lock does not coordinate with Firstmate's Bash watcher. Stop the
+Bash watcher before starting the Tincan watcher against the same state directory.
 
 With `--wake-root`, the check command publishes an escalation to Tincan's JSON
 inbox under recipient `firstmate`. The wake identifies the absolute Firstmate

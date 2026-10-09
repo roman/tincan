@@ -14,7 +14,6 @@ import (
 	"github.com/alecthomas/kong"
 	"github.com/roman/tincan/pkg/firstmate"
 	"github.com/roman/tincan/pkg/herdr"
-	"github.com/roman/tincan/pkg/inbox"
 )
 
 type cli struct {
@@ -117,6 +116,13 @@ func runWithCheck(args []string, stdout, stderr io.Writer, execute checkExecutor
 		fmt.Fprintln(stderr, "tincan-firstmate-check:", err)
 		return 2
 	}
+	writer, err := firstmate.AcquireRetryWriter(state)
+	if err != nil {
+		fmt.Fprintln(stderr, "tincan-firstmate-check:", err)
+		return 1
+	}
+	defer writer.Release()
+	state = writer.StateDir
 	store, err := firstmate.NewRetryStore(state, id, firstmate.NewRetryPolicy(grace, maximum))
 	if err != nil {
 		fmt.Fprintln(stderr, "tincan-firstmate-check:", err)
@@ -137,28 +143,12 @@ func runWithCheck(args []string, stdout, stderr io.Writer, execute checkExecutor
 		Doorbell: endpoint,
 	}
 	if command.WakeRoot != "" {
-		store, err := inbox.New(command.WakeRoot)
+		publisher, err := firstmate.NewInboxPublisher(command.WakeRoot)
 		if err != nil {
 			fmt.Fprintln(stderr, "tincan-firstmate-check:", err)
 			return 2
 		}
-		recipient, err := inbox.ParseRecipient("firstmate")
-		if err != nil {
-			fmt.Fprintln(stderr, "tincan-firstmate-check:", err)
-			return 2
-		}
-		check.Publish = func(_ context.Context, escalation firstmate.Escalation) error {
-			key := "firstmate-escalation:" + escalation.StateDir.String() + ":" +
-				escalation.TaskID.String() + ":" + escalation.Record.String() + ":" +
-				escalation.SpawnGeneration
-			body := fmt.Sprintf(
-				"kind: task-message-stale\nstate: %s\ntask: %s\nrecord: %s\nspawn_generation: %s\n",
-				escalation.StateDir, escalation.TaskID, escalation.Record,
-				escalation.SpawnGeneration,
-			)
-			_, err := store.Send(recipient, key, body)
-			return err
-		}
+		check.Publish = publisher
 	}
 	now := time.Now()
 	result, err := execute(check, now)
