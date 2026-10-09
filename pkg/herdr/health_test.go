@@ -63,6 +63,50 @@ func TestParseTarget(t *testing.T) {
 		}
 	}
 }
+
+func TestConfirmPaneGoneRequiresExactNotFound(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		response  healthResponse
+		wantError error
+	}{
+		{"missing pane", healthResponse{stderr: `{"error":{"code":"pane_not_found"}}`, err: errors.New("exit 1")}, nil},
+		{"missing pane on stdout", healthResponse{out: `{"error":{"code":"pane_not_found"}}`}, nil},
+		{"present pane", healthResponse{out: `{"result":{"pane":{"pane_id":"pane-1"}}}`}, ErrPanePresent},
+		{"missing agent", healthResponse{stderr: `{"error":{"code":"agent_not_found"}}`, err: errors.New("exit 1")}, ErrCommand},
+		{"server unavailable", healthResponse{stderr: `{"error":{"code":"server_unavailable"}}`, err: errors.New("exit 1")}, ErrCommand},
+		{"conflicting errors", healthResponse{out: `{"error":{"code":"pane_not_found"}}`, stderr: `{"error":{"code":"server_unavailable"}}`, err: errors.New("exit 1")}, ErrCommand},
+		{"same response conflict", healthResponse{out: `{"result":{},"error":{"code":"pane_not_found"}}`}, ErrCommand},
+		{"conflicting result", healthResponse{out: `{"error":{"code":"pane_not_found"}}`, stderr: `{"result":{"pane":{"pane_id":"pane-1"}}}`}, ErrCommand},
+		{"unstructured failure", healthResponse{err: errors.New("transport failed")}, ErrCommand},
+		{"wrong pane", healthResponse{out: `{"result":{"pane":{"pane_id":"pane-2"}}}`}, ErrResponse},
+		{"empty response", healthResponse{}, ErrResponse},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			target, err := ParseTarget("crew", "pane-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			runner := &healthRunner{responses: []healthResponse{test.response}}
+			err = (Client{SessionRunner: runner}).ConfirmPaneGone(context.Background(), target)
+			if !errors.Is(err, test.wantError) {
+				t.Fatalf("ConfirmPaneGone error = %v, want %v", err, test.wantError)
+			}
+			if !reflect.DeepEqual(
+				runner.calls,
+				[]healthCall{{"crew", []string{"pane", "get", "pane-1", "--session", "crew"}}},
+			) {
+				t.Fatalf("calls = %v", runner.calls)
+			}
+		})
+	}
+	if err := (Client{}).ConfirmPaneGone(context.Background(), Target{}); !errors.Is(
+		err,
+		ErrResponse,
+	) {
+		t.Fatalf("invalid target error = %v", err)
+	}
+}
 func TestHealth(t *testing.T) {
 	const pane = `{"result":{"pane":{"pane_id":"pane-1"}}}`
 	const working = `{"result":{"agent":{"pane_id":"pane-1","agent_status":"working"}}}`

@@ -3,12 +3,16 @@ package herdr
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 )
+
+var ErrPanePresent = errors.New("Herdr pane is still present")
 
 // Target binds every Herdr health read to one named session and pane.
 type Target struct{ session, paneID string }
@@ -144,6 +148,60 @@ func healthBody(stdout, stderr []byte) (json.RawMessage, string) {
 		}
 	}
 	return result, ""
+}
+
+// ConfirmPaneGone requires a structured absence for the exact recorded pane.
+// A stopped server or a missing agent leaves the pane's fate uncertain.
+func (client Client) ConfirmPaneGone(ctx context.Context, target Target) error {
+	if target.session == "" || target.paneID == "" {
+		return ErrResponse
+	}
+	stdout, stderr, err := client.sessionRead(ctx, target, "pane", "get", target.paneID)
+	missing := false
+	present := false
+	for _, data := range [][]byte{stdout, stderr} {
+		if len(data) == 0 {
+			continue
+		}
+		var response struct {
+			Result json.RawMessage `json:"result"`
+			Error  struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(data, &response) != nil {
+			return ErrResponse
+		}
+		if response.Error.Code != "" {
+			if len(response.Result) > 0 || response.Error.Code != "pane_not_found" {
+				return fmt.Errorf("%w: conflicting pane lookup response", ErrCommand)
+			}
+			missing = true
+			continue
+		}
+		var result struct {
+			Pane struct {
+				PaneID string `json:"pane_id"`
+			} `json:"pane"`
+		}
+		if json.Unmarshal(response.Result, &result) != nil || result.Pane.PaneID != target.paneID {
+			return ErrResponse
+		}
+		present = true
+	}
+	if missing && present {
+		return fmt.Errorf("%w: conflicting pane lookup response", ErrCommand)
+	}
+	if missing {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("%w: pane lookup: %v", ErrCommand, err)
+	}
+	if present {
+		return ErrPanePresent
+	}
+	return ErrResponse
 }
 
 // Health classifies one exact Herdr endpoint with session-scoped reads.
