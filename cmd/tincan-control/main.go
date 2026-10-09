@@ -12,6 +12,7 @@ import (
 
 type cli struct {
 	Herdr     string           `help:"Herdr executable path." default:"herdr" env:"TINCAN_HERDR"`
+	Session   string           `help:"Named Herdr session to control."`
 	Status    statusCommand    `cmd:"" help:"Read an agent's observed state."`
 	Interrupt interruptCommand `cmd:"" help:"Interrupt a working agent and wait for a settled state."`
 	Start     startCommand     `cmd:"" help:"Start an agent in an empty shell pane."`
@@ -68,6 +69,17 @@ func printAgent(agent herdr.Agent) {
 	fmt.Printf("pane_id: %s\nstatus: %s\n", agent.PaneID, agent.Status)
 }
 
+func controllerFor(options cli, backend herdr.Client) (control.Controller, error) {
+	if options.Session != "" {
+		bound, err := backend.ForSession(options.Session)
+		if err != nil {
+			return control.Controller{}, err
+		}
+		backend = bound
+	}
+	return control.Controller{Backend: backend}, nil
+}
+
 func main() {
 	var options cli
 	command := kong.Parse(
@@ -76,8 +88,13 @@ func main() {
 		kong.Description("Control Herdr-hosted agents."),
 	)
 	backend := herdr.NewClient(options.Herdr)
+	controller, err := controllerFor(options, backend)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
 	env := &environment{
-		controller: control.Controller{Backend: backend},
+		controller: controller,
 		context:    context.Background(),
 	}
 	if err := command.Run(env); err != nil {
