@@ -84,7 +84,7 @@ func main() {
 	var options cli
 	command := kong.Parse(
 		&options,
-		kong.Name("tincan-control"),
+		kong.Name("concierge-control"),
 		kong.Description("Control Herdr-hosted agents."),
 	)
 	backend := herdr.NewClient(options.Herdr)

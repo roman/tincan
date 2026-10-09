@@ -1,5 +1,5 @@
 {
-  description = "Independent agent communication and supervision tools";
+  description = "Tincan communication and Concierge supervisor tools";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/release-25.11";
   inputs.herdr.url = "github:herdrdev/herdr/v0.9.3";
@@ -39,25 +39,29 @@
             '';
           });
           tincan-inbox = mkProgram { name = "tincan-inbox"; };
-          tincan-brief = mkProgram { name = "tincan-brief"; };
-          tincan-crew = mkProgram { name = "tincan-crew"; };
-	          tincan-backlog = mkProgram { name = "tincan-backlog"; runtime = tasksAxi; };
-	          tincan-task = mkProgram { name = "tincan-task"; runtime = herdrPackage; };
           tincan-notify = mkProgram { name = "tincan-notify"; runtime = herdrPackage; };
-          tincan-control = mkProgram { name = "tincan-control"; runtime = herdrPackage; };
-          tincan-supervise = mkProgram { name = "tincan-supervise"; runtime = herdrPackage; };
           tincan-firstmate-send = mkProgram { name = "tincan-firstmate-send"; runtime = herdrPackage; };
           tincan-firstmate-check = mkProgram { name = "tincan-firstmate-check"; runtime = herdrPackage; };
           tincan-firstmate-watch = mkProgram { name = "tincan-firstmate-watch"; runtime = herdrPackage; };
           tincan-firstmate-show = mkProgram { name = "tincan-firstmate-show"; };
+          concierge-brief = mkProgram { name = "concierge-brief"; };
+          concierge-worker = mkProgram { name = "concierge-worker"; };
+          concierge-backlog = mkProgram { name = "concierge-backlog"; runtime = tasksAxi; };
+          concierge-task = mkProgram { name = "concierge-task"; runtime = herdrPackage; };
+          concierge-control = mkProgram { name = "concierge-control"; runtime = herdrPackage; };
+          concierge-supervise = mkProgram { name = "concierge-supervise"; runtime = herdrPackage; };
           tincan = pkgs.symlinkJoin {
             name = "tincan-0.1.0";
-            paths = [ tincan-inbox tincan-brief tincan-crew tincan-backlog tincan-task tincan-notify tincan-control tincan-supervise tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show ];
+            paths = [ tincan-inbox tincan-notify tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show ];
+          };
+          concierge = pkgs.symlinkJoin {
+            name = "concierge-0.1.0";
+            paths = [ concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise ];
           };
         in
         {
           default = tincan;
-          inherit tincan tincan-inbox tincan-brief tincan-crew tincan-backlog tincan-task tincan-notify tincan-control tincan-supervise tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show;
+          inherit tincan concierge tincan-inbox tincan-notify tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise;
         });
 
       formatter = forEachSystem (pkgs: pkgs.writeShellApplication {
@@ -77,17 +81,24 @@
           tasksAxi = pkgs.callPackage ./nix/tasks-axi.nix { };
         in
         {
-          inherit (packages) tincan-inbox tincan-brief tincan-crew tincan-backlog tincan-task tincan-notify tincan-control tincan-supervise tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show;
-          firstmate-smoke = pkgs.runCommand "tincan-firstmate-smoke" { } ''
-            ${packages.tincan-crew}/bin/tincan-crew --help >/dev/null
-	            ${packages.tincan-backlog}/bin/tincan-backlog --help >/dev/null
-            mkdir "$TMPDIR/tincan"
-            PATH=/usr/bin:/bin ${packages.tincan-backlog}/bin/tincan-backlog \
-              --root "$TMPDIR/tincan" add smoke-a1 'Packaged intake' \
-              --kind ship --repo exmachina >/dev/null
-            grep -q 'smoke-a1 - Packaged intake' "$TMPDIR/tincan/backlog.md"
-            ${packages.tincan-task}/bin/tincan-task --help >/dev/null
-            ${packages.tincan}/bin/tincan-brief --help >/dev/null
+          inherit (packages) tincan-inbox tincan-notify tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise;
+          concierge-smoke = pkgs.runCommand "concierge-smoke" { } ''
+            ${packages.concierge-worker}/bin/concierge-worker --help >/dev/null
+            ${packages.concierge-backlog}/bin/concierge-backlog --help >/dev/null
+            mkdir "$TMPDIR/concierge"
+            PATH=/usr/bin:/bin ${packages.concierge-backlog}/bin/concierge-backlog \
+              --root "$TMPDIR/concierge" add smoke-a1 'Packaged intake' \
+              --kind task --repo exmachina >/dev/null
+            grep -q 'smoke-a1 - Packaged intake' "$TMPDIR/concierge/backlog.md"
+            ${packages.concierge-task}/bin/concierge-task --help >/dev/null
+            for command in concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise; do
+              test -x "${packages.concierge}/bin/$command"
+            done
+            for command in tincan-inbox tincan-notify tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show; do
+              test -x "${packages.tincan}/bin/$command"
+            done
+            test ! -e ${packages.tincan}/bin/concierge-brief
+            test ! -e ${packages.concierge}/bin/tincan-inbox
             ${packages.tincan-firstmate-send}/bin/tincan-firstmate-send --help >/dev/null
             ${packages.tincan-firstmate-check}/bin/tincan-firstmate-check --help >/dev/null
             ${packages.tincan-firstmate-watch}/bin/tincan-firstmate-watch --help >/dev/null

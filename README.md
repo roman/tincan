@@ -1,24 +1,25 @@
-# Tincan
+# Tincan and Concierge
 
 > [!NOTE]
 > Herdr is currently the only terminal adapter supported by `tincan-notify`.
-> `tincan-control` and `tincan-supervise` use Herdr directly.
+> `concierge-control` and `concierge-supervise` use Herdr directly.
 > The optional Firstmate compatibility commands support local Herdr tasks only.
 
-Tincan is inspired by Firstmate's communication scripts. It provides small Go
-programs for agent messaging and control. Each program can run on its own.
-The programs share reusable packages under `pkg/`.
+Tincan provides small Go programs for agent messaging. Concierge provides
+local task and worker supervision. Each program can run on its own. The
+programs share reusable packages under `pkg/` while the two command sets live
+in this repository.
 
 | Program | Responsibility |
 | --- | --- |
 | `tincan-inbox` | Store, list, read, and acknowledge messages for a recipient. |
-| `tincan-brief` | Show pending primary wakes, local tasks, and registered workers at session start. |
-| `tincan-crew` | Record and inspect local worker launch identities. |
-| `tincan-backlog` | Queue a task in a tasks-axi backlog under the Tincan root. |
-| `tincan-task` | Adopt a live local worker, cancel an incomplete adoption, or list task records. |
+| `concierge-brief` | Show pending primary wakes, local tasks, and registered workers at session start. |
+| `concierge-worker` | Record and inspect local worker launch identities. |
+| `concierge-backlog` | Queue a task in a tasks-axi backlog under the selected supervisor root. |
+| `concierge-task` | Adopt a live local worker, cancel an incomplete adoption, or list task records. |
 | `tincan-notify` | Ring an agent while its inbox has pending messages. |
-| `tincan-control` | Inspect, start, or interrupt an agent. |
-| `tincan-supervise` | Check an agent and restart it after confirmed absence. |
+| `concierge-control` | Inspect, start, or interrupt an agent. |
+| `concierge-supervise` | Check an agent and restart it after confirmed absence. |
 
 The inbox is the durable handoff. A sender stores a message with
 `tincan-inbox send`. The notifier rings the recipient at intervals until the
@@ -62,7 +63,7 @@ Configure the agent's resume identity, model, and effort there when needed. A
 restart alone launches an agent; it does not restore its prior work. The
 durable inbox keeps pending messages available after a restart.
 
-Tincan control does not yet exit or relaunch agents. Safe exit requires proof
+Concierge control does not yet exit or relaunch agents. Safe exit requires proof
 that the agent input line is empty. Herdr 0.9.3 does not expose that state.
 
 ## Build and test
@@ -79,22 +80,26 @@ nix develop
 nix fmt
 go test ./...
 nix flake check --no-write-lock-file
+nix build .#tincan
+nix build .#concierge
 nix build .#tincan-inbox
-nix build .#tincan-brief
-nix build .#tincan-crew
-nix build .#tincan-task
+nix build .#concierge-brief
+nix build .#concierge-worker
+nix build .#concierge-backlog
+nix build .#concierge-task
 nix build .#tincan-notify
-nix build .#tincan-control
-nix build .#tincan-supervise
+nix build .#concierge-control
+nix build .#concierge-supervise
 nix build .#tincan-firstmate-send
 nix build .#tincan-firstmate-check
 nix build .#tincan-firstmate-watch
 nix build .#tincan-firstmate-show
 ```
 
-Each build places exactly one command in `result/bin/`. To install one command
+Each individual command build places one command in `result/bin/`. To install one command
 in a user profile, use `nix profile install .#tincan-inbox` (or another output
-name). `nix build` and `nix profile install .#tincan` provide all eleven commands.
+name). `.#tincan` provides the message commands and legacy Firstmate message
+compatibility commands. `.#concierge` provides the six supervisor commands.
 `nix fmt` formats Go files with golines at 100 columns. The flake check
 verifies that formatting, builds every separate output, checks the Firstmate
 executables, and runs the complete Go test suite once in a dedicated check.
@@ -115,23 +120,23 @@ to ten rows by default and reports the full count. Use `--limit` for up to 100
 rows. It reads state without creating it.
 
 ```sh
-tincan-brief --root /absolute/tincan-state
-tincan-task --root /absolute/tincan-state list
+concierge-brief --root /absolute/tincan-state
+concierge-task --root /absolute/tincan-state list
 ```
 
 Queue a task in the root backlog with pinned `tasks-axi` 0.2.6 installed on
-`PATH`. The command creates `backlog.md` under the existing Tincan state root
+`PATH`. The command creates `backlog.md` under the selected supervisor root
 when the file is absent. A repeated task ID returns an error and leaves the
-existing task unchanged. After adopting a live local worker with `tincan-task`,
+existing task unchanged. After adopting a live local worker with `concierge-task`,
 start the queued backlog row. The start command requires matching task metadata
-and a current crew record. It rejects blocked or held work and can be retried
+and a current worker record. It rejects blocked or held work and can be retried
 after an interrupted transition. The start command requires version 0.2.6
 because it uses that version's backlog lock protocol. Task completion still
 needs a lifecycle command.
 
 ```sh
-tincan-backlog --root /absolute/tincan-state add task-1 'Fix startup' --kind ship --repo exmachina
-tincan-backlog --root /absolute/tincan-state start task-1
+concierge-backlog --root /absolute/tincan-state add task-1 'Fix startup' --kind task --repo exmachina
+concierge-backlog --root /absolute/tincan-state start task-1
 ```
 
 The second command keeps running. The worker reads the pending message and
@@ -146,9 +151,9 @@ tincan-inbox --root ./tincan-state ack worker-1 MESSAGE_ID
 Herdr agent control and supervision use a live agent name or pane ID:
 
 ```sh
-tincan-control status worker-1
-tincan-control interrupt worker-1
-tincan-supervise --pane PANE_ID --name worker-1 --kind codex
+concierge-control status worker-1
+concierge-control interrupt worker-1
+concierge-supervise --pane PANE_ID --name worker-1 --kind codex
 ```
 
 The supervisor runs until it receives an interrupt or termination signal.
@@ -159,28 +164,28 @@ supervision. The supervisor does not create panes.
 
 ## Optional Firstmate task compatibility
 
-The crew registry records the launch details for an existing local task. It
+The worker registry records the launch details for an existing local task. It
 copies the pane, project, worktree, harness, and spawn generation from the task
 metadata. Supply the Herdr name and the exact agent launch arguments used for
 resumption. Repeated registration with identical details succeeds; changed
 details require an explicit future transition and produce a conflict now.
 
 ```sh
-tincan-crew --root /absolute/tincan-state register task-1 --name worker-1 --agent-arg resume --agent-arg THREAD_ID
-tincan-crew --root /absolute/tincan-state list
-tincan-crew --root /absolute/tincan-state show task-1
+concierge-worker --root /absolute/tincan-state register task-1 --name worker-1 --agent-arg resume --agent-arg THREAD_ID
+concierge-worker --root /absolute/tincan-state list
+concierge-worker --root /absolute/tincan-state show task-1
 ```
 
 Run task-bound supervision after registration:
 
 ```sh
-tincan-supervise --root /absolute/tincan-state --task task-1
+concierge-supervise --root /absolute/tincan-state --task task-1
 ```
 
 Task mode checks the current task metadata, the registered worker, the named
 Herdr session, and the pane's live foreground directory before restart. It
 records a new spawn generation before launching the replacement. A pending
-generation is recovered after an interrupted transition. `tincan-crew show`
+generation is recovered after an interrupted transition. `concierge-worker show`
 reports that pending value until recovery completes. The manual pane flags
 remain available for a worker without task metadata.
 

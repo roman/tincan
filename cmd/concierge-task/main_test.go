@@ -312,7 +312,7 @@ func TestListReportsAdoptedAndEmptyTaskState(t *testing.T) {
 		t.Fatalf("list code=%d output=%s", code, output.String())
 	}
 	for _, text := range []string{"tasks: 1 found", "tasks[1]{task,kind,worktree}:",
-		fmt.Sprintf("  %q,%q,%q\n", "task-1", "crewmate", worktree)} {
+		fmt.Sprintf("  %q,%q,%q\n", "task-1", "worker", worktree)} {
 		if !strings.Contains(output.String(), text) {
 			t.Fatalf("list missing %q: %s", text, output.String())
 		}

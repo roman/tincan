@@ -25,7 +25,7 @@ func TestBriefShowsEmptyState(t *testing.T) {
 		t.Fatalf("exit code %d: %s", code, output.String())
 	}
 	for _, line := range []string{"bin: ", "description: ",
-		"wakes: 0 pending for firstmate", "crew: 0 registered"} {
+		"wakes: 0 pending for firstmate", "workers: 0 registered"} {
 		if !strings.Contains(output.String(), line) {
 			t.Fatalf("missing %q in %q", line, output.String())
 		}
@@ -92,7 +92,7 @@ func TestBriefLimitsLocalTaskRows(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "tasks: 1 of 2 found") ||
 		!strings.Contains(output.String(), "tasks[1]{task,kind,worktree}:") ||
-		!strings.Contains(output.String(), "tincan-task --root") ||
+		!strings.Contains(output.String(), "concierge-task --root") ||
 		strings.Contains(output.String(), `"task-2","ship"`) {
 		t.Fatalf("limited tasks: %s", output.String())
 	}
@@ -147,11 +147,11 @@ func TestBriefShowsPendingWakesAndRegisteredCrew(t *testing.T) {
 		"wakes[1]{id,body}:\n" +
 		"  \"" + message.ID.String() + "\",\"task: task-1\\nrecord: 001.msg\\n\"\n" +
 		"tasks: 0 found\n" +
-		"crew: 1 registered\n" +
-		"crew[1]{task,name,session,pane_id}:\n" +
+		"workers: 1 registered\n" +
+		"workers[1]{task,name,session,pane_id}:\n" +
 		"  \"task-1\",\"true\",\"null\",\"42\"\n" +
 		"help[2]: " + quoted("tincan-inbox --root '"+root+"' read firstmate <id>") +
-		"," + quoted("tincan-crew --root '"+root+"' show <task-id>") + "\n"
+		"," + quoted("concierge-worker --root '"+root+"' show <task-id>") + "\n"
 	if output.String() != want {
 		t.Fatalf("brief = %q, want %q", output.String(), want)
 	}
@@ -188,10 +188,10 @@ func TestBriefSeparatesPendingAdoptionFromRegisteredCrew(t *testing.T) {
 	if code := run([]string{"--root", root}, &output); code != 0 {
 		t.Fatalf("code=%d output=%s", code, output.String())
 	}
-	if !strings.Contains(output.String(), "crew: 0 registered\n") ||
+	if !strings.Contains(output.String(), "workers: 0 registered\n") ||
 		!strings.Contains(output.String(), "pending_adoptions: 1 of 1\n") ||
-		strings.Contains(output.String(), "crew[1]") {
-		t.Fatalf("pending adoption appeared as crew: %s", output.String())
+		strings.Contains(output.String(), "workers[1]") {
+		t.Fatalf("pending adoption appeared as workers: %s", output.String())
 	}
 }
 

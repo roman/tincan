@@ -15,7 +15,7 @@ import (
 )
 
 type cli struct {
-	Root     string          `help:"Absolute Tincan state root." required:""`
+	Root     string          `help:"Absolute Concierge state root." required:""`
 	Register registerCommand `cmd:"" help:"Record launch details for an existing local task."`
 	Show     showCommand     `cmd:"" help:"Show one registered worker."`
 	List     listCommand     `cmd:"" help:"List registered workers."`
@@ -48,11 +48,11 @@ func commandHelp(args []string) string {
 	for _, argument := range args {
 		switch argument {
 		case "register":
-			return "register flags: --root, --name, --agent-arg, --help; usage: tincan-crew --root ROOT register TASK_ID --name NAME --agent-arg ARG"
+			return "register flags: --root, --name, --agent-arg, --help; usage: concierge-worker --root ROOT register TASK_ID --name NAME --agent-arg ARG"
 		case "show":
-			return "show flags: --root, --help; usage: tincan-crew --root ROOT show TASK_ID"
+			return "show flags: --root, --help; usage: concierge-worker --root ROOT show TASK_ID"
 		case "list":
-			return "list flags: --root, --help; usage: tincan-crew --root ROOT list"
+			return "list flags: --root, --help; usage: concierge-worker --root ROOT list"
 		}
 	}
 	return "commands: register, show, list; global flags: --root, --help"
@@ -62,7 +62,7 @@ func run(args []string, stdout io.Writer) int {
 	var command cli
 	parser, err := kong.New(
 		&command,
-		kong.Name("tincan-crew"),
+		kong.Name("concierge-worker"),
 		kong.Description("Keep local worker launch details for recovery."),
 		kong.Writers(stdout, io.Discard),
 	)
@@ -90,21 +90,21 @@ func run(args []string, stdout io.Writer) int {
 				return failure(
 					stdout,
 					1,
-					fmt.Errorf("no crew record for task %s", command.Show.TaskID),
+					fmt.Errorf("no worker record for task %s", command.Show.TaskID),
 					fmt.Sprintf(
-						"tincan-crew --root %s register %s --name NAME --agent-arg ARG",
+						"concierge-worker --root %s register %s --name NAME --agent-arg ARG",
 						command.Root,
 						command.Show.TaskID,
 					),
 				)
 			}
-			return failure(stdout, 1, err, "inspect the crew state directory")
+			return failure(stdout, 1, err, "inspect the worker state directory")
 		}
 		printRecord(stdout, record)
 	case "list":
 		records, err := registry.List()
 		if err != nil {
-			return failure(stdout, 1, err, "inspect the crew state directory")
+			return failure(stdout, 1, err, "inspect the worker state directory")
 		}
 		var registered, pending []crew.Record
 		for _, record := range records {
@@ -115,7 +115,7 @@ func run(args []string, stdout io.Writer) int {
 			registered = append(registered, record)
 		}
 		fmt.Fprintf(stdout, "count: %d\n", len(registered))
-		fmt.Fprintf(stdout, "crew[%d]{task,name,session,pane_id}:\n", len(registered))
+		fmt.Fprintf(stdout, "workers[%d]{task,name,session,pane_id}:\n", len(registered))
 		for _, record := range registered {
 			fmt.Fprintf(
 				stdout,
@@ -201,7 +201,7 @@ func register(command *cli, registry *crew.Registry, stdout io.Writer) int {
 			stdout,
 			1,
 			operationErr,
-			fmt.Sprintf("tincan-crew --root %s list", command.Root),
+			fmt.Sprintf("concierge-worker --root %s list", command.Root),
 		)
 	}
 	printRecord(stdout, record)

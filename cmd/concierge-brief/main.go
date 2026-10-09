@@ -16,7 +16,7 @@ import (
 )
 
 type cli struct {
-	Root      string `help:"Absolute Tincan state root; defaults to .tincan in the current directory." env:"TINCAN_HOME"`
+	Root      string `help:"Absolute Concierge state root; defaults to .tincan in the current directory." env:"TINCAN_HOME"`
 	Recipient string `help:"Primary inbox recipient." default:"firstmate"`
 	Limit     int    `help:"Maximum rows from each source." default:"10"`
 }
@@ -120,12 +120,12 @@ func printBrief(output io.Writer, root string, recipient inbox.Recipient, limit 
 		}
 	}
 	if workerCount == len(workers) {
-		fmt.Fprintf(output, "crew: %d registered\n", workerCount)
+		fmt.Fprintf(output, "workers: %d registered\n", workerCount)
 	} else {
-		fmt.Fprintf(output, "crew: %d of %d registered\n", workerCount, len(workers))
+		fmt.Fprintf(output, "workers: %d of %d registered\n", workerCount, len(workers))
 	}
 	if workerCount > 0 {
-		fmt.Fprintf(output, "crew[%d]{task,name,session,pane_id}:\n", workerCount)
+		fmt.Fprintf(output, "workers[%d]{task,name,session,pane_id}:\n", workerCount)
 		for _, worker := range workers[:workerCount] {
 			fmt.Fprintf(output, "  %s,%s,%s,%s\n", quoted(worker.TaskID), quoted(worker.Name),
 				quoted(worker.HerdrSession), quoted(worker.PaneID))
@@ -149,13 +149,13 @@ func printBrief(output io.Writer, root string, recipient inbox.Recipient, limit 
 			" list "+recipient.String())
 	}
 	if taskCount > 0 {
-		hints = append(hints, "tincan-task --root "+shellQuote(root)+" list")
+		hints = append(hints, "concierge-task --root "+shellQuote(root)+" list")
 	}
 	if workerCount > 0 || pendingCount > 0 {
-		hints = append(hints, "tincan-crew --root "+shellQuote(root)+" show <task-id>")
+		hints = append(hints, "concierge-worker --root "+shellQuote(root)+" show <task-id>")
 	}
 	if workerCount < len(workers) || pendingCount < len(pending) {
-		hints = append(hints, "tincan-crew --root "+shellQuote(root)+" list")
+		hints = append(hints, "concierge-worker --root "+shellQuote(root)+" list")
 	}
 	if len(hints) > 0 {
 		encoded := make([]string, 0, len(hints))
@@ -173,18 +173,18 @@ func run(args []string, output io.Writer) int {
 		return 0
 	}
 	var options cli
-	parser, err := kong.New(&options, kong.Name("tincan-brief"),
+	parser, err := kong.New(&options, kong.Name("concierge-brief"),
 		kong.Description("Show pending primary wakes, local tasks, and registered workers."),
 		kong.Writers(output, io.Discard))
 	if err != nil {
-		return failure(output, 2, err, "tincan-brief --root ROOT [--recipient NAME] [--limit N]")
+		return failure(output, 2, err, "concierge-brief --root ROOT [--recipient NAME] [--limit N]")
 	}
 	if _, err := parser.Parse(args); err != nil {
-		return failure(output, 2, err, "tincan-brief --root ROOT [--recipient NAME] [--limit N]")
+		return failure(output, 2, err, "concierge-brief --root ROOT [--recipient NAME] [--limit N]")
 	}
 	if options.Limit < 1 || options.Limit > 100 {
 		return failure(output, 2, fmt.Errorf("--limit must be from 1 to 100"),
-			"tincan-brief --root ROOT --limit N")
+			"concierge-brief --root ROOT --limit N")
 	}
 	if options.Root == "" {
 		workingDirectory, err := os.Getwd()
@@ -201,7 +201,7 @@ func run(args []string, output io.Writer) int {
 		return failure(output, 2, err, "use a valid --recipient name")
 	}
 	if err := printBrief(output, options.Root, recipient, options.Limit); err != nil {
-		return failure(output, 1, err, "inspect the Tincan state root")
+		return failure(output, 1, err, "inspect the Concierge state root")
 	}
 	return 0
 }

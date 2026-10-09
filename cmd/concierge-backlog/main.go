@@ -16,7 +16,7 @@ import (
 )
 
 type cli struct {
-	Root   string        `help:"Absolute Tincan state root." required:""`
+	Root   string        `help:"Absolute Concierge state root." required:""`
 	Add    addCommand    `cmd:"" help:"Queue a task in the root backlog."`
 	Start  startCommand  `cmd:"" help:"Start a queued task with a current worker binding."`
 	Finish finishCommand `cmd:"" help:"Complete a local task after its Herdr pane is gone."`
@@ -53,7 +53,7 @@ type addResult struct {
 }
 
 func help() string {
-	return "usage: tincan-backlog --root ROOT add ID TITLE --kind KIND --repo REPO; or start ID; or finish ID --mode close|retain"
+	return "usage: concierge-backlog --root ROOT add ID TITLE --kind KIND --repo REPO; or start ID; or finish ID --mode close|retain"
 }
 
 func fail(output io.Writer, code int, err error, next string) int {
@@ -72,7 +72,11 @@ func runWithClient(
 	client herdr.Client,
 ) int {
 	var command cli
-	parser, err := kong.New(&command, kong.Name("tincan-backlog"), kong.Writers(output, io.Discard))
+	parser, err := kong.New(
+		&command,
+		kong.Name("concierge-backlog"),
+		kong.Writers(output, io.Discard),
+	)
 	if err != nil {
 		return fail(output, 2, err, help())
 	}
@@ -93,8 +97,8 @@ func runWithClient(
 		return fail(
 			output,
 			1,
-			fmt.Errorf("Tincan root must be an existing directory: %s", root.String()),
-			"create the local Tincan state root first",
+			fmt.Errorf("Concierge state root must be an existing directory: %s", root.String()),
+			"create the local Concierge state root first",
 		)
 	}
 	backlogFile := filepath.Join(root.String(), "backlog.md")

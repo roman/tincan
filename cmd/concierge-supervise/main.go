@@ -15,7 +15,7 @@ import (
 )
 
 type cli struct {
-	Root             string        `help:"Absolute Tincan state root for a registered task."`
+	Root             string        `help:"Absolute Concierge state root for a registered task."`
 	Task             string        `help:"Registered local task ID to supervise."`
 	Pane             string        `help:"Herdr pane ID for manual supervision."`
 	Name             string        `help:"Agent name for manual supervision."`
@@ -60,7 +60,7 @@ func main() {
 	defer stop()
 	worker, err := workerFromCLI(args, herdr.NewClient(args.Herdr))
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "tincan-supervise:", err)
+		fmt.Fprintln(os.Stderr, "concierge-supervise:", err)
 		os.Exit(2)
 	}
 	config := supervise.Config{
@@ -69,7 +69,7 @@ func main() {
 		RestartWindow:    args.RestartWindow,
 	}
 	if err := supervise.Run(ctx, worker, config); err != nil {
-		fmt.Fprintln(os.Stderr, "tincan-supervise:", err)
+		fmt.Fprintln(os.Stderr, "concierge-supervise:", err)
 		os.Exit(1)
 	}
 }

@@ -14,7 +14,7 @@ import (
 )
 
 type cli struct {
-	Root   string        `help:"Absolute Tincan state root." required:""`
+	Root   string        `help:"Absolute Concierge state root." required:""`
 	Adopt  adoptCommand  `cmd:"" help:"Record a live local Herdr worker as a task."`
 	Stop   stopCommand   `cmd:"" help:"Close the recorded worker pane for a local task."`
 	Cancel cancelCommand `cmd:"" help:"Release a pending adoption without task metadata."`
@@ -38,12 +38,12 @@ type adoptCommand struct {
 	Name      string   `help:"Herdr worker name for restart." required:""`
 	Project   string   `help:"Absolute project directory." required:""`
 	Worktree  string   `help:"Absolute worker directory." required:""`
-	Kind      string   `help:"Task role." default:"crewmate"`
+	Kind      string   `help:"Task role." default:"worker"`
 	AgentArgs []string `name:"agent-arg" sep:"none" help:"Worker restart argument; repeat for each argument."`
 }
 
 func help() string {
-	return "usage: tincan-task --root ROOT adopt TASK_ID --session SESSION --pane PANE --name NAME --project PROJECT --worktree WORKTREE --agent-arg ARG; or stop TASK_ID; or cancel TASK_ID; or list"
+	return "usage: concierge-task --root ROOT adopt TASK_ID --session SESSION --pane PANE --name NAME --project PROJECT --worktree WORKTREE --agent-arg ARG; or stop TASK_ID; or cancel TASK_ID; or list"
 }
 
 func fail(output io.Writer, code int, err error, next string) int {
@@ -53,7 +53,7 @@ func fail(output io.Writer, code int, err error, next string) int {
 
 func run(ctx context.Context, arguments []string, output io.Writer, client herdr.Client) int {
 	var command cli
-	parser, err := kong.New(&command, kong.Name("tincan-task"), kong.Writers(output, io.Discard))
+	parser, err := kong.New(&command, kong.Name("concierge-task"), kong.Writers(output, io.Discard))
 	if err != nil {
 		return fail(output, 2, err, help())
 	}
@@ -103,12 +103,12 @@ func run(ctx context.Context, arguments []string, output io.Writer, client herdr
 				output,
 				1,
 				err,
-				"retry tincan-task --root ROOT stop TASK_ID after resolving the reported state",
+				"retry concierge-task --root ROOT stop TASK_ID after resolving the reported state",
 			)
 		}
 		fmt.Fprintf(
 			output,
-			"task: %s\nstate: pane_closed\nhelp: tincan-backlog --root ROOT finish %s --mode close|retain\n",
+			"task: %s\nstate: pane_closed\nhelp: concierge-backlog --root ROOT finish %s --mode close|retain\n",
 			command.Stop.TaskID,
 			command.Stop.TaskID,
 		)

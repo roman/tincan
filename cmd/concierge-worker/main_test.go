@@ -102,7 +102,7 @@ func TestRegisterRequiresResumeArguments(t *testing.T) {
 func TestListEmptyCrewIsDefinitive(t *testing.T) {
 	var stdout bytes.Buffer
 	code := run([]string{"--root", t.TempDir(), "list"}, &stdout)
-	if code != 0 || stdout.String() != "count: 0\ncrew[0]{task,name,session,pane_id}:\n" {
+	if code != 0 || stdout.String() != "count: 0\nworkers[0]{task,name,session,pane_id}:\n" {
 		t.Fatalf("code %d, output %q", code, stdout.String())
 	}
 }
@@ -129,7 +129,7 @@ func TestListShowsRegisteredCrewInTaskOrder(t *testing.T) {
 	if code := run([]string{"--root", root, "list"}, &stdout); code != 0 {
 		t.Fatalf("code %d, output %q", code, stdout.String())
 	}
-	want := "count: 2\ncrew[2]{task,name,session,pane_id}:\n" +
+	want := "count: 2\nworkers[2]{task,name,session,pane_id}:\n" +
 		"  task-1,worker-1,work,pane-1\n  task-2,worker-2,work,pane-2\n"
 	if stdout.String() != want {
 		t.Fatalf("got %q, want %q", stdout.String(), want)
