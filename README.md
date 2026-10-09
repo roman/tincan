@@ -80,11 +80,12 @@ nix build .#tincan-supervise
 nix build .#tincan-firstmate-send
 nix build .#tincan-firstmate-check
 nix build .#tincan-firstmate-watch
+nix build .#tincan-firstmate-show
 ```
 
 Each build places exactly one command in `result/bin/`. To install one command
 in a user profile, use `nix profile install .#tincan-inbox` (or another output
-name). `nix build` and `nix profile install .#tincan` provide all seven commands.
+name). `nix build` and `nix profile install .#tincan` provide all eight commands.
 `nix fmt` formats Go files with golines at 100 columns. The flake check
 verifies that formatting, builds every separate output, checks the Firstmate
 executables, and runs the complete Go test suite once in a dedicated check.
@@ -123,11 +124,11 @@ supervision. The supervisor does not create panes.
 
 ## Optional Firstmate task compatibility
 
-`tincan-firstmate-send`, `tincan-firstmate-check`, and
-`tincan-firstmate-watch` use Firstmate's ordinary
+`tincan-firstmate-send`, `tincan-firstmate-check`,
+`tincan-firstmate-watch`, and `tincan-firstmate-show` use Firstmate's ordinary
 `.msg` task inbox format. This format is separate from the JSON mailbox used by
 `tincan-inbox`. The compatibility commands require an explicit absolute
-`--state` directory. Send and check also require a task ID bound to a local
+`--state` directory. Send, check, and show require a task ID bound to a local
 task metadata file. Watch scans the metadata files in the state directory.
 
 ```sh
@@ -135,6 +136,7 @@ tincan-firstmate-send --state /absolute/firstmate/state task-1 --body 'Please ch
 tincan-firstmate-check --state /absolute/firstmate/state task-1
 tincan-firstmate-check --state /absolute/firstmate/state --wake-root /absolute/tincan-state task-1
 tincan-firstmate-watch --state /absolute/firstmate/state --wake-root /absolute/tincan-state
+tincan-firstmate-show --state /absolute/firstmate/state task-1 001.msg
 ```
 
 The send command commits a numbered `.msg` record before it tries a terminal
@@ -167,6 +169,12 @@ writer lock. A second Tincan writer exits without changing retry state.
 
 The Tincan lock does not coordinate with Firstmate's Bash watcher. Stop the
 Bash watcher before starting the Tincan watcher against the same state directory.
+
+The show command reads validated current task metadata and one numbered message
+record without changing retry state. It reports whether the record is pending,
+handled, or missing. The default body preview is 800 characters; use `--full`
+to read the complete message. Compare the current spawn generation and record
+state with a durable wake before acting on it.
 
 With `--wake-root`, the check command publishes an escalation to Tincan's JSON
 inbox under recipient `firstmate`. The wake identifies the absolute Firstmate
