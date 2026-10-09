@@ -112,37 +112,45 @@ func ReadTask(stateDir AbsolutePath, expected TaskID) (Metadata, error) {
 
 // ReadTaskFromRoot reads metadata through a selected task directory handle.
 func ReadTaskFromRoot(root *os.Root, expected TaskID) (Metadata, error) {
-	if root == nil {
-		return Metadata{}, ErrInvalidPath
-	}
-	if expected.value == "" {
-		return Metadata{}, ErrInvalidTaskID
-	}
-	name := expected.value + ".meta"
-	selected, err := root.Lstat(name)
-	if err != nil {
-		return Metadata{}, err
-	}
-	if !selected.Mode().IsRegular() {
-		return Metadata{}, fmt.Errorf("%w: metadata file is not regular", ErrInvalidMetadata)
-	}
-	file, err := root.Open(name)
-	if err != nil {
-		return Metadata{}, err
-	}
-	defer file.Close()
-	opened, err := file.Stat()
-	if err != nil {
-		return Metadata{}, err
-	}
-	if !opened.Mode().IsRegular() || !os.SameFile(selected, opened) {
-		return Metadata{}, fmt.Errorf("%w: metadata file changed during open", ErrInvalidMetadata)
-	}
-	data, err := io.ReadAll(file)
+	data, err := readTaskDataFromRoot(root, expected)
 	if err != nil {
 		return Metadata{}, err
 	}
 	return Parse(data, expected)
+}
+
+func readTaskDataFromRoot(root *os.Root, expected TaskID) ([]byte, error) {
+	if root == nil {
+		return nil, ErrInvalidPath
+	}
+	if expected.value == "" {
+		return nil, ErrInvalidTaskID
+	}
+	name := expected.value + ".meta"
+	selected, err := root.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !selected.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: metadata file is not regular", ErrInvalidMetadata)
+	}
+	file, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !opened.Mode().IsRegular() || !os.SameFile(selected, opened) {
+		return nil, fmt.Errorf("%w: metadata file changed during open", ErrInvalidMetadata)
+	}
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 // Parse validates one local Herdr task record against the expected task ID.
@@ -197,7 +205,7 @@ func Parse(data []byte, expected TaskID) (Metadata, error) {
 		values["window"] != session+":"+pane ||
 		!validCharacters(values["harness"], atom) ||
 		!validCharacters(values["kind"], atom) ||
-		!validCharacters(values["spawn_gen"], atom) {
+		!validSpawnGeneration(values["spawn_gen"]) {
 		return Metadata{}, fmt.Errorf(
 			"%w: malformed Herdr endpoint or task fields",
 			ErrInvalidMetadata,
@@ -221,6 +229,11 @@ func validCharacters(value, allowed string) bool {
 		}
 	}
 	return true
+}
+
+func validSpawnGeneration(value string) bool {
+	const allowed = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
+	return value != "" && value[0] != '.' && validCharacters(value, allowed)
 }
 
 func hasControl(value string) bool {

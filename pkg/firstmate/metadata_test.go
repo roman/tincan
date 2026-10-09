@@ -10,6 +10,69 @@ import (
 
 const validMetadata = "window=crew:pane-1\nendpoint_task_id=task-1\nworktree=/repo/worktree\nproject=/repo\nharness=codex\nkind=ship\nspawn_gen=s123.456.7\nbackend=herdr\nherdr_session=crew\nherdr_workspace_id=workspace-1\nherdr_tab_id=tab:1\nherdr_pane_id=pane-1\n"
 
+func TestReplaceSpawnGenerationLockedPreservesTaskMetadata(t *testing.T) {
+	state := t.TempDir()
+	original := "custom=keep\n" + validMetadata
+	path := filepath.Join(state, "task-1.meta")
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	id, _ := ParseTaskID("task-1")
+	if published, err := ReplaceSpawnGenerationLocked(root, id, "s123.456.7", "s123.456.8"); err != nil ||
+		!published {
+		t.Fatalf("published = %v, error = %v", published, err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Replace(original, "spawn_gen=s123.456.7", "spawn_gen=s123.456.8", 1)
+	if string(data) != want {
+		t.Fatalf("metadata = %q, want %q", data, want)
+	}
+	metadata, err := ReadTaskFromRoot(root, id)
+	if err != nil || metadata.SpawnGeneration() != "s123.456.8" {
+		t.Fatalf("metadata = %+v, error = %v", metadata, err)
+	}
+}
+
+func TestReplaceSpawnGenerationLockedRejectsStaleOrInvalidChange(t *testing.T) {
+	state := t.TempDir()
+	path := filepath.Join(state, "task-1.meta")
+	if err := os.WriteFile(path, []byte(validMetadata), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	id, _ := ParseTaskID("task-1")
+	for _, change := range []struct{ expected, next string }{
+		{expected: "stale", next: "s123.456.8"},
+		{expected: "s123.456.7", next: "bad generation"},
+		{expected: "s123.456.7", next: ".next"},
+		{expected: "s123.456.7", next: "gen@2"},
+		{expected: "s123.456.7", next: "gen%2"},
+		{expected: "s123.456.7", next: "gen+2"},
+		{expected: "s123.456.7", next: "s123.456.7"},
+	} {
+		if published, err := ReplaceSpawnGenerationLocked(root, id, change.expected, change.next); err == nil ||
+			published {
+			t.Fatalf("accepted change %+v: published = %v, error = %v", change, published, err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil || string(data) != validMetadata {
+			t.Fatalf("metadata changed after rejection: %q, error %v", data, err)
+		}
+	}
+}
+
 func TestReadTaskFromRootKeepsSelectedDirectory(t *testing.T) {
 	parent := t.TempDir()
 	state := filepath.Join(parent, "tasks")
@@ -69,6 +132,19 @@ func TestParseLocalHerdrMetadata(t *testing.T) {
 	}
 }
 
+func TestParseAcceptsFirstmateSpawnGenerationForms(t *testing.T) {
+	id, _ := ParseTaskID("task-1")
+	for _, generation := range []string{"-legacy", "_legacy"} {
+		t.Run(generation, func(t *testing.T) {
+			data := strings.Replace(validMetadata, "s123.456.7", generation, 1)
+			metadata, err := Parse([]byte(data), id)
+			if err != nil || metadata.SpawnGeneration() != generation {
+				t.Fatalf("metadata = %+v, error = %v", metadata, err)
+			}
+		})
+	}
+}
+
 func TestParseRejectsUnsafeMetadata(t *testing.T) {
 	id, err := ParseTaskID("task-1")
 	if err != nil {
@@ -106,6 +182,14 @@ func TestParseRejectsUnsafeMetadata(t *testing.T) {
 		{
 			"missing spawn generation",
 			strings.Replace(validMetadata, "spawn_gen=s123.456.7\n", "", 1),
+		},
+		{
+			"leading dot generation",
+			strings.Replace(validMetadata, "spawn_gen=s123.456.7", "spawn_gen=.next", 1),
+		},
+		{
+			"symbol generation",
+			strings.Replace(validMetadata, "spawn_gen=s123.456.7", "spawn_gen=gen@2", 1),
 		},
 		{"missing harness", strings.Replace(validMetadata, "harness=codex\n", "", 1)},
 		{"missing kind", strings.Replace(validMetadata, "kind=ship\n", "", 1)},
