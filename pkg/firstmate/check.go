@@ -15,20 +15,6 @@ type RetryHealth interface {
 	Health(context.Context, herdr.Target) herdr.HealthStatus
 }
 
-// RingDelivery describes a completed ring attempt, including a composer-protected skip.
-type RingDelivery uint8
-
-const (
-	RingSent RingDelivery = iota
-	RingComposerSkipped
-	RingUnavailable
-)
-
-// RetryRinger submits a doorbell or returns a composer skip for one pending record.
-type RetryRinger interface {
-	Ring(context.Context, herdr.Target, RecordName) (RingDelivery, error)
-}
-
 // CheckOutcome describes the one-shot watcher action.
 type CheckOutcome uint8
 
@@ -50,14 +36,16 @@ type Escalation struct {
 
 // CheckResult reports a one-shot retry action, including a ring delivery failure.
 type CheckResult struct {
-	Outcome     CheckOutcome
-	Record      RecordName
-	Attempts    uint64
-	Delivery    RingDelivery
-	DeliveryErr error
+	Outcome  CheckOutcome
+	Record   RecordName
+	Attempts uint64
+	Delivery herdr.RingResult
 }
 
-var ErrRetryStoreMismatch = errors.New("retry store does not match task")
+var (
+	ErrRetryStoreMismatch = errors.New("retry store does not match task")
+	ErrRingNotAttempted   = errors.New("terminal ring not attempted")
+)
 
 // RetryCheck binds a task's retry state, endpoint health, and delivery adapters.
 type RetryCheck struct {
@@ -65,7 +53,7 @@ type RetryCheck struct {
 	TaskID   TaskID
 	Store    RetryStore
 	Health   RetryHealth
-	Ringer   RetryRinger
+	Doorbell Doorbell
 	Publish  func(context.Context, Escalation) error
 }
 
@@ -126,8 +114,8 @@ func (check RetryCheck) Run(ctx context.Context, now time.Time) (CheckResult, er
 	if decision.Action() == RetryEscalate {
 		return check.escalate(ctx, now, record, decision.EscalationCount(), CheckEscalate)
 	}
-	if check.Ringer == nil {
-		return CheckResult{}, errors.New("no retry ring adapter")
+	if check.Doorbell == nil {
+		return CheckResult{}, ErrNoDoorbell
 	}
 	// A worker can exit between the first health read and terminal submission.
 	status = check.Health.Health(ctx, target)
@@ -147,9 +135,17 @@ func (check RetryCheck) Run(ctx context.Context, now time.Time) (CheckResult, er
 	if !pending {
 		return check.acknowledged(now)
 	}
-	delivery, ringErr := check.Ringer.Ring(ctx, target, record)
-	if delivery == RingUnavailable {
-		return check.escalate(ctx, now, record, 0, CheckUnavailable)
+	delivery := check.Doorbell.Ring(ctx, target, doorbellText(check.TaskID))
+	if err := check.unchanged(before); err != nil {
+		return CheckResult{Delivery: delivery}, err
+	}
+	if delivery.Outcome == herdr.RingUnavailable {
+		result, err := check.escalate(ctx, now, record, 0, CheckUnavailable)
+		result.Delivery = delivery
+		return result, err
+	}
+	if delivery.Outcome == herdr.RingNotAttempted {
+		return CheckResult{Delivery: delivery}, ErrRingNotAttempted
 	}
 	if err := check.Store.RecordAttempt(record, now); err != nil {
 		return CheckResult{}, err
@@ -162,10 +158,9 @@ func (check RetryCheck) Run(ctx context.Context, now time.Time) (CheckResult, er
 		return check.acknowledged(now)
 	}
 	return CheckResult{
-		Outcome:     CheckRung,
-		Record:      record,
-		Delivery:    delivery,
-		DeliveryErr: ringErr,
+		Outcome:  CheckRung,
+		Record:   record,
+		Delivery: delivery,
 	}, nil
 }
 

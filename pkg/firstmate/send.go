@@ -9,25 +9,27 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/roman/tincan/pkg/herdr"
 )
 
 var (
 	ErrBlankMessage = errors.New("blank Firstmate message")
 	ErrTaskChanged  = errors.New("Firstmate task changed during send")
-	ErrNoPrompt     = errors.New("no terminal prompt adapter")
+	ErrNoDoorbell   = errors.New("no terminal doorbell adapter")
 )
 
-// Prompt sends a constant doorbell to a task's terminal endpoint.
-type Prompt interface {
-	Prompt(context.Context, string, string) error
+// Doorbell rings one validated terminal endpoint with a constant instruction line.
+type Doorbell interface {
+	Ring(context.Context, herdr.Target, string) herdr.RingResult
 }
 
-// Sender binds one task's local steering inbox to a terminal prompt adapter.
+// Sender binds one task's local steering inbox to a terminal doorbell.
 type Sender struct {
 	StateDir AbsolutePath
 	TaskID   TaskID
 	Actor    LeaseActor
-	Prompt   Prompt
+	Doorbell Doorbell
 	Clock    func() time.Time
 }
 
@@ -50,6 +52,10 @@ func (sender Sender) Send(ctx context.Context, body string) (result SendResult, 
 		if err != nil || before != after {
 			return errors.Join(ErrTaskChanged, err, lock.Release())
 		}
+		target, err := herdr.ParseTarget(after.HerdrSession(), after.HerdrPaneID())
+		if err != nil {
+			return errors.Join(ErrInvalidMetadata, err, lock.Release())
+		}
 		record, recordErr := sender.writeRecord(ctx, body)
 		releaseErr := lock.Release()
 		if record.value == "" {
@@ -57,10 +63,18 @@ func (sender Sender) Send(ctx context.Context, body string) (result SendResult, 
 		}
 		result.RecordPath = record
 		result.CleanupErr = errors.Join(recordErr, releaseErr)
-		if sender.Prompt == nil {
-			result.DoorbellErr = ErrNoPrompt
+		latest, err := ReadTask(sender.StateDir, sender.TaskID)
+		if err != nil || latest != after {
+			result.Doorbell = herdr.RingResult{
+				Outcome: herdr.RingFailed,
+				Err:     errors.Join(ErrTaskChanged, err),
+			}
+			return nil
+		}
+		if sender.Doorbell == nil {
+			result.Doorbell = herdr.RingResult{Outcome: herdr.RingNotAttempted, Err: ErrNoDoorbell}
 		} else {
-			result.DoorbellErr = sender.Prompt.Prompt(ctx, after.Window(), doorbellText(sender.TaskID))
+			result.Doorbell = sender.Doorbell.Ring(ctx, target, doorbellText(sender.TaskID))
 		}
 		return nil
 	})
@@ -73,9 +87,9 @@ func (sender Sender) Send(ctx context.Context, body string) (result SendResult, 
 
 // SendResult separates durable recording from advisory terminal delivery.
 type SendResult struct {
-	RecordPath  AbsolutePath
-	DoorbellErr error
-	CleanupErr  error
+	RecordPath AbsolutePath
+	Doorbell   herdr.RingResult
+	CleanupErr error
 }
 
 const sendLockTimeout = 5 * time.Second

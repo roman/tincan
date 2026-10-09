@@ -15,7 +15,8 @@ import (
 type RingOutcome uint8
 
 const (
-	RingSent RingOutcome = iota
+	RingNotAttempted RingOutcome = iota
+	RingSent
 	RingSkipped
 	RingFailed
 	RingUnavailable

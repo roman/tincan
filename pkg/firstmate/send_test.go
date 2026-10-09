@@ -12,34 +12,42 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/roman/tincan/pkg/herdr"
 )
 
-type testPrompter struct {
+type testDoorbell struct {
 	mu     sync.Mutex
-	target string
+	calls  int
+	target herdr.Target
 	text   string
-	err    error
+	result herdr.RingResult
 }
 
-func (prompt *testPrompter) Prompt(_ context.Context, target, text string) error {
-	prompt.mu.Lock()
-	defer prompt.mu.Unlock()
-	prompt.target, prompt.text = target, text
-	return prompt.err
+func (doorbell *testDoorbell) Ring(
+	_ context.Context,
+	target herdr.Target,
+	text string,
+) herdr.RingResult {
+	doorbell.mu.Lock()
+	defer doorbell.mu.Unlock()
+	doorbell.calls++
+	doorbell.target, doorbell.text = target, text
+	return doorbell.result
 }
-func newTestSender(t *testing.T) (Sender, string, *testPrompter) {
+func newTestSender(t *testing.T) (Sender, string, *testDoorbell) {
 	t.Helper()
 	state, id, _ := testLockInputs(t)
 	if err := os.WriteFile(filepath.Join(state.String(), id.String()+".meta"), []byte(validMetadata), 0600); err != nil {
 		t.Fatal(err)
 	}
 	actor, _ := ParseLeaseActor("main")
-	prompt := &testPrompter{}
+	prompt := &testDoorbell{}
 	return Sender{
 			StateDir: state,
 			TaskID:   id,
 			Actor:    actor,
-			Prompt:   prompt,
+			Doorbell: prompt,
 			Clock:    func() time.Time { return time.Date(2026, 1, 2, 3, 4, 5, 0, time.FixedZone("offset", 3600)) },
 		}, filepath.Join(
 			state.String(),
@@ -64,9 +72,9 @@ func TestSenderExactRecordAndSequence(t *testing.T) {
 	if info, err := os.Stat(first.RecordPath.String()); err != nil || info.Mode().Perm() != 0600 {
 		t.Fatalf("record mode = %v, %v", info, err)
 	}
-	if prompt.target != "crew:pane-1" ||
+	if prompt.target.Session() != "crew" || prompt.target.PaneID() != "pane-1" ||
 		prompt.text != `: Firstmate instruction waiting: list "$FM_TASK_INBOX"/*.msg in your 'task-1.inbox' steering inbox, read and act on each in numeric order, then mv each into its handled/.` {
-		t.Fatalf("prompt = %q %q", prompt.target, prompt.text)
+		t.Fatalf("doorbell = %+v %q", prompt.target, prompt.text)
 	}
 	if err := os.Rename(first.RecordPath.String(), filepath.Join(inbox, "handled", "001.msg")); err != nil {
 		t.Fatal(err)
@@ -103,11 +111,15 @@ func TestSenderBlankBodyHasNoEffects(t *testing.T) {
 		})
 	}
 }
-func TestSenderPromptFailureIsRecordedSuccess(t *testing.T) {
+func TestSenderDoorbellFailureIsRecordedSuccess(t *testing.T) {
 	sender, _, prompt := newTestSender(t)
-	prompt.err = errors.New("terminal unavailable")
+	prompt.result = herdr.RingResult{
+		Outcome: herdr.RingFailed,
+		Err:     errors.New("terminal unavailable"),
+	}
 	result, err := sender.Send(context.Background(), "hello")
-	if err != nil || !errors.Is(result.DoorbellErr, prompt.err) {
+	if err != nil || result.Doorbell.Outcome != herdr.RingFailed ||
+		!errors.Is(result.Doorbell.Err, prompt.result.Err) {
 		t.Fatalf("send = %+v, %v", result, err)
 	}
 	if _, err := os.Stat(result.RecordPath.String()); err != nil {
@@ -229,35 +241,48 @@ func TestSenderMetadataLockTimeoutLeavesNoRecord(t *testing.T) {
 	}
 }
 
-type promptFunc func(context.Context, string, string) error
+type doorbellFunc func(context.Context, herdr.Target, string) herdr.RingResult
 
-func (prompt promptFunc) Prompt(ctx context.Context, target, text string) error {
-	return prompt(ctx, target, text)
+func (doorbell doorbellFunc) Ring(
+	ctx context.Context,
+	target herdr.Target,
+	text string,
+) herdr.RingResult {
+	return doorbell(ctx, target, text)
 }
 
-func TestSenderReleasesMetadataBeforePromptAndRetainsLease(t *testing.T) {
+func TestSenderReleasesMetadataBeforeDoorbellAndRetainsLease(t *testing.T) {
 	sender, _, _ := newTestSender(t)
-	sender.Prompt = promptFunc(func(_ context.Context, _, _ string) error {
-		metadataLock, err := AcquireTaskLock(sender.StateDir, sender.TaskID, 100*time.Millisecond)
-		if err != nil {
-			return err
-		}
-		if err := metadataLock.Release(); err != nil {
-			return err
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-		defer cancel()
-		_, err = acquireLeaseCommandLock(
-			ctx,
-			filepath.Join(sender.StateDir.String(), ".fm-lease-command.lock"),
-		)
-		if !errors.Is(err, context.DeadlineExceeded) {
-			return errors.New("lease guard released before prompt")
-		}
-		return nil
-	})
+	sender.Doorbell = doorbellFunc(
+		func(_ context.Context, _ herdr.Target, _ string) herdr.RingResult {
+			metadataLock, err := AcquireTaskLock(
+				sender.StateDir,
+				sender.TaskID,
+				100*time.Millisecond,
+			)
+			if err != nil {
+				return herdr.RingResult{Outcome: herdr.RingFailed, Err: err}
+			}
+			if err := metadataLock.Release(); err != nil {
+				return herdr.RingResult{Outcome: herdr.RingFailed, Err: err}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+			_, err = acquireLeaseCommandLock(
+				ctx,
+				filepath.Join(sender.StateDir.String(), ".fm-lease-command.lock"),
+			)
+			if !errors.Is(err, context.DeadlineExceeded) {
+				return herdr.RingResult{
+					Outcome: herdr.RingFailed,
+					Err:     errors.New("lease guard released before ring"),
+				}
+			}
+			return herdr.RingResult{Outcome: herdr.RingSent}
+		},
+	)
 	result, err := sender.Send(context.Background(), "hello")
-	if err != nil || result.DoorbellErr != nil {
+	if err != nil || result.Doorbell.Outcome != herdr.RingSent {
 		t.Fatalf("send = %+v, %v", result, err)
 	}
 }
@@ -377,5 +402,65 @@ func TestSenderSequenceLockTimeoutLeavesNoRecord(t *testing.T) {
 		if strings.HasSuffix(entry.Name(), ".msg") {
 			t.Fatalf("unexpected record %s", entry.Name())
 		}
+	}
+}
+
+func TestSenderMetadataChangesBeforeDoorbell(t *testing.T) {
+	sender, _, doorbell := newTestSender(t)
+	sender.Clock = func() time.Time {
+		updated := strings.Replace(validMetadata, "spawn_gen=s123.456.7", "spawn_gen=s123.456.8", 1)
+		if err := os.WriteFile(filepath.Join(sender.StateDir.String(), "task-1.meta"), []byte(updated), 0600); err != nil {
+			t.Fatal(err)
+		}
+		return time.Unix(1000, 0)
+	}
+	result, err := sender.Send(context.Background(), "hello")
+	if err != nil || result.RecordPath.String() == "" ||
+		result.Doorbell.Outcome != herdr.RingFailed ||
+		!errors.Is(result.Doorbell.Err, ErrTaskChanged) {
+		t.Fatalf("send = %+v, %v", result, err)
+	}
+	if doorbell.calls != 0 {
+		t.Fatalf("ring calls=%d", doorbell.calls)
+	}
+	if _, err := os.Stat(result.RecordPath.String()); err != nil {
+		t.Fatalf("durable record: %v", err)
+	}
+}
+
+func TestSenderDoorbellOutcomesKeepRecord(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		outcome herdr.RingOutcome
+	}{
+		{"sent", herdr.RingSent},
+		{"composer skipped", herdr.RingSkipped},
+		{"failed", herdr.RingFailed},
+		{"unavailable", herdr.RingUnavailable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			sender, _, doorbell := newTestSender(t)
+			doorbell.result = herdr.RingResult{Outcome: test.outcome}
+			result, err := sender.Send(context.Background(), "hello")
+			if err != nil || result.Doorbell.Outcome != test.outcome || doorbell.calls != 1 {
+				t.Fatalf("send=%+v err=%v calls=%d", result, err, doorbell.calls)
+			}
+			if _, err := os.Stat(result.RecordPath.String()); err != nil {
+				t.Fatalf("durable record: %v", err)
+			}
+		})
+	}
+}
+
+func TestSenderWithoutDoorbellReportsNotAttempted(t *testing.T) {
+	sender, _, _ := newTestSender(t)
+	sender.Doorbell = nil
+	result, err := sender.Send(context.Background(), "hello")
+	if err != nil || result.Doorbell.Outcome != herdr.RingNotAttempted ||
+		!errors.Is(result.Doorbell.Err, ErrNoDoorbell) {
+		t.Fatalf("send=%+v err=%v", result, err)
+	}
+	if _, err := os.Stat(result.RecordPath.String()); err != nil {
+		t.Fatalf("durable record: %v", err)
 	}
 }

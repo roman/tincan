@@ -28,27 +28,26 @@ func (health *checkHealth) Health(_ context.Context, target herdr.Target) herdr.
 	return state
 }
 
-type checkRinger struct {
-	hook     func()
-	calls    int
-	target   herdr.Target
-	record   RecordName
-	delivery RingDelivery
-	err      error
+type checkDoorbell struct {
+	hook   func()
+	calls  int
+	target herdr.Target
+	text   string
+	result herdr.RingResult
 }
 
-func (ringer *checkRinger) Ring(
+func (ringer *checkDoorbell) Ring(
 	_ context.Context,
 	target herdr.Target,
-	record RecordName,
-) (RingDelivery, error) {
+	text string,
+) herdr.RingResult {
 	ringer.calls++
 	if ringer.hook != nil {
 		ringer.hook()
 	}
 	ringer.target = target
-	ringer.record = record
-	return ringer.delivery, ringer.err
+	ringer.text = text
+	return ringer.result
 }
 func checkFixture(t *testing.T) (RetryCheck, string, RecordName) {
 	t.Helper()
@@ -70,7 +69,7 @@ func TestRetryCheckOutcomes(t *testing.T) {
 		age                int64
 		ladder             string
 		health             []herdr.HealthStatus
-		delivery           RingDelivery
+		delivery           herdr.RingOutcome
 		ringErr            error
 		want               CheckOutcome
 		calls, healthCalls int
@@ -79,10 +78,10 @@ func TestRetryCheckOutcomes(t *testing.T) {
 		{name: "quiet before grace", age: 950, want: CheckQuiet},
 		{name: "busy ring wait", age: 800, health: []herdr.HealthStatus{{Endpoint: herdr.Alive, Activity: herdr.HealthBusy}}, want: CheckWait, healthCalls: 1},
 		{name: "busy spent budget wait", age: 800, ladder: "001.msg\t3\t0\n", health: []herdr.HealthStatus{{Endpoint: herdr.Alive, Activity: herdr.HealthBusy}}, want: CheckWait, healthCalls: 1, attempts: "001.msg\t3\t0\n"},
-		{name: "idle ring", age: 800, health: []herdr.HealthStatus{{Endpoint: herdr.Alive, Activity: herdr.HealthIdle}, {Endpoint: herdr.Alive, Activity: herdr.HealthIdle}}, delivery: RingSent, want: CheckRung, calls: 1, healthCalls: 2, attempts: "001.msg\t1\t1000\n"},
-		{name: "unreadable failed ring", age: 800, health: []herdr.HealthStatus{{Endpoint: herdr.Unreadable}, {Endpoint: herdr.Unreadable}}, ringErr: errors.New("send failed"), want: CheckRung, calls: 1, healthCalls: 2, attempts: "001.msg\t1\t1000\n"},
-		{name: "composer skip", age: 800, health: []herdr.HealthStatus{{Endpoint: herdr.Alive, Activity: herdr.HealthIdle}, {Endpoint: herdr.Alive, Activity: herdr.HealthIdle}}, delivery: RingComposerSkipped, want: CheckRung, calls: 1, healthCalls: 2, attempts: "001.msg\t1\t1000\n"},
-		{name: "gone during ring", age: 800, health: []herdr.HealthStatus{{Endpoint: herdr.Alive, Activity: herdr.HealthIdle}, {Endpoint: herdr.Alive, Activity: herdr.HealthIdle}}, delivery: RingUnavailable, want: CheckUnavailable, calls: 1, healthCalls: 2},
+		{name: "idle ring", age: 800, health: []herdr.HealthStatus{{Endpoint: herdr.Alive, Activity: herdr.HealthIdle}, {Endpoint: herdr.Alive, Activity: herdr.HealthIdle}}, delivery: herdr.RingSent, want: CheckRung, calls: 1, healthCalls: 2, attempts: "001.msg\t1\t1000\n"},
+		{name: "unreadable failed ring", age: 800, health: []herdr.HealthStatus{{Endpoint: herdr.Unreadable}, {Endpoint: herdr.Unreadable}}, delivery: herdr.RingFailed, ringErr: errors.New("send failed"), want: CheckRung, calls: 1, healthCalls: 2, attempts: "001.msg\t1\t1000\n"},
+		{name: "composer skip", age: 800, health: []herdr.HealthStatus{{Endpoint: herdr.Alive, Activity: herdr.HealthIdle}, {Endpoint: herdr.Alive, Activity: herdr.HealthIdle}}, delivery: herdr.RingSkipped, want: CheckRung, calls: 1, healthCalls: 2, attempts: "001.msg\t1\t1000\n"},
+		{name: "gone during ring", age: 800, health: []herdr.HealthStatus{{Endpoint: herdr.Alive, Activity: herdr.HealthIdle}, {Endpoint: herdr.Alive, Activity: herdr.HealthIdle}}, delivery: herdr.RingUnavailable, want: CheckUnavailable, calls: 1, healthCalls: 2},
 		{name: "dead direct", age: 800, health: []herdr.HealthStatus{{Endpoint: herdr.Dead, Activity: herdr.HealthBusy}}, want: CheckUnavailable, healthCalls: 1},
 		{name: "missing direct", age: 800, health: []herdr.HealthStatus{{Endpoint: herdr.Missing, Activity: herdr.HealthBusy}}, want: CheckUnavailable, healthCalls: 1},
 		{name: "dead after first health", age: 800, health: []herdr.HealthStatus{{Endpoint: herdr.Alive, Activity: herdr.HealthIdle}, {Endpoint: herdr.Dead}}, want: CheckUnavailable, healthCalls: 2},
@@ -97,15 +96,23 @@ func TestRetryCheckOutcomes(t *testing.T) {
 				}
 			}
 			health := &checkHealth{states: test.health}
-			ring := &checkRinger{delivery: test.delivery, err: test.ringErr}
+			ring := &checkDoorbell{
+				result: herdr.RingResult{Outcome: test.delivery, Err: test.ringErr},
+			}
 			check.Health = health
-			check.Ringer = ring
+			check.Doorbell = ring
 			got, err := check.Run(context.Background(), now)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !errors.Is(got.DeliveryErr, test.ringErr) {
-				t.Fatalf("delivery error = %v, want %v", got.DeliveryErr, test.ringErr)
+			if !errors.Is(got.Delivery.Err, test.ringErr) {
+				t.Fatalf("delivery error = %v, want %v", got.Delivery.Err, test.ringErr)
+			}
+			if ring.calls == 0 && got.Delivery.Outcome != herdr.RingNotAttempted {
+				t.Fatalf("delivery = %+v without a ring", got.Delivery)
+			}
+			if ring.calls > 0 && got.Outcome == CheckRung && got.Delivery.Outcome != test.delivery {
+				t.Fatalf("delivery outcome = %v, want %v", got.Delivery.Outcome, test.delivery)
 			}
 			if got.Outcome != test.want || ring.calls != test.calls ||
 				len(health.targets) != test.healthCalls {
@@ -117,8 +124,8 @@ func TestRetryCheckOutcomes(t *testing.T) {
 				}
 			}
 			if ring.calls > 0 &&
-				(ring.target.Session() != "crew" || ring.target.PaneID() != "pane-1" || ring.record != name) {
-				t.Fatalf("ring target=%+v record=%v", ring.target, ring.record)
+				(ring.target.Session() != "crew" || ring.target.PaneID() != "pane-1" || ring.text != doorbellText(check.TaskID)) {
+				t.Fatalf("ring target=%+v text=%q", ring.target, ring.text)
 			}
 			body, readErr := os.ReadFile(filepath.Join(inbox, ".ring-state"))
 			if test.attempts == "" {
@@ -224,8 +231,8 @@ func TestRetryCheckAckAndChangedMetadataRaces(t *testing.T) {
 			}
 			health.hook = func() { test.mutate(t, inbox, check.StateDir.String()) }
 			check.Health = health
-			ring := &checkRinger{}
-			check.Ringer = ring
+			ring := &checkDoorbell{}
+			check.Doorbell = ring
 			result, err := check.Run(context.Background(), time.Unix(1000, 0))
 			if !errors.Is(err, test.wantErr) {
 				t.Fatalf("result=%+v error=%v", result, err)
@@ -255,12 +262,12 @@ func TestRetryCheckAckDuringRing(t *testing.T) {
 			{Endpoint: herdr.Alive, Activity: herdr.HealthIdle},
 		},
 	}
-	ring := &checkRinger{hook: func() {
+	ring := &checkDoorbell{result: herdr.RingResult{Outcome: herdr.RingSent}, hook: func() {
 		if err := os.Remove(filepath.Join(inbox, name.String())); err != nil {
 			t.Fatal(err)
 		}
 	}}
-	check.Ringer = ring
+	check.Doorbell = ring
 	result, err := check.Run(context.Background(), time.Unix(1000, 0))
 	if err != nil || result.Outcome != CheckQuiet || ring.calls != 1 {
 		t.Fatalf("result=%+v error=%v calls=%d", result, err, ring.calls)
@@ -282,7 +289,7 @@ func TestRetryCheckUnwritableAttempt(t *testing.T) {
 			{Endpoint: herdr.Alive, Activity: herdr.HealthIdle},
 		},
 	}
-	check.Ringer = &checkRinger{}
+	check.Doorbell = &checkDoorbell{result: herdr.RingResult{Outcome: herdr.RingSent}}
 	_, err := check.Run(context.Background(), time.Unix(1000, 0))
 	if err == nil {
 		t.Fatal("unwritable attempt was ignored")
@@ -297,9 +304,9 @@ func TestRetryCheckRejectsMismatchedStoreBeforeEffects(t *testing.T) {
 	health := &checkHealth{
 		states: []herdr.HealthStatus{{Endpoint: herdr.Alive, Activity: herdr.HealthIdle}},
 	}
-	ring := &checkRinger{}
+	ring := &checkDoorbell{}
 	second.Health = health
-	second.Ringer = ring
+	second.Doorbell = ring
 	_, err := second.Run(context.Background(), time.Unix(1000, 0))
 	if !errors.Is(err, ErrRetryStoreMismatch) {
 		t.Fatalf("mismatched store error=%v", err)
@@ -321,7 +328,12 @@ func TestRetryCheckUnavailableRingPublishesWithoutAttempt(t *testing.T) {
 			{Endpoint: herdr.Alive, Activity: herdr.HealthIdle},
 		},
 	}
-	check.Ringer = &checkRinger{delivery: RingUnavailable, err: errors.New("endpoint vanished")}
+	check.Doorbell = &checkDoorbell{
+		result: herdr.RingResult{
+			Outcome: herdr.RingUnavailable,
+			Err:     errors.New("endpoint vanished"),
+		},
+	}
 	published := 0
 	check.Publish = func(_ context.Context, escalation Escalation) error {
 		published++
@@ -335,7 +347,8 @@ func TestRetryCheckUnavailableRingPublishesWithoutAttempt(t *testing.T) {
 		return nil
 	}
 	result, err := check.Run(context.Background(), time.Unix(1000, 0))
-	if err != nil || result.Outcome != CheckUnavailable || published != 1 {
+	if err != nil || result.Outcome != CheckUnavailable || published != 1 ||
+		result.Delivery.Outcome != herdr.RingUnavailable {
 		t.Fatalf("result=%+v err=%v published=%d", result, err, published)
 	}
 	if _, err := os.Stat(filepath.Join(inbox, ".ring-state")); !errors.Is(err, os.ErrNotExist) {
@@ -344,5 +357,65 @@ func TestRetryCheckUnavailableRingPublishesWithoutAttempt(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join(inbox, ".escalated"))
 	if err != nil || string(body) != "001.msg\n" {
 		t.Fatalf("marker=%q,%v", body, err)
+	}
+}
+
+func TestRetryCheckMetadataChangesDuringRing(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		outcome herdr.RingOutcome
+	}{
+		{"sent", herdr.RingSent},
+		{"unavailable", herdr.RingUnavailable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			check, inbox, name := checkFixture(t)
+			writeRetryRecord(t, inbox, name.String(), "", time.Unix(800, 0))
+			check.Health = &checkHealth{states: []herdr.HealthStatus{
+				{Endpoint: herdr.Alive, Activity: herdr.HealthIdle},
+				{Endpoint: herdr.Alive, Activity: herdr.HealthIdle},
+			}}
+			ring := &checkDoorbell{result: herdr.RingResult{Outcome: test.outcome}}
+			ring.hook = func() {
+				updated := strings.Replace(
+					validMetadata,
+					"spawn_gen=s123.456.7",
+					"spawn_gen=s123.456.8",
+					1,
+				)
+				if err := os.WriteFile(filepath.Join(check.StateDir.String(), "task-1.meta"), []byte(updated), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			check.Doorbell = ring
+			published := 0
+			check.Publish = func(context.Context, Escalation) error { published++; return nil }
+			_, err := check.Run(context.Background(), time.Unix(1000, 0))
+			if !errors.Is(err, ErrTaskChanged) || ring.calls != 1 || published != 0 {
+				t.Fatalf("err=%v rings=%d published=%d", err, ring.calls, published)
+			}
+			for _, name := range []string{".ring-state", ".escalated"} {
+				if _, err := os.Stat(filepath.Join(inbox, name)); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("%s mutated: %v", name, err)
+				}
+			}
+		})
+	}
+}
+
+func TestRetryCheckNotAttemptedDoesNotCount(t *testing.T) {
+	check, inbox, name := checkFixture(t)
+	writeRetryRecord(t, inbox, name.String(), "", time.Unix(800, 0))
+	check.Health = &checkHealth{states: []herdr.HealthStatus{
+		{Endpoint: herdr.Alive, Activity: herdr.HealthIdle},
+		{Endpoint: herdr.Alive, Activity: herdr.HealthIdle},
+	}}
+	check.Doorbell = &checkDoorbell{result: herdr.RingResult{Outcome: herdr.RingNotAttempted}}
+	result, err := check.Run(context.Background(), time.Unix(1000, 0))
+	if !errors.Is(err, ErrRingNotAttempted) || result.Delivery.Outcome != herdr.RingNotAttempted {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if _, err := os.Stat(filepath.Join(inbox, ".ring-state")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("attempt recorded: %v", err)
 	}
 }
