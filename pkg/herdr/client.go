@@ -75,7 +75,20 @@ func (r commandRunner) RunSession(
 	args ...string,
 ) ([]byte, []byte, error) {
 	command := exec.CommandContext(ctx, r.executable, args...)
-	command.Env = append(os.Environ(), "HERDR_SESSION="+session)
+	var environment []string
+	for _, variable := range os.Environ() {
+		name, _, _ := strings.Cut(variable, "=")
+		switch name {
+		case "HERDR_SESSION",
+			"HERDR_SOCKET_PATH",
+			"HERDR_WORKSPACE_ID",
+			"HERDR_TAB_ID",
+			"HERDR_PANE_ID":
+			continue
+		}
+		environment = append(environment, variable)
+	}
+	command.Env = append(environment, "HERDR_SESSION="+session)
 	stdout, err := command.Output()
 	if err == nil {
 		return stdout, nil, nil

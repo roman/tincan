@@ -87,9 +87,6 @@ func TestStopPaneKeepsTaskRecordsAndRetries(t *testing.T) {
 	if err := os.Mkdir(worktree, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(filepath.Join(root, "tasks"), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	runner := &liveRunner{worktree: worktree, status: "working", process: "codex"}
 	client := herdr.Client{SessionRunner: runner}
 	var output bytes.Buffer
@@ -225,9 +222,6 @@ func TestAdoptPublishesTaskAndCrewAndRetries(t *testing.T) {
 	root := t.TempDir()
 	worktree := filepath.Join(root, "worktree")
 	if err := os.Mkdir(worktree, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(filepath.Join(root, "tasks"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	runner := &liveRunner{worktree: worktree, status: "working", process: "codex"}

@@ -160,7 +160,7 @@ func createDirectory(path string) error {
 	return syncRoot(parent)
 }
 
-func (registry *Registry) ensureDirectories() error {
+func (registry *Registry) ensureDirectory(name string) error {
 	if registry == nil || registry.root == "" {
 		return ErrInvalidRecord
 	}
@@ -172,7 +172,7 @@ func (registry *Registry) ensureDirectories() error {
 		return err
 	}
 	defer root.Close()
-	err = root.Mkdir("crew", 0o700)
+	err = root.Mkdir(name, 0o700)
 	if err != nil && !errors.Is(err, os.ErrExist) {
 		return err
 	}
@@ -317,7 +317,7 @@ func (registry *Registry) register(record Record, prepare func() error) error {
 	if len(data) > maximumRecordBytes {
 		return fmt.Errorf("%w: record exceeds 1 MiB", ErrInvalidRecord)
 	}
-	if err := registry.ensureDirectories(); err != nil {
+	if err := registry.ensureDirectory("crew"); err != nil {
 		return err
 	}
 	root, err := registry.openCrew()

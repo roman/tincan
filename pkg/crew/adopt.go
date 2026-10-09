@@ -53,6 +53,9 @@ func (registry *Registry) AdoptLocalTask(
 	if err != nil {
 		return err
 	}
+	if err := registry.ensureDirectory("tasks"); err != nil {
+		return err
+	}
 	return registry.withLockedTask(id.String(), func(root *os.Root, check func() error) error {
 		if pending, err := completionPending(root, id); err != nil {
 			return err

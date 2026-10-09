@@ -251,8 +251,12 @@ func TestHealthStopsAfterTenOtherSamples(t *testing.T) {
 }
 
 func TestCommandRunnerSessionEnvironment(t *testing.T) {
+	t.Setenv("HERDR_SOCKET_PATH", "/wrong/herdr.sock")
+	t.Setenv("HERDR_WORKSPACE_ID", "w99")
+	t.Setenv("HERDR_TAB_ID", "w99:t1")
+	t.Setenv("HERDR_PANE_ID", "w99:p1")
 	executable := filepath.Join(t.TempDir(), "herdr-probe")
-	if err := os.WriteFile(executable, []byte("#!/bin/sh\nprintf '%s\n' \"$HERDR_SESSION\" \"$@\"\n"), 0700); err != nil {
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\nprintf '%s\n' \"$HERDR_SESSION\" \"$HERDR_SOCKET_PATH\" \"$HERDR_WORKSPACE_ID\" \"$HERDR_TAB_ID\" \"$HERDR_PANE_ID\" \"$@\"\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	stdout, _, err := (commandRunner{executable: executable}).RunSession(
@@ -264,7 +268,7 @@ func TestCommandRunnerSessionEnvironment(t *testing.T) {
 		"--session",
 		"crew",
 	)
-	if err != nil || string(stdout) != "crew\npane\nget\npane-1\n--session\ncrew\n" {
+	if err != nil || string(stdout) != "crew\n\n\n\n\npane\nget\npane-1\n--session\ncrew\n" {
 		t.Fatalf("session command = %q, %v", stdout, err)
 	}
 }
