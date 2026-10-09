@@ -114,6 +114,9 @@ func TestRetryCheckOutcomes(t *testing.T) {
 			if ring.calls > 0 && got.Outcome == CheckRung && got.Delivery.Outcome != test.delivery {
 				t.Fatalf("delivery outcome = %v, want %v", got.Delivery.Outcome, test.delivery)
 			}
+			if got.Outcome == CheckRung && got.Attempts != 1 {
+				t.Fatalf("recorded attempts=%d, want 1", got.Attempts)
+			}
 			if got.Outcome != test.want || ring.calls != test.calls ||
 				len(health.targets) != test.healthCalls {
 				t.Fatalf("result=%+v ring=%d health=%d", got, ring.calls, len(health.targets))

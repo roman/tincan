@@ -150,6 +150,7 @@ func (check RetryCheck) Run(ctx context.Context, now time.Time) (CheckResult, er
 	if err := check.Store.RecordAttempt(record, now); err != nil {
 		return CheckResult{}, err
 	}
+	recordedAttempts := check.Store.readState().Attempts()
 	pending, err = check.Store.pending(record)
 	if err != nil {
 		return CheckResult{}, err
@@ -160,6 +161,7 @@ func (check RetryCheck) Run(ctx context.Context, now time.Time) (CheckResult, er
 	return CheckResult{
 		Outcome:  CheckRung,
 		Record:   record,
+		Attempts: recordedAttempts,
 		Delivery: delivery,
 	}, nil
 }
