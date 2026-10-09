@@ -15,9 +15,11 @@ import (
 )
 
 type cli struct {
-	Pane             string        `help:"Herdr pane ID to monitor." required:""`
-	Name             string        `help:"Agent name used when restarting." required:""`
-	Kind             string        `help:"Herdr agent kind used when restarting." required:""`
+	Root             string        `help:"Absolute Tincan state root for a registered task."`
+	Task             string        `help:"Registered local task ID to supervise."`
+	Pane             string        `help:"Herdr pane ID for manual supervision."`
+	Name             string        `help:"Agent name for manual supervision."`
+	Kind             string        `help:"Herdr agent kind for manual supervision."`
 	AgentArgs        []string      `name:"agent-arg" sep:"none" help:"Agent launch argument; repeat to preserve model, effort, or resume identity."`
 	Interval         time.Duration `help:"Time between health checks." default:"5s"`
 	RestartTolerance int           `help:"Failed checks tolerated per window; the next failure stops supervision." default:"5"`
@@ -56,12 +58,10 @@ func main() {
 	kong.Parse(&args)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	worker := herdrWorker{
-		client: herdr.NewClient(args.Herdr),
-		pane:   args.Pane,
-		name:   args.Name,
-		kind:   args.Kind,
-		args:   args.AgentArgs,
+	worker, err := workerFromCLI(args, herdr.NewClient(args.Herdr))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "tincan-supervise:", err)
+		os.Exit(2)
 	}
 	config := supervise.Config{
 		Interval:         args.Interval,

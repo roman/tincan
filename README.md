@@ -138,9 +138,23 @@ tincan-crew --root /absolute/tincan-state list
 tincan-crew --root /absolute/tincan-state show task-1
 ```
 
-The registry is an inventory. The current supervisor does not yet read it or
-verify that a recorded worker remains bound to the live pane. Do not restart a
-worker solely from a registry entry until that check exists.
+Run task-bound supervision after registration:
+
+```sh
+tincan-supervise --root /absolute/tincan-state --task task-1
+```
+
+Task mode checks the current task metadata, the registered worker, the named
+Herdr session, and the pane's live foreground directory before restart. It
+records a new spawn generation before launching the replacement. A pending
+generation is recovered after an interrupted transition. `tincan-crew show`
+reports that pending value until recovery completes. The manual pane flags
+remain available for a worker without task metadata.
+
+Herdr can retain an agent registration after the process exits. Task mode
+refuses that pane without changing its spawn generation. The pinned Herdr
+release command does not clear built-in agent registrations, so stale-pane
+recovery needs a server-side Herdr operation.
 
 `tincan-firstmate-send`, `tincan-firstmate-check`,
 `tincan-firstmate-watch`, and `tincan-firstmate-show` use Firstmate's ordinary
