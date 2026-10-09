@@ -18,15 +18,16 @@ type cli struct {
 	Root      string        `help:"Inbox state directory." required:"" type:"path"`
 	Recipient string        `help:"Inbox recipient." required:""`
 	Target    string        `help:"Agent name or pane ID to ring." required:""`
+	Session   string        `help:"Herdr session that owns the target." env:"HERDR_SESSION" required:""`
 	Interval  time.Duration `help:"Time between doorbell attempts." default:"5s"`
 	Adapter   string        `help:"Terminal adapter for notifications." default:"herdr"`
 	Herdr     string        `help:"Herdr executable path." default:"herdr"`
 }
 
-func selectDoorbell(adapter, herdrExecutable string) (notify.Doorbell, error) {
+func selectDoorbell(adapter, herdrExecutable, session string) (notify.Doorbell, error) {
 	switch adapter {
 	case "herdr":
-		return herdr.NewClient(herdrExecutable), nil
+		return herdr.NewClient(herdrExecutable).ForSession(session)
 	default:
 		return nil, fmt.Errorf("unsupported adapter %q; supported adapter: herdr", adapter)
 	}
@@ -38,7 +39,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	report := func(err error) { fmt.Fprintln(os.Stderr, "tincan-notify:", err) }
-	doorbell, err := selectDoorbell(args.Adapter, args.Herdr)
+	doorbell, err := selectDoorbell(args.Adapter, args.Herdr, args.Session)
 	if err != nil {
 		report(err)
 		os.Exit(1)

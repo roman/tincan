@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -26,7 +29,16 @@ func TestAdapterSelection(t *testing.T) {
 				t.Fatal(err)
 			}
 			args := append(
-				[]string{"--root", t.TempDir(), "--recipient", "worker", "--target", "worker"},
+				[]string{
+					"--root",
+					t.TempDir(),
+					"--recipient",
+					"worker",
+					"--target",
+					"worker",
+					"--session",
+					"work",
+				},
 				test.args...)
 			if _, err := parser.Parse(args); err != nil {
 				t.Fatal(err)
@@ -34,7 +46,7 @@ func TestAdapterSelection(t *testing.T) {
 			if options.Adapter != test.wantAdapter {
 				t.Fatalf("adapter = %q, want %q", options.Adapter, test.wantAdapter)
 			}
-			bell, err := selectDoorbell(options.Adapter, options.Herdr)
+			bell, err := selectDoorbell(options.Adapter, options.Herdr, options.Session)
 			if test.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), test.wantError) {
 					t.Fatalf("selection error = %v", err)
@@ -68,7 +80,7 @@ func TestTargetOption(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			args := []string{"--root", t.TempDir(), "--recipient", "worker"}
+			args := []string{"--root", t.TempDir(), "--recipient", "worker", "--session", "work"}
 			if test.target != "" {
 				args = append(args, "--target", test.target)
 			}
@@ -80,5 +92,59 @@ func TestTargetOption(t *testing.T) {
 				t.Fatalf("target = %q, want %q", options.Target, test.target)
 			}
 		})
+	}
+}
+
+func TestEmptyAmbientSessionRejected(t *testing.T) {
+	t.Setenv("HERDR_SESSION", "")
+	var options cli
+	parser, err := kong.New(&options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = parser.Parse(
+		[]string{"--root", t.TempDir(), "--recipient", "worker", "--target", "worker"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := selectDoorbell(options.Adapter, options.Herdr, options.Session); err == nil {
+		t.Fatal("empty session was accepted")
+	}
+}
+
+func TestDoorbellUsesAmbientHerdrSession(t *testing.T) {
+	directory := t.TempDir()
+	executable := filepath.Join(directory, "herdr")
+	capture := filepath.Join(directory, "call")
+	program := "#!/bin/sh\nprintf '%s\\n' \"$HERDR_SESSION\" \"$@\" > \"$TINCAN_TEST_CAPTURE\"\nprintf '{}\\n'\n"
+	if err := os.WriteFile(executable, []byte(program), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_SESSION", "work")
+	t.Setenv("TINCAN_TEST_CAPTURE", capture)
+	var options cli
+	parser, err := kong.New(&options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parser.Parse([]string{
+		"--root", directory, "--recipient", "worker", "--target", "worker", "--herdr", executable,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	bell, err := selectDoorbell(options.Adapter, options.Herdr, options.Session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bell.Prompt(context.Background(), "worker", "check inbox"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "work\nagent\nprompt\nworker\ncheck inbox\n" {
+		t.Fatalf("Herdr call = %q", data)
 	}
 }
