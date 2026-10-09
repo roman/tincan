@@ -50,6 +50,37 @@ func TestRegistryPersistsCrewAcrossInstances(t *testing.T) {
 	}
 }
 
+func TestRegisterAfterReservesWorkerBeforePreparation(t *testing.T) {
+	registry, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := testRecord()
+	interrupted := errors.New("interrupted preparation")
+	if err := registry.registerAfter(record, func() error { return interrupted }); !errors.Is(
+		err,
+		interrupted,
+	) {
+		t.Fatalf("interrupted adoption: %v", err)
+	}
+	pending, err := registry.Get(record.TaskID)
+	if err != nil || !pending.PendingAdoption {
+		t.Fatalf("pending record=%+v err=%v", pending, err)
+	}
+	rival := testRecord()
+	rival.TaskID = "task-2"
+	if err := registry.Register(rival); !errors.Is(err, ErrConflict) {
+		t.Fatalf("rival claimed reserved worker: %v", err)
+	}
+	if err := registry.registerAfter(record, func() error { return nil }); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	completed, err := registry.Get(record.TaskID)
+	if err != nil || !reflect.DeepEqual(completed, record) {
+		t.Fatalf("completed record=%+v err=%v", completed, err)
+	}
+}
+
 func TestRegistryRejectsConflictingRegistration(t *testing.T) {
 	registry, err := New(t.TempDir())
 	if err != nil {

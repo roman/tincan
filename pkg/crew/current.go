@@ -71,6 +71,9 @@ func (registry *Registry) WithCurrentTask(
 	if err != nil {
 		return err
 	}
+	if record.PendingAdoption {
+		return fmt.Errorf("%w: task adoption is pending", ErrStaleRecord)
+	}
 	if record.PendingGeneration != "" {
 		record, err = recoverPendingGeneration(taskRoot, crewRoot, id, record)
 		if err != nil {
@@ -129,4 +132,48 @@ func openSelectedDirectory(root *os.Root, name string) (*os.Root, os.FileInfo, e
 func sameDirectory(selected os.FileInfo, path string) bool {
 	current, err := os.Stat(path)
 	return err == nil && os.SameFile(selected, current)
+}
+
+// withLockedTask pins the selected tasks directory while adopting a worker.
+func (registry *Registry) withLockedTask(
+	taskID string,
+	operation func(*os.Root, func() error) error,
+) (result error) {
+	if registry == nil || registry.root == "" || operation == nil {
+		return ErrInvalidRecord
+	}
+	id, err := firstmate.ParseTaskID(taskID)
+	if err != nil {
+		return err
+	}
+	registryRoot, err := verifiedRoot(registry.root)
+	if err != nil {
+		return err
+	}
+	defer registryRoot.Close()
+	taskRoot, selected, err := openSelectedDirectory(registryRoot, "tasks")
+	if err != nil {
+		return err
+	}
+	defer taskRoot.Close()
+	path := filepath.Join(registry.root, "tasks")
+	state, err := firstmate.ParseAbsolutePath(path)
+	if err != nil {
+		return err
+	}
+	lock, err := firstmate.AcquireTaskLock(state, id, 2*time.Second)
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, lock.Release()) }()
+	check := func() error {
+		if !sameDirectory(selected, path) {
+			return fmt.Errorf("%w: tasks directory changed", ErrStaleRecord)
+		}
+		return nil
+	}
+	if err := check(); err != nil {
+		return err
+	}
+	return operation(taskRoot, check)
 }

@@ -106,9 +106,17 @@ func run(args []string, stdout io.Writer) int {
 		if err != nil {
 			return failure(stdout, 1, err, "inspect the crew state directory")
 		}
-		fmt.Fprintf(stdout, "count: %d\n", len(records))
-		fmt.Fprintf(stdout, "crew[%d]{task,name,session,pane_id}:\n", len(records))
+		var registered, pending []crew.Record
 		for _, record := range records {
+			if record.PendingAdoption {
+				pending = append(pending, record)
+				continue
+			}
+			registered = append(registered, record)
+		}
+		fmt.Fprintf(stdout, "count: %d\n", len(registered))
+		fmt.Fprintf(stdout, "crew[%d]{task,name,session,pane_id}:\n", len(registered))
+		for _, record := range registered {
 			fmt.Fprintf(
 				stdout,
 				"  %s,%s,%s,%s\n",
@@ -117,6 +125,13 @@ func run(args []string, stdout io.Writer) int {
 				record.HerdrSession,
 				record.PaneID,
 			)
+		}
+		if len(pending) > 0 {
+			fmt.Fprintf(stdout, "pending_adoptions[%d]{task,name,session,pane_id}:\n", len(pending))
+			for _, record := range pending {
+				fmt.Fprintf(stdout, "  %s,%s,%s,%s\n", record.TaskID, record.Name,
+					record.HerdrSession, record.PaneID)
+			}
 		}
 	default:
 		return failure(
@@ -227,6 +242,9 @@ func printRecord(stdout io.Writer, record crew.Record) {
 	fmt.Fprintf(stdout, "spawn_generation: %s\n", record.SpawnGeneration)
 	if record.PendingGeneration != "" {
 		fmt.Fprintf(stdout, "pending_generation: %s\n", record.PendingGeneration)
+	}
+	if record.PendingAdoption {
+		fmt.Fprintln(stdout, "adoption: pending")
 	}
 	fmt.Fprintf(stdout, "agent_args[%d]:\n", len(record.AgentArgs))
 	for _, argument := range record.AgentArgs {

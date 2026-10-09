@@ -14,6 +14,14 @@ type boundSessionRunner struct {
 	runner  SessionRunner
 }
 
+// PaneDetails describes the current Herdr location and foreground directory.
+type PaneDetails struct {
+	PaneID              string
+	WorkspaceID         string
+	TabID               string
+	ForegroundDirectory string
+}
+
 func (runner boundSessionRunner) Run(ctx context.Context, args ...string) ([]byte, []byte, error) {
 	return runner.runner.RunSession(ctx, runner.session, args...)
 }
@@ -33,31 +41,53 @@ func (client Client) ForSession(session string) (Client, error) {
 // ForegroundDirectory returns the live foreground process directory for a pane.
 // The pane's creation-time cwd is intentionally ignored.
 func (client Client) ForegroundDirectory(ctx context.Context, paneID string) (string, error) {
+	details, err := client.readPane(ctx, paneID)
+	return details.ForegroundDirectory, err
+}
+
+// PaneDetails reads the live location needed to bind a local task to a pane.
+func (client Client) PaneDetails(ctx context.Context, paneID string) (PaneDetails, error) {
+	details, err := client.readPane(ctx, paneID)
+	if err != nil {
+		return PaneDetails{}, err
+	}
+	if !healthAtom(details.WorkspaceID, false) || !healthAtom(details.TabID, true) {
+		return PaneDetails{}, fmt.Errorf("%w: missing or invalid pane location", ErrResponse)
+	}
+	return details, nil
+}
+
+func (client Client) readPane(ctx context.Context, paneID string) (PaneDetails, error) {
 	if !healthAtom(paneID, true) {
-		return "", fmt.Errorf("%w: invalid Herdr pane", ErrResponse)
+		return PaneDetails{}, fmt.Errorf("%w: invalid Herdr pane", ErrResponse)
 	}
 	data, err := client.run(ctx, "pane", "get", paneID)
 	if err != nil {
-		return "", err
+		return PaneDetails{}, err
 	}
 	var response struct {
 		Result struct {
 			Pane struct {
 				PaneID        string `json:"pane_id"`
 				ForegroundCWD string `json:"foreground_cwd"`
+				WorkspaceID   string `json:"workspace_id"`
+				TabID         string `json:"tab_id"`
 			} `json:"pane"`
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(data, &response); err != nil {
-		return "", fmt.Errorf("%w: %v", ErrResponse, err)
+		return PaneDetails{}, fmt.Errorf("%w: %v", ErrResponse, err)
 	}
 	if response.Result.Pane.PaneID != paneID {
-		return "", fmt.Errorf("%w: pane identity mismatch", ErrResponse)
+		return PaneDetails{}, fmt.Errorf("%w: pane identity mismatch", ErrResponse)
 	}
 	path := response.Result.Pane.ForegroundCWD
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path ||
 		strings.IndexFunc(path, unicode.IsControl) >= 0 {
-		return "", fmt.Errorf("%w: missing or invalid foreground directory", ErrResponse)
+		return PaneDetails{}, fmt.Errorf("%w: missing or invalid foreground directory", ErrResponse)
 	}
-	return path, nil
+	return PaneDetails{
+		PaneID: paneID, WorkspaceID: response.Result.Pane.WorkspaceID,
+		TabID: response.Result.Pane.TabID, ForegroundDirectory: path,
+	}, nil
 }

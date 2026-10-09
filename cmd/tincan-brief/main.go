@@ -62,12 +62,21 @@ func printBrief(output io.Writer, root string, recipient inbox.Recipient, limit 
 	if err != nil {
 		return err
 	}
-	workers, err := registry.List()
+	allRecords, err := registry.List()
 	if err != nil {
 		return err
 	}
+	var workers, pending []crew.Record
+	for _, record := range allRecords {
+		if record.PendingAdoption {
+			pending = append(pending, record)
+			continue
+		}
+		workers = append(workers, record)
+	}
 	wakeCount := min(len(wakes), limit)
 	workerCount := min(len(workers), limit)
+	pendingCount := min(len(pending), limit)
 	executable, err := os.Executable()
 	if err != nil {
 		return err
@@ -101,6 +110,14 @@ func printBrief(output io.Writer, root string, recipient inbox.Recipient, limit 
 				quoted(worker.HerdrSession), quoted(worker.PaneID))
 		}
 	}
+	if pendingCount > 0 {
+		fmt.Fprintf(output, "pending_adoptions: %d of %d\n", pendingCount, len(pending))
+		fmt.Fprintf(output, "pending_adoptions[%d]{task,name,session,pane_id}:\n", pendingCount)
+		for _, record := range pending[:pendingCount] {
+			fmt.Fprintf(output, "  %s,%s,%s,%s\n", quoted(record.TaskID), quoted(record.Name),
+				quoted(record.HerdrSession), quoted(record.PaneID))
+		}
+	}
 	var hints []string
 	if wakeCount > 0 {
 		hints = append(hints, "tincan-inbox --root "+shellQuote(root)+
@@ -110,10 +127,10 @@ func printBrief(output io.Writer, root string, recipient inbox.Recipient, limit 
 		hints = append(hints, "tincan-inbox --root "+shellQuote(root)+
 			" list "+recipient.String())
 	}
-	if workerCount > 0 {
+	if workerCount > 0 || pendingCount > 0 {
 		hints = append(hints, "tincan-crew --root "+shellQuote(root)+" show <task-id>")
 	}
-	if workerCount < len(workers) {
+	if workerCount < len(workers) || pendingCount < len(pending) {
 		hints = append(hints, "tincan-crew --root "+shellQuote(root)+" list")
 	}
 	if len(hints) > 0 {

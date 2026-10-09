@@ -41,6 +41,7 @@ type Record struct {
 	Worktree          string   `json:"worktree"`
 	SpawnGeneration   string   `json:"spawn_generation"`
 	PendingGeneration string   `json:"pending_generation,omitempty"`
+	PendingAdoption   bool     `json:"pending_adoption,omitempty"`
 	AgentArgs         []string `json:"agent_args"`
 }
 
@@ -89,6 +90,9 @@ func validRecord(record Record) bool {
 	}
 	if ValidateLaunch(record.Name, record.AgentArgs) != nil || !safeAtom(record.Kind) ||
 		firstmate.ValidateSpawnGeneration(record.SpawnGeneration) != nil {
+		return false
+	}
+	if record.PendingAdoption && record.PendingGeneration != "" {
 		return false
 	}
 	if record.PendingGeneration != "" &&
@@ -285,7 +289,20 @@ func acquireLock(file *os.File) error {
 
 // Register publishes a launch record once. The same record is an idempotent retry.
 func (registry *Registry) Register(record Record) error {
-	if !validRecord(record) || record.PendingGeneration != "" {
+	return registry.register(record, nil)
+}
+
+// registerAfter reserves crew identity before preparing task metadata.
+// The caller holds the task metadata lock until this method returns.
+func (registry *Registry) registerAfter(record Record, prepare func() error) error {
+	if prepare == nil {
+		return ErrInvalidRecord
+	}
+	return registry.register(record, prepare)
+}
+
+func (registry *Registry) register(record Record, prepare func() error) error {
+	if !validRecord(record) || record.PendingGeneration != "" || record.PendingAdoption {
 		return ErrInvalidRecord
 	}
 	data, err := json.Marshal(record)
@@ -318,8 +335,19 @@ func (registry *Registry) Register(record Record) error {
 	}
 	for _, existing := range records {
 		if existing.TaskID == record.TaskID {
-			if !reflect.DeepEqual(existing, record) {
+			pending := record
+			pending.PendingAdoption = true
+			if !reflect.DeepEqual(existing, record) &&
+				!(prepare != nil && reflect.DeepEqual(existing, pending)) {
 				return ErrConflict
+			}
+			if prepare != nil {
+				if err := prepare(); err != nil {
+					return err
+				}
+				if existing.PendingAdoption {
+					return replaceRecord(root, record)
+				}
 			}
 			return syncRoot(root)
 		}
@@ -327,6 +355,17 @@ func (registry *Registry) Register(record Record) error {
 			(existing.Name == record.Name || existing.PaneID == record.PaneID) {
 			return ErrConflict
 		}
+	}
+	publication := record
+	if prepare != nil {
+		publication.PendingAdoption = true
+	}
+	data, err = json.Marshal(publication)
+	if err != nil {
+		return err
+	}
+	if len(data) > maximumRecordBytes {
+		return fmt.Errorf("%w: record exceeds 1 MiB", ErrInvalidRecord)
 	}
 	temporary, temporaryName, err := temporaryFile(root)
 	if err != nil {
@@ -347,7 +386,19 @@ func (registry *Registry) Register(record Record) error {
 	if err := root.Link(temporaryName, record.TaskID+".json"); err != nil {
 		return err
 	}
-	return syncRoot(root)
+	if err := root.Remove(temporaryName); err != nil {
+		return err
+	}
+	if err := syncRoot(root); err != nil {
+		return err
+	}
+	if prepare != nil {
+		if err := prepare(); err != nil {
+			return err
+		}
+		return replaceRecord(root, record)
+	}
+	return nil
 }
 
 // Get reads the registered launch identity for one task.

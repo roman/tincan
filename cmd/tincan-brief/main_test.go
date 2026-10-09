@@ -106,6 +106,84 @@ func TestBriefShowsPendingWakesAndRegisteredCrew(t *testing.T) {
 	}
 }
 
+func TestBriefSeparatesPendingAdoptionFromRegisteredCrew(t *testing.T) {
+	root := t.TempDir()
+	registry, err := crew.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Register(crew.Record{
+		TaskID: "task-1", Name: "worker-1", Kind: "codex", PaneID: "pane-1",
+		HerdrSession: "work", Project: "/project", Worktree: "/worktree",
+		SpawnGeneration: "gen-1", AgentArgs: []string{"resume", "thread-1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "crew", "task-1.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = bytes.Replace(
+		data,
+		[]byte(`"agent_args"`),
+		[]byte(`"pending_adoption":true,"agent_args"`),
+		1,
+	)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if code := run([]string{"--root", root}, &output); code != 0 {
+		t.Fatalf("code=%d output=%s", code, output.String())
+	}
+	if !strings.Contains(output.String(), "crew: 0 registered\n") ||
+		!strings.Contains(output.String(), "pending_adoptions: 1 of 1\n") ||
+		strings.Contains(output.String(), "crew[1]") {
+		t.Fatalf("pending adoption appeared as crew: %s", output.String())
+	}
+}
+
+func TestBriefListsTruncatedPendingAdoptions(t *testing.T) {
+	root := t.TempDir()
+	registry, err := crew.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, taskID := range []string{"task-1", "task-2"} {
+		if err := registry.Register(crew.Record{
+			TaskID: taskID, Name: taskID, Kind: "codex", PaneID: taskID,
+			HerdrSession: "work", Project: "/project", Worktree: "/worktree",
+			SpawnGeneration: "gen-1", AgentArgs: []string{"resume", taskID},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(root, "crew", taskID+".json")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data = bytes.Replace(
+			data,
+			[]byte(`"agent_args"`),
+			[]byte(`"pending_adoption":true,"agent_args"`),
+			1,
+		)
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var output bytes.Buffer
+	if code := run([]string{"--root", root, "--limit", "1"}, &output); code != 0 {
+		t.Fatalf("code=%d output=%s", code, output.String())
+	}
+	if !strings.Contains(output.String(), "pending_adoptions: 1 of 2\n") ||
+		strings.Count(output.String(), "show <task-id>") != 1 ||
+		strings.Count(output.String(), "list") != 1 {
+		t.Fatalf("missing pending list hint: %s", output.String())
+	}
+}
+
 func TestBriefReportsUsageErrorsOnStdout(t *testing.T) {
 	for _, args := range [][]string{
 		{"--root", "/tmp/state", "--unknown"},

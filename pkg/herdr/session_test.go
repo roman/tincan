@@ -124,3 +124,34 @@ func TestForegroundDirectoryReadsLivePanePath(t *testing.T) {
 		})
 	}
 }
+
+func TestPaneDetailsBindLiveWorkspaceAndTab(t *testing.T) {
+	runner := &scriptedSessionRunner{responses: []runResponse{{stdout: []byte(
+		`{"result":{"pane":{"pane_id":"pane-1","foreground_cwd":"/worktree","workspace_id":"ws-1","tab_id":"tab-1"}}}`,
+	)}}}
+	client, err := (Client{SessionRunner: runner}).ForSession("work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	details, err := client.PaneDetails(context.Background(), "pane-1")
+	if err != nil || details.PaneID != "pane-1" || details.ForegroundDirectory != "/worktree" ||
+		details.WorkspaceID != "ws-1" || details.TabID != "tab-1" {
+		t.Fatalf("details=%+v err=%v", details, err)
+	}
+}
+
+func TestPaneDetailsRejectsMissingLocation(t *testing.T) {
+	for _, response := range []string{
+		`{"result":{"pane":{"pane_id":"pane-1","foreground_cwd":"/worktree","tab_id":"tab-1"}}}`,
+		`{"result":{"pane":{"pane_id":"pane-1","foreground_cwd":"/worktree","workspace_id":"ws-1"}}}`,
+	} {
+		runner := &scriptedSessionRunner{responses: []runResponse{{stdout: []byte(response)}}}
+		client, err := (Client{SessionRunner: runner}).ForSession("work")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := client.PaneDetails(context.Background(), "pane-1"); err == nil {
+			t.Fatal("expected missing location error")
+		}
+	}
+}
