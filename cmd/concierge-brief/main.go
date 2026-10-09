@@ -16,9 +16,10 @@ import (
 )
 
 type cli struct {
-	Root      string `help:"Absolute Concierge state root; defaults to .tincan in the current directory." env:"TINCAN_HOME"`
-	Recipient string `help:"Primary inbox recipient." default:"firstmate"`
-	Limit     int    `help:"Maximum rows from each source." default:"10"`
+	Root        string `help:"Absolute Concierge state root; defaults to .concierge in the current directory." env:"CONCIERGE_HOME"`
+	MessageRoot string `help:"Absolute Tincan message root; defaults to .tincan in the current directory." env:"TINCAN_HOME"`
+	Recipient   string `help:"Primary inbox recipient." default:"firstmate"`
+	Limit       int    `help:"Maximum rows from each source." default:"10"`
 }
 
 const version = "0.1.0"
@@ -49,12 +50,17 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
-func printBrief(output io.Writer, root string, recipient inbox.Recipient, limit int) error {
+func printBrief(
+	output io.Writer,
+	root, messageRoot string,
+	recipient inbox.Recipient,
+	limit int,
+) error {
 	registry, err := crew.New(root)
 	if err != nil {
 		return err
 	}
-	store, err := inbox.New(root)
+	store, err := inbox.New(messageRoot)
 	if err != nil {
 		return err
 	}
@@ -141,11 +147,11 @@ func printBrief(output io.Writer, root string, recipient inbox.Recipient, limit 
 	}
 	var hints []string
 	if wakeCount > 0 {
-		hints = append(hints, "tincan-inbox --root "+shellQuote(root)+
+		hints = append(hints, "tincan-inbox --root "+shellQuote(messageRoot)+
 			" read "+recipient.String()+" <id>")
 	}
 	if wakeCount < len(wakes) {
-		hints = append(hints, "tincan-inbox --root "+shellQuote(root)+
+		hints = append(hints, "tincan-inbox --root "+shellQuote(messageRoot)+
 			" list "+recipient.String())
 	}
 	if taskCount > 0 {
@@ -177,31 +183,49 @@ func run(args []string, output io.Writer) int {
 		kong.Description("Show pending primary wakes, local tasks, and registered workers."),
 		kong.Writers(output, io.Discard))
 	if err != nil {
-		return failure(output, 2, err, "concierge-brief --root ROOT [--recipient NAME] [--limit N]")
+		return failure(
+			output,
+			2,
+			err,
+			"concierge-brief --root ROOT [--message-root ROOT] [--recipient NAME] [--limit N]",
+		)
 	}
 	if _, err := parser.Parse(args); err != nil {
-		return failure(output, 2, err, "concierge-brief --root ROOT [--recipient NAME] [--limit N]")
+		return failure(
+			output,
+			2,
+			err,
+			"concierge-brief --root ROOT [--message-root ROOT] [--recipient NAME] [--limit N]",
+		)
 	}
 	if options.Limit < 1 || options.Limit > 100 {
 		return failure(output, 2, fmt.Errorf("--limit must be from 1 to 100"),
 			"concierge-brief --root ROOT --limit N")
 	}
-	if options.Root == "" {
+	if options.Root == "" || options.MessageRoot == "" {
 		workingDirectory, err := os.Getwd()
 		if err != nil {
-			return failure(output, 1, err, "provide an explicit --root path")
+			return failure(output, 1, err, "provide explicit --root and --message-root paths")
 		}
-		options.Root = filepath.Join(workingDirectory, ".tincan")
+		if options.Root == "" {
+			options.Root = filepath.Join(workingDirectory, ".concierge")
+		}
+		if options.MessageRoot == "" {
+			options.MessageRoot = filepath.Join(workingDirectory, ".tincan")
+		}
 	}
 	if _, err := firstmate.ParseAbsolutePath(options.Root); err != nil {
 		return failure(output, 2, err, "use an absolute, clean --root path")
+	}
+	if _, err := firstmate.ParseAbsolutePath(options.MessageRoot); err != nil {
+		return failure(output, 2, err, "use an absolute, clean --message-root path")
 	}
 	recipient, err := inbox.ParseRecipient(options.Recipient)
 	if err != nil {
 		return failure(output, 2, err, "use a valid --recipient name")
 	}
-	if err := printBrief(output, options.Root, recipient, options.Limit); err != nil {
-		return failure(output, 1, err, "inspect the Concierge state root")
+	if err := printBrief(output, options.Root, options.MessageRoot, recipient, options.Limit); err != nil {
+		return failure(output, 1, err, "inspect the Concierge and Tincan state roots")
 	}
 	return 0
 }

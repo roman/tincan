@@ -18,6 +18,7 @@ const briefTaskMetadata = "window=crew:pane-1\nendpoint_task_id=task-1\nworktree
 
 func TestBriefShowsEmptyState(t *testing.T) {
 	t.Chdir(t.TempDir())
+	t.Setenv("CONCIERGE_HOME", "")
 	t.Setenv("TINCAN_HOME", "")
 	var output bytes.Buffer
 	code := run(nil, &output)
@@ -32,8 +33,42 @@ func TestBriefShowsEmptyState(t *testing.T) {
 	}
 }
 
+func TestBriefUsesDistinctEnvironmentRoots(t *testing.T) {
+	supervisorRoot := t.TempDir()
+	messageRoot := t.TempDir()
+	t.Setenv("CONCIERGE_HOME", supervisorRoot)
+	t.Setenv("TINCAN_HOME", messageRoot)
+	taskState := filepath.Join(supervisorRoot, "tasks")
+	if err := os.Mkdir(taskState, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(taskState, "task-1.meta"), []byte(briefTaskMetadata), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := inbox.New(messageRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipient, err := inbox.ParseRecipient("firstmate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Send(recipient, "env", "environment wake"); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if code := run(nil, &output); code != 0 ||
+		!strings.Contains(output.String(), "tasks: 1 found") ||
+		!strings.Contains(output.String(), "environment wake") ||
+		!strings.Contains(output.String(), "concierge-task --root '"+supervisorRoot+"'") ||
+		!strings.Contains(output.String(), "tincan-inbox --root '"+messageRoot+"'") {
+		t.Fatalf("code %d, output %q", code, output.String())
+	}
+}
+
 func TestBriefUsesWorkspaceStateByDefault(t *testing.T) {
 	t.Chdir(t.TempDir())
+	t.Setenv("CONCIERGE_HOME", "")
 	t.Setenv("TINCAN_HOME", "")
 	store, err := inbox.New(filepath.Join(mustWorkingDirectory(t), ".tincan"))
 	if err != nil {
@@ -46,9 +81,19 @@ func TestBriefUsesWorkspaceStateByDefault(t *testing.T) {
 	if _, err := store.Send(recipient, "default", "workspace wake"); err != nil {
 		t.Fatal(err)
 	}
+	taskState := filepath.Join(mustWorkingDirectory(t), ".concierge", "tasks")
+	if err := os.MkdirAll(taskState, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(taskState, "task-1.meta"), []byte(briefTaskMetadata), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	var output bytes.Buffer
 	if code := run(nil, &output); code != 0 ||
-		!strings.Contains(output.String(), "workspace wake") {
+		!strings.Contains(output.String(), "workspace wake") ||
+		!strings.Contains(output.String(), "tasks: 1 found") ||
+		!strings.Contains(output.String(), ".tincan'") ||
+		!strings.Contains(output.String(), ".concierge'") {
 		t.Fatalf("code %d, output %q", code, output.String())
 	}
 }
@@ -133,7 +178,7 @@ func TestBriefShowsPendingWakesAndRegisteredCrew(t *testing.T) {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	code := run([]string{"--root", root}, &output)
+	code := run([]string{"--root", root, "--message-root", root}, &output)
 	if code != 0 {
 		t.Fatalf("exit code %d: %s", code, output.String())
 	}
@@ -238,7 +283,8 @@ func TestBriefListsTruncatedPendingAdoptions(t *testing.T) {
 func TestBriefReportsUsageErrorsOnStdout(t *testing.T) {
 	for _, args := range [][]string{
 		{"--root", "/tmp/state", "--unknown"},
-		{"--root", "relative-state"}, {"--root", "/tmp/state", "--limit", "0"},
+		{"--root", "relative-state"}, {"--message-root", "relative-state"},
+		{"--root", "/tmp/state", "--limit", "0"},
 	} {
 		var output bytes.Buffer
 		if code := run(args, &output); code != 2 ||
@@ -265,7 +311,7 @@ func TestBriefLimitsStartupRowsAndReportsTotal(t *testing.T) {
 		}
 	}
 	var output bytes.Buffer
-	code := run([]string{"--root", root, "--limit", "1"}, &output)
+	code := run([]string{"--root", root, "--message-root", root, "--limit", "1"}, &output)
 	if code != 0 {
 		t.Fatalf("exit code %d: %s", code, output.String())
 	}

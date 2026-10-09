@@ -114,14 +114,16 @@ tincan-notify --root ./tincan-state --recipient worker-1 --target w1:p2 --sessio
 ```
 
 At session start, show pending primary wakes, local tasks, and registered workers. With no
-flags, the brief reads `.tincan` in the current directory. `--root` or
-`TINCAN_HOME` selects another absolute state root. The brief limits each list
+flags, the brief reads supervisor state from `.concierge` and messages from
+`.tincan` in the current directory. `--root` or `CONCIERGE_HOME` selects the
+supervisor root. `--message-root` or `TINCAN_HOME` selects the message root.
+The brief limits each list
 to ten rows by default and reports the full count. Use `--limit` for up to 100
 rows. It reads state without creating it.
 
 ```sh
-concierge-brief --root /absolute/tincan-state
-concierge-task --root /absolute/tincan-state list
+concierge-brief --root /absolute/concierge-state --message-root /absolute/tincan-state
+concierge-task --root /absolute/concierge-state list
 ```
 
 Queue a task in the root backlog with pinned `tasks-axi` 0.2.6 installed on
@@ -135,8 +137,8 @@ because it uses that version's backlog lock protocol. Task completion still
 needs a lifecycle command.
 
 ```sh
-concierge-backlog --root /absolute/tincan-state add task-1 'Fix startup' --kind task --repo exmachina
-concierge-backlog --root /absolute/tincan-state start task-1
+concierge-backlog --root /absolute/concierge-state add task-1 'Fix startup' --kind task --repo exmachina
+concierge-backlog --root /absolute/concierge-state start task-1
 ```
 
 The second command keeps running. The worker reads the pending message and
@@ -171,15 +173,15 @@ resumption. Repeated registration with identical details succeeds; changed
 details require an explicit future transition and produce a conflict now.
 
 ```sh
-concierge-worker --root /absolute/tincan-state register task-1 --name worker-1 --agent-arg resume --agent-arg THREAD_ID
-concierge-worker --root /absolute/tincan-state list
-concierge-worker --root /absolute/tincan-state show task-1
+concierge-worker --root /absolute/concierge-state register task-1 --name worker-1 --agent-arg resume --agent-arg THREAD_ID
+concierge-worker --root /absolute/concierge-state list
+concierge-worker --root /absolute/concierge-state show task-1
 ```
 
 Run task-bound supervision after registration:
 
 ```sh
-concierge-supervise --root /absolute/tincan-state --task task-1
+concierge-supervise --root /absolute/concierge-state --task task-1
 ```
 
 Task mode checks the current task metadata, the registered worker, the named
