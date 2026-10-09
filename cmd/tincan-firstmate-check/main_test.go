@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/roman/tincan/pkg/firstmate"
+	"github.com/roman/tincan/pkg/inbox"
 )
 
 const checkMetadata = "window=crew:pane-1\nendpoint_task_id=task-1\nworktree=/repo/worktree\nproject=/repo\nharness=codex\nkind=ship\nspawn_gen=s123.456.7\nbackend=herdr\nherdr_session=crew\nherdr_workspace_id=workspace-1\nherdr_tab_id=tab:1\nherdr_pane_id=pane-1\n"
@@ -157,6 +158,144 @@ func TestCheckCLIOutcomes(t *testing.T) {
 	}
 }
 
+func TestCheckCLIPublishesDurableEscalation(t *testing.T) {
+	state, _ := checkCLIFixture(t)
+	inboxPath := pendingCheckRecord(t, state)
+	if err := os.WriteFile(filepath.Join(inboxPath, ".ring-state"), []byte("001.msg\t3\t0\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_MODE", "empty")
+	wakeRoot := t.TempDir()
+	args := []string{"--state", state, "--wake-root", wakeRoot, "--grace-seconds", "0", "task-1"}
+	for attempt, expected := range []string{"escalate", "quiet"} {
+		code, output, diagnostic := callCheck(args...)
+		if code != 0 || !strings.Contains(output, "action: "+expected+"\n") {
+			t.Fatalf(
+				"attempt %d: code=%d output=%q diagnostic=%q",
+				attempt,
+				code,
+				output,
+				diagnostic,
+			)
+		}
+	}
+	store, err := inbox.New(wakeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipient, err := inbox.ParseRecipient("firstmate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages, err := store.List(recipient)
+	if err != nil || len(messages) != 1 {
+		t.Fatalf("wake messages=%v error=%v", messages, err)
+	}
+	wantBody := "kind: task-message-stale\nstate: " + state +
+		"\ntask: task-1\nrecord: 001.msg\nspawn_generation: s123.456.7\n"
+	if messages[0].Body != wantBody {
+		t.Fatalf("wake body=%q", messages[0].Body)
+	}
+	marker, err := os.ReadFile(filepath.Join(inboxPath, ".escalated"))
+	if err != nil || string(marker) != "001.msg\n" {
+		t.Fatalf("marker=%q error=%v", marker, err)
+	}
+}
+
+func TestCheckCLISeparatesStateDirectories(t *testing.T) {
+	wakeRoot := t.TempDir()
+	for range 2 {
+		state, _ := checkCLIFixture(t)
+		inboxPath := pendingCheckRecord(t, state)
+		if err := os.WriteFile(
+			filepath.Join(inboxPath, ".ring-state"), []byte("001.msg\t3\t0\n"), 0600,
+		); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("HERDR_MODE", "empty")
+		code, output, diagnostic := callCheck(
+			"--state", state, "--wake-root", wakeRoot, "--grace-seconds", "0", "task-1",
+		)
+		if code != 0 || !strings.Contains(output, "action: escalate\n") {
+			t.Fatalf("code=%d output=%q diagnostic=%q", code, output, diagnostic)
+		}
+	}
+	store, err := inbox.New(wakeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipient, err := inbox.ParseRecipient("firstmate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages, err := store.List(recipient)
+	if err != nil || len(messages) != 2 {
+		t.Fatalf("wake messages=%v error=%v", messages, err)
+	}
+}
+
+func TestCheckCLISeparatesSpawnGenerationsWhenRearmed(t *testing.T) {
+	state, _ := checkCLIFixture(t)
+	inboxPath := pendingCheckRecord(t, state)
+	if err := os.WriteFile(
+		filepath.Join(inboxPath, ".ring-state"), []byte("001.msg\t3\t0\n"), 0600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_MODE", "empty")
+	wakeRoot := t.TempDir()
+	args := []string{"--state", state, "--wake-root", wakeRoot, "--grace-seconds", "0", "task-1"}
+	code, _, diagnostic := callCheck(args...)
+	if code != 0 {
+		t.Fatalf("first check: %s", diagnostic)
+	}
+	changed := strings.Replace(checkMetadata, "spawn_gen=s123.456.7", "spawn_gen=s124.456.7", 1)
+	if err := os.WriteFile(filepath.Join(state, "task-1.meta"), []byte(changed), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(inboxPath, ".escalated")); err != nil {
+		t.Fatal(err)
+	}
+	code, _, diagnostic = callCheck(args...)
+	if code != 0 {
+		t.Fatalf("second check: %s", diagnostic)
+	}
+	store, err := inbox.New(wakeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipient, err := inbox.ParseRecipient("firstmate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages, err := store.List(recipient)
+	if err != nil || len(messages) != 2 {
+		t.Fatalf("wake messages=%v error=%v", messages, err)
+	}
+}
+
+func TestCheckCLILeavesEscalationOpenWhenWakeFails(t *testing.T) {
+	state, _ := checkCLIFixture(t)
+	inboxPath := pendingCheckRecord(t, state)
+	if err := os.WriteFile(filepath.Join(inboxPath, ".ring-state"), []byte("001.msg\t3\t0\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_MODE", "empty")
+	wakeRoot := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(wakeRoot, []byte("occupied"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	code, _, diagnostic := callCheck(
+		"--state", state, "--wake-root", wakeRoot, "--grace-seconds", "0", "task-1",
+	)
+	if code != 1 || diagnostic == "" {
+		t.Fatalf("code=%d diagnostic=%q", code, diagnostic)
+	}
+	if _, err := os.Stat(filepath.Join(inboxPath, ".escalated")); !os.IsNotExist(err) {
+		t.Fatalf("marker written after wake failure: %v", err)
+	}
+}
+
 func TestCheckCLIDeferredAttemptReachesBudget(t *testing.T) {
 	state, log := checkCLIFixture(t)
 	inbox := pendingCheckRecord(t, state)
@@ -190,6 +329,7 @@ func TestCheckCLIUsageAndOperationalErrors(t *testing.T) {
 		want            int
 	}{
 		{"relative state", []string{"--state", "relative", "task-1"}, false, 2},
+		{"relative wake root", []string{"--wake-root", "relative", "task-1"}, false, 2},
 		{"invalid task", []string{"task/1"}, false, 2},
 		{"invalid grace", []string{"--grace-seconds", "bad", "task-1"}, false, 2},
 		{"negative grace", []string{"--grace-seconds", "-1", "task-1"}, false, 2},

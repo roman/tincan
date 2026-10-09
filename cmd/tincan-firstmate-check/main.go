@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -13,14 +14,16 @@ import (
 	"github.com/alecthomas/kong"
 	"github.com/roman/tincan/pkg/firstmate"
 	"github.com/roman/tincan/pkg/herdr"
+	"github.com/roman/tincan/pkg/inbox"
 )
 
 type cli struct {
-	State        string  `help:"Absolute Firstmate state directory." required:""`
-	Herdr        string  `help:"Herdr executable." env:"TINCAN_HERDR" default:"herdr"`
+	State        string  `help:"Absolute Firstmate state directory."                                              required:""`
+	WakeRoot     string  `help:"Absolute Tincan inbox root for durable escalation wakes."`
+	Herdr        string  `help:"Herdr executable."                                                                            env:"TINCAN_HERDR" default:"herdr"`
 	GraceSeconds *string `help:"Seconds before and between watcher rings (default 90; FM_TASK_INBOX_GRACE_SECS)."`
 	MaxAttempts  *string `help:"Watcher ring budget (default 3; FM_TASK_INBOX_RING_MAX)."`
-	TaskID       string  `arg:"" help:"Firstmate task ID."`
+	TaskID       string  `help:"Firstmate task ID."                                                                                                              arg:""`
 }
 
 type failedHerdr struct{ err error }
@@ -100,6 +103,10 @@ func runWithCheck(args []string, stdout, stderr io.Writer, execute checkExecutor
 		fmt.Fprintln(stderr, "tincan-firstmate-check:", err)
 		return 2
 	}
+	if command.WakeRoot != "" && !filepath.IsAbs(command.WakeRoot) {
+		fmt.Fprintln(stderr, "tincan-firstmate-check: wake root must be absolute")
+		return 2
+	}
 	grace, err := policyNumber(command.GraceSeconds, "FM_TASK_INBOX_GRACE_SECS")
 	if err != nil {
 		fmt.Fprintln(stderr, "tincan-firstmate-check:", err)
@@ -128,6 +135,30 @@ func runWithCheck(args []string, stdout, stderr io.Writer, execute checkExecutor
 		Store:    store,
 		Health:   endpoint,
 		Doorbell: endpoint,
+	}
+	if command.WakeRoot != "" {
+		store, err := inbox.New(command.WakeRoot)
+		if err != nil {
+			fmt.Fprintln(stderr, "tincan-firstmate-check:", err)
+			return 2
+		}
+		recipient, err := inbox.ParseRecipient("firstmate")
+		if err != nil {
+			fmt.Fprintln(stderr, "tincan-firstmate-check:", err)
+			return 2
+		}
+		check.Publish = func(_ context.Context, escalation firstmate.Escalation) error {
+			key := "firstmate-escalation:" + escalation.StateDir.String() + ":" +
+				escalation.TaskID.String() + ":" + escalation.Record.String() + ":" +
+				escalation.SpawnGeneration
+			body := fmt.Sprintf(
+				"kind: task-message-stale\nstate: %s\ntask: %s\nrecord: %s\nspawn_generation: %s\n",
+				escalation.StateDir, escalation.TaskID, escalation.Record,
+				escalation.SpawnGeneration,
+			)
+			_, err := store.Send(recipient, key, body)
+			return err
+		}
 	}
 	now := time.Now()
 	result, err := execute(check, now)

@@ -130,6 +130,7 @@ supervision. The supervisor does not create panes.
 ```sh
 tincan-firstmate-send --state /absolute/firstmate/state task-1 --body 'Please check the task.'
 tincan-firstmate-check --state /absolute/firstmate/state task-1
+tincan-firstmate-check --state /absolute/firstmate/state --wake-root /absolute/tincan-state task-1
 ```
 
 The send command commits a numbered `.msg` record before it tries a terminal
@@ -154,6 +155,18 @@ when it sees the exact doorbell on a single visible composer row. Full
 Firstmate composer and terminal behavior remains unsupported. These commands
 do not replace `fm-send` or `fm-watch`. They do not support remote or secondmate
 delivery, correlations, `--resolve-key`, fire-and-forget delivery, typed
-commands, or other backends. There is no resident watcher or durable wake
-publisher. The check command only prints an escalation outcome. It does not
-write the `.escalated` marker because no wake was published.
+commands, or other backends. There is no resident watcher.
+
+With `--wake-root`, the check command publishes an escalation to Tincan's JSON
+inbox under recipient `firstmate`. The wake identifies the absolute Firstmate
+state directory, task, pending record, and spawn generation. Repeated
+publication for that identity returns the same message. The command writes
+`.escalated` only after the wake is durable. Without `--wake-root`, it reports
+escalation without writing that marker. Read and acknowledge a wake with
+`tincan-inbox --root /absolute/tincan-state list firstmate`, then `read` and
+`ack` with the returned message ID. An operator can inspect these pending
+wakes now; a resident supervisor that consumes them is still needed. A wake
+requires a current-state check before action. The marker suppresses another
+wake for the same pending record, even if the worker restarts. The spawn
+generation scopes wake identity if the record is rearmed. Keep one retry-state
+writer when moving from Firstmate's watcher to this command.

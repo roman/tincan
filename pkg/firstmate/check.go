@@ -28,10 +28,12 @@ const (
 
 // Escalation describes the pending record to publish as a stale wake.
 type Escalation struct {
-	TaskID   TaskID
-	Record   RecordName
-	Attempts uint64
-	Outcome  CheckOutcome
+	StateDir        AbsolutePath
+	TaskID          TaskID
+	Record          RecordName
+	SpawnGeneration string
+	Attempts        uint64
+	Outcome         CheckOutcome
 }
 
 // CheckResult reports a one-shot retry action, including a ring delivery failure.
@@ -106,13 +108,13 @@ func (check RetryCheck) Run(ctx context.Context, now time.Time) (CheckResult, er
 		return check.acknowledged(now)
 	}
 	if status.Endpoint == herdr.Dead || status.Endpoint == herdr.Missing {
-		return check.escalate(ctx, now, record, 0, CheckUnavailable)
+		return check.escalate(ctx, now, before, record, 0, CheckUnavailable)
 	}
 	if status.Endpoint == herdr.Alive && status.Activity == herdr.HealthBusy {
 		return CheckResult{Outcome: CheckWait, Record: record}, nil
 	}
 	if decision.Action() == RetryEscalate {
-		return check.escalate(ctx, now, record, decision.EscalationCount(), CheckEscalate)
+		return check.escalate(ctx, now, before, record, decision.EscalationCount(), CheckEscalate)
 	}
 	if check.Doorbell == nil {
 		return CheckResult{}, ErrNoDoorbell
@@ -123,7 +125,7 @@ func (check RetryCheck) Run(ctx context.Context, now time.Time) (CheckResult, er
 		return CheckResult{}, err
 	}
 	if status.Endpoint == herdr.Dead || status.Endpoint == herdr.Missing {
-		return check.escalate(ctx, now, record, 0, CheckUnavailable)
+		return check.escalate(ctx, now, before, record, 0, CheckUnavailable)
 	}
 	if status.Endpoint == herdr.Alive && status.Activity == herdr.HealthBusy {
 		return CheckResult{Outcome: CheckWait, Record: record}, nil
@@ -140,7 +142,7 @@ func (check RetryCheck) Run(ctx context.Context, now time.Time) (CheckResult, er
 		return CheckResult{Delivery: delivery}, err
 	}
 	if delivery.Outcome == herdr.RingUnavailable {
-		result, err := check.escalate(ctx, now, record, 0, CheckUnavailable)
+		result, err := check.escalate(ctx, now, before, record, 0, CheckUnavailable)
 		result.Delivery = delivery
 		return result, err
 	}
@@ -182,6 +184,7 @@ func (check RetryCheck) acknowledged(now time.Time) (CheckResult, error) {
 func (check RetryCheck) escalate(
 	ctx context.Context,
 	now time.Time,
+	before Metadata,
 	record RecordName,
 	count uint64,
 	outcome CheckOutcome,
@@ -197,15 +200,25 @@ func (check RetryCheck) escalate(
 	if check.Publish == nil {
 		return result, nil
 	}
+	if err := check.unchanged(before); err != nil {
+		return result, err
+	}
 	escalation := Escalation{
-		TaskID:   check.TaskID,
-		Record:   record,
-		Attempts: count,
-		Outcome:  outcome,
+		StateDir:        check.StateDir,
+		TaskID:          check.TaskID,
+		Record:          record,
+		SpawnGeneration: before.SpawnGeneration(),
+		Attempts:        count,
+		Outcome:         outcome,
 	}
 	err = check.Store.PublishEscalation(
 		record,
-		func() error { return check.Publish(ctx, escalation) },
+		func() error {
+			if err := check.Publish(ctx, escalation); err != nil {
+				return err
+			}
+			return check.unchanged(before)
+		},
 	)
 	if err != nil {
 		return result, err

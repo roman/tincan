@@ -205,6 +205,33 @@ func TestRetryCheckEscalationPublication(t *testing.T) {
 	}
 }
 
+func TestRetryCheckRejectsMetadataChangeDuringPublication(t *testing.T) {
+	check, inboxPath, name := checkFixture(t)
+	now := time.Unix(1000, 0)
+	writeRetryRecord(t, inboxPath, name.String(), "", time.Unix(800, 0))
+	if err := os.WriteFile(
+		filepath.Join(inboxPath, ".ring-state"), []byte("001.msg\t3\t0\n"), 0600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	check.Health = &checkHealth{
+		states: []herdr.HealthStatus{{Endpoint: herdr.Alive, Activity: herdr.HealthIdle}},
+	}
+	check.Publish = func(context.Context, Escalation) error {
+		changed := strings.Replace(validMetadata, "spawn_gen=s123.456.7", "spawn_gen=s124.456.7", 1)
+		return os.WriteFile(
+			filepath.Join(check.StateDir.String(), "task-1.meta"), []byte(changed), 0600,
+		)
+	}
+	_, err := check.Run(context.Background(), now)
+	if !errors.Is(err, ErrTaskChanged) {
+		t.Fatalf("error=%v, want changed task", err)
+	}
+	if _, err := os.Stat(filepath.Join(inboxPath, ".escalated")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("marker written for changed task: %v", err)
+	}
+}
+
 func TestRetryCheckAckAndChangedMetadataRaces(t *testing.T) {
 	for _, test := range []struct {
 		name    string
