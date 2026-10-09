@@ -14,6 +14,7 @@ The programs share reusable packages under `pkg/`.
 | `tincan-inbox` | Store, list, read, and acknowledge messages for a recipient. |
 | `tincan-brief` | Show pending primary wakes, local tasks, and registered workers at session start. |
 | `tincan-crew` | Record and inspect local worker launch identities. |
+| `tincan-backlog` | Queue a task in a tasks-axi backlog under the Tincan root. |
 | `tincan-task` | Adopt a live local worker, cancel an incomplete adoption, or list task records. |
 | `tincan-notify` | Ring an agent while its inbox has pending messages. |
 | `tincan-control` | Inspect, start, or interrupt an agent. |
@@ -116,6 +117,16 @@ rows. It reads state without creating it.
 ```sh
 tincan-brief --root /absolute/tincan-state
 tincan-task --root /absolute/tincan-state list
+```
+
+Queue a task in the root backlog with `tasks-axi` 0.2.6 or newer installed on
+`PATH`. The command creates `backlog.md` under the existing Tincan state root
+when the file is absent. A repeated task ID returns an error and leaves the
+existing task unchanged. The command only creates queued work; dispatch and
+task completion still need separate lifecycle commands.
+
+```sh
+tincan-backlog --root /absolute/tincan-state add task-1 'Fix startup' --kind ship --repo exmachina
 ```
 
 The second command keeps running. The worker reads the pending message and

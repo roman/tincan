@@ -27,6 +27,7 @@
         let
           system = pkgs.stdenv.hostPlatform.system;
           herdrPackage = herdr.packages.${system}.default;
+          tasksAxi = pkgs.callPackage ./nix/tasks-axi.nix { };
           mkProgram = { name, runtime ? null }: pkgs.buildGoModule ((goModule pkgs) // {
             pname = name;
             subPackages = [ "cmd/${name}" ];
@@ -40,6 +41,7 @@
           tincan-inbox = mkProgram { name = "tincan-inbox"; };
           tincan-brief = mkProgram { name = "tincan-brief"; };
           tincan-crew = mkProgram { name = "tincan-crew"; };
+	          tincan-backlog = mkProgram { name = "tincan-backlog"; runtime = tasksAxi; };
 	          tincan-task = mkProgram { name = "tincan-task"; runtime = herdrPackage; };
           tincan-notify = mkProgram { name = "tincan-notify"; runtime = herdrPackage; };
           tincan-control = mkProgram { name = "tincan-control"; runtime = herdrPackage; };
@@ -50,12 +52,12 @@
           tincan-firstmate-show = mkProgram { name = "tincan-firstmate-show"; };
           tincan = pkgs.symlinkJoin {
             name = "tincan-0.1.0";
-            paths = [ tincan-inbox tincan-brief tincan-crew tincan-task tincan-notify tincan-control tincan-supervise tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show ];
+            paths = [ tincan-inbox tincan-brief tincan-crew tincan-backlog tincan-task tincan-notify tincan-control tincan-supervise tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show ];
           };
         in
         {
           default = tincan;
-          inherit tincan tincan-inbox tincan-brief tincan-crew tincan-task tincan-notify tincan-control tincan-supervise tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show;
+          inherit tincan tincan-inbox tincan-brief tincan-crew tincan-backlog tincan-task tincan-notify tincan-control tincan-supervise tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show;
         });
 
       formatter = forEachSystem (pkgs: pkgs.writeShellApplication {
@@ -72,11 +74,18 @@
       checks = forEachSystem (pkgs:
         let
           packages = self.packages.${pkgs.stdenv.hostPlatform.system};
+          tasksAxi = pkgs.callPackage ./nix/tasks-axi.nix { };
         in
         {
-          inherit (packages) tincan-inbox tincan-brief tincan-crew tincan-task tincan-notify tincan-control tincan-supervise tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show;
+          inherit (packages) tincan-inbox tincan-brief tincan-crew tincan-backlog tincan-task tincan-notify tincan-control tincan-supervise tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show;
           firstmate-smoke = pkgs.runCommand "tincan-firstmate-smoke" { } ''
             ${packages.tincan-crew}/bin/tincan-crew --help >/dev/null
+	            ${packages.tincan-backlog}/bin/tincan-backlog --help >/dev/null
+            mkdir "$TMPDIR/tincan"
+            PATH=/usr/bin:/bin ${packages.tincan-backlog}/bin/tincan-backlog \
+              --root "$TMPDIR/tincan" add smoke-a1 'Packaged intake' \
+              --kind ship --repo exmachina >/dev/null
+            grep -q 'smoke-a1 - Packaged intake' "$TMPDIR/tincan/backlog.md"
             ${packages.tincan-task}/bin/tincan-task --help >/dev/null
             ${packages.tincan}/bin/tincan-brief --help >/dev/null
             ${packages.tincan-firstmate-send}/bin/tincan-firstmate-send --help >/dev/null
@@ -102,16 +111,21 @@
             subPackages = [ "cmd/..." ];
             checkPhase = ''
               runHook preCheck
+              export PATH=${tasksAxi}/bin:$PATH
               go test ./...
               runHook postCheck
             '';
           });
         });
 
-      devShells = forEachSystem (pkgs: {
-        default = pkgs.mkShell {
-          packages = [ pkgs.go_1_25 pkgs.gopls pkgs.golines herdr.packages.${pkgs.stdenv.hostPlatform.system}.default ];
-        };
-      });
+      devShells = forEachSystem (pkgs:
+        let
+          tasksAxi = pkgs.callPackage ./nix/tasks-axi.nix { };
+        in
+        {
+          default = pkgs.mkShell {
+            packages = [ pkgs.go_1_25 pkgs.gopls pkgs.golines tasksAxi herdr.packages.${pkgs.stdenv.hostPlatform.system}.default ];
+          };
+        });
     };
 }
