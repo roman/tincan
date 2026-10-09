@@ -12,9 +12,10 @@ import (
 )
 
 var (
-	ErrInvalidTaskID   = errors.New("invalid Firstmate task ID")
-	ErrInvalidPath     = errors.New("invalid absolute path")
-	ErrInvalidMetadata = errors.New("invalid Firstmate task metadata")
+	ErrInvalidTaskID    = errors.New("invalid Firstmate task ID")
+	ErrInvalidPath      = errors.New("invalid absolute path")
+	ErrInvalidMetadata  = errors.New("invalid Firstmate task metadata")
+	ErrMetadataConflict = errors.New("task metadata already has different content")
 )
 
 // TaskID is a validated Firstmate task selector.
