@@ -29,6 +29,22 @@ func WithLock(
 func withLock(
 	ctx context.Context, client herdr.Client, session, namespace string, operation func() error,
 ) (result error) {
+	if operation == nil {
+		return herdr.ErrResponse
+	}
+	return withLockSocket(
+		ctx,
+		client,
+		session,
+		namespace,
+		func(string) error { return operation() },
+	)
+}
+
+func withLockSocket(
+	ctx context.Context, client herdr.Client, session, namespace string,
+	operation func(string) error,
+) (result error) {
 	if _, err := herdr.ParseTarget(session, "validation-pane"); err != nil ||
 		operation == nil || client.SessionRunner == nil {
 		return herdr.ErrResponse
@@ -55,7 +71,7 @@ func withLock(
 	if err != nil || currentSocket != socket {
 		return fmt.Errorf("%w: Herdr session socket changed", herdr.ErrCommand)
 	}
-	return operation()
+	return operation(socket)
 }
 
 func securePresentationNamespace(path string) error {
