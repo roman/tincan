@@ -102,18 +102,31 @@ func ReadTask(stateDir AbsolutePath, expected TaskID) (Metadata, error) {
 	if stateDir.value == "" {
 		return Metadata{}, ErrInvalidPath
 	}
+	root, err := os.OpenRoot(stateDir.value)
+	if err != nil {
+		return Metadata{}, err
+	}
+	defer root.Close()
+	return ReadTaskFromRoot(root, expected)
+}
+
+// ReadTaskFromRoot reads metadata through a selected task directory handle.
+func ReadTaskFromRoot(root *os.Root, expected TaskID) (Metadata, error) {
+	if root == nil {
+		return Metadata{}, ErrInvalidPath
+	}
 	if expected.value == "" {
 		return Metadata{}, ErrInvalidTaskID
 	}
-	path := filepath.Join(stateDir.value, expected.value+".meta")
-	selected, err := os.Lstat(path)
+	name := expected.value + ".meta"
+	selected, err := root.Lstat(name)
 	if err != nil {
 		return Metadata{}, err
 	}
 	if !selected.Mode().IsRegular() {
 		return Metadata{}, fmt.Errorf("%w: metadata file is not regular", ErrInvalidMetadata)
 	}
-	file, err := os.Open(path)
+	file, err := root.Open(name)
 	if err != nil {
 		return Metadata{}, err
 	}

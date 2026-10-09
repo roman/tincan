@@ -178,29 +178,8 @@ func (registry *Registry) openCrew() (*os.Root, error) {
 		return nil, err
 	}
 	defer root.Close()
-	selectedCrew, err := root.Lstat("crew")
-	if err != nil {
-		return nil, err
-	}
-	if !selectedCrew.IsDir() {
-		return nil, fmt.Errorf("%w: crew is not a directory", ErrInvalidRecord)
-	}
-	crewRoot, err := root.OpenRoot("crew")
-	if err != nil {
-		return nil, err
-	}
-	openedCrew, err := crewRoot.Open(".")
-	if err != nil {
-		crewRoot.Close()
-		return nil, err
-	}
-	openedCrewInfo, statErr := openedCrew.Stat()
-	openedCrew.Close()
-	if statErr != nil || !os.SameFile(selectedCrew, openedCrewInfo) {
-		crewRoot.Close()
-		return nil, fmt.Errorf("%w: crew directory changed during open", ErrInvalidRecord)
-	}
-	return crewRoot, nil
+	crewRoot, _, err := openSelectedDirectory(root, "crew")
+	return crewRoot, err
 }
 
 func readRecord(root *os.Root, taskID string) (Record, error) {

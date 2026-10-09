@@ -10,6 +10,40 @@ import (
 
 const validMetadata = "window=crew:pane-1\nendpoint_task_id=task-1\nworktree=/repo/worktree\nproject=/repo\nharness=codex\nkind=ship\nspawn_gen=s123.456.7\nbackend=herdr\nherdr_session=crew\nherdr_workspace_id=workspace-1\nherdr_tab_id=tab:1\nherdr_pane_id=pane-1\n"
 
+func TestReadTaskFromRootKeepsSelectedDirectory(t *testing.T) {
+	parent := t.TempDir()
+	state := filepath.Join(parent, "tasks")
+	if err := os.Mkdir(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "task-1.meta"), []byte(validMetadata), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if err := os.Rename(state, filepath.Join(parent, "old-tasks")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	replacement := strings.Replace(validMetadata, "spawn_gen=s123.456.7", "spawn_gen=s123.456.8", 1)
+	if err := os.WriteFile(filepath.Join(state, "task-1.meta"), []byte(replacement), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	id, _ := ParseTaskID("task-1")
+	metadata, err := ReadTaskFromRoot(root, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.SpawnGeneration() != "s123.456.7" {
+		t.Fatalf("read replacement directory: %s", metadata.SpawnGeneration())
+	}
+}
+
 func TestParseLocalHerdrMetadata(t *testing.T) {
 	id, err := ParseTaskID("task-1")
 	if err != nil {
