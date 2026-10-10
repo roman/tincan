@@ -46,6 +46,45 @@ func TestListShowsAllQueuedBacklogRows(t *testing.T) {
 	}
 }
 
+func TestShowReadsFullBacklogEntry(t *testing.T) {
+	root := t.TempDir()
+	title := "Inspect " + strings.TrimSpace(strings.Repeat("long task details ", 8))
+	bodyFile := filepath.Join(t.TempDir(), "body.md")
+	body := strings.Repeat("Detailed context. ", 100) + "END-OF-BODY"
+	if err := os.WriteFile(bodyFile, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := run([]string{"--root", root, "add", "task-long", title,
+		"--kind", "task", "--repo", "exmachina", "--body-file", bodyFile}, &bytes.Buffer{}); code != 0 {
+		t.Fatalf("add returned %d", code)
+	}
+	var output bytes.Buffer
+	if code := run([]string{"--root", root, "show", "task-long", "--full"}, &output); code != 0 {
+		t.Fatalf("show returned %d: %s", code, output.String())
+	}
+	if !strings.Contains(output.String(), "title: "+title) {
+		t.Fatalf("show omitted the complete title: %s", output.String())
+	}
+	if !strings.Contains(output.String(), "END-OF-BODY") {
+		t.Fatalf("show omitted the end of the body: %s", output.String())
+	}
+}
+
+func TestShowReportsMissingTask(t *testing.T) {
+	root := t.TempDir()
+	backlog := "# Backlog\n\n## Queued\n- [ ] existing - Existing task (repo: exmachina) (kind: task)\n"
+	if err := os.WriteFile(filepath.Join(root, "backlog.md"), []byte(backlog), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if code := run([]string{"--root", root, "show", "missing"}, &output); code == 0 {
+		t.Fatalf("show unexpectedly succeeded: %s", output.String())
+	}
+	if !strings.Contains(output.String(), "not found") {
+		t.Fatalf("show omitted the missing-task reason: %s", output.String())
+	}
+}
+
 func TestAddCreatesQueuedTaskInRootBacklog(t *testing.T) {
 	root := filepath.Join(t.TempDir(), ".tincan")
 	if err := os.Mkdir(root, 0700); err != nil {

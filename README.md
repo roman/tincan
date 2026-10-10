@@ -142,8 +142,11 @@ completes a task after its recorded worker pane closes.
 ```sh
 concierge-backlog --root /absolute/concierge-state add task-1 'Fix startup' --kind task --repo exmachina
 concierge-backlog --root /absolute/concierge-state list
+concierge-backlog --root /absolute/concierge-state show task-1 --full
 concierge-backlog --root /absolute/concierge-state start task-1
 ```
+
+Use `show ID --full` to read the complete title and body for a listed task.
 
 The worker reads the pending message and acknowledges it after handling it:
 

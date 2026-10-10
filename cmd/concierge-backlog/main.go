@@ -19,12 +19,18 @@ type cli struct {
 	Root   string        `help:"Absolute Concierge state root." required:""`
 	Add    addCommand    `cmd:"" help:"Queue a task in the root backlog."`
 	List   listCommand   `cmd:"" help:"List backlog tasks without the startup row limit."`
+	Show   showCommand   `cmd:"" help:"Show one backlog task."`
 	Start  startCommand  `cmd:"" help:"Start a queued task with a current worker binding."`
 	Finish finishCommand `cmd:"" help:"Complete a local task after its Herdr pane is gone."`
 }
 
 type listCommand struct {
 	State string `help:"Backlog state to list." enum:"queued,in_flight,held,done" default:"queued"`
+}
+
+type showCommand struct {
+	TaskID string `arg:"" help:"Task ID."`
+	Full   bool   `help:"Show the complete title and body."`
 }
 
 type startCommand struct {
@@ -58,7 +64,7 @@ type addResult struct {
 }
 
 func help() string {
-	return "usage: concierge-backlog --root ROOT add ID TITLE --kind KIND --repo REPO; or list [--state STATE]; or start ID; or finish ID --mode close|retain"
+	return "usage: concierge-backlog --root ROOT add ID TITLE --kind KIND --repo REPO; or list [--state STATE]; or show ID [--full]; or start ID; or finish ID --mode close|retain"
 }
 
 func fail(output io.Writer, code int, err error, next string) int {
@@ -90,6 +96,7 @@ func runWithClient(
 		return fail(output, 2, err, help())
 	}
 	if selected.Command() != "add <task-id> <title>" && selected.Command() != "list" &&
+		selected.Command() != "show <task-id>" &&
 		selected.Command() != "start <task-id>" && selected.Command() != "finish <task-id>" {
 		return fail(output, 2, fmt.Errorf("unknown command %q", selected.Command()), help())
 	}
@@ -120,6 +127,15 @@ func runWithClient(
 	if selected.Command() == "list" {
 		if err := listBacklog(output, backlogFile, command.List.State); err != nil {
 			return fail(output, 1, err, "inspect the backlog file and retry the list")
+		}
+		return 0
+	}
+	if selected.Command() == "show <task-id>" {
+		if err := showBacklog(output, backlogFile, command.Show); err != nil {
+			return fail(output, 1, err, fmt.Sprintf(
+				"run concierge-backlog --root %q list --state <state> to find the task ID",
+				root.String(),
+			))
 		}
 		return 0
 	}
