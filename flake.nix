@@ -40,6 +40,7 @@
           });
           tincan-inbox = mkProgram { name = "tincan-inbox"; };
           tincan-notify = mkProgram { name = "tincan-notify"; runtime = herdrPackage; };
+          tincan-task-send = mkProgram { name = "tincan-task-send"; runtime = herdrPackage; };
           tincan-firstmate-send = mkProgram { name = "tincan-firstmate-send"; runtime = herdrPackage; };
           tincan-firstmate-check = mkProgram { name = "tincan-firstmate-check"; runtime = herdrPackage; };
           tincan-firstmate-watch = mkProgram { name = "tincan-firstmate-watch"; runtime = herdrPackage; };
@@ -52,7 +53,7 @@
           concierge-supervise = mkProgram { name = "concierge-supervise"; runtime = herdrPackage; };
           tincan = pkgs.symlinkJoin {
             name = "tincan-0.1.0";
-            paths = [ tincan-inbox tincan-notify tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show ];
+            paths = [ tincan-inbox tincan-notify tincan-task-send tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show ];
           };
           concierge = pkgs.symlinkJoin {
             name = "concierge-0.1.0";
@@ -61,7 +62,7 @@
         in
         {
           default = tincan;
-          inherit tincan concierge tincan-inbox tincan-notify tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise;
+          inherit tincan concierge tincan-inbox tincan-notify tincan-task-send tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise;
         });
 
       formatter = forEachSystem (pkgs: pkgs.writeShellApplication {
@@ -81,7 +82,7 @@
           tasksAxi = pkgs.callPackage ./nix/tasks-axi.nix { };
         in
         {
-          inherit (packages) tincan-inbox tincan-notify tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise;
+          inherit (packages) tincan-inbox tincan-notify tincan-task-send tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise;
           concierge-smoke = pkgs.runCommand "concierge-smoke" { } ''
             ${packages.concierge-worker}/bin/concierge-worker --help >/dev/null
             ${packages.concierge-backlog}/bin/concierge-backlog --help >/dev/null
@@ -94,12 +95,13 @@
             for command in concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise; do
               test -x "${packages.concierge}/bin/$command"
             done
-            for command in tincan-inbox tincan-notify tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show; do
+            for command in tincan-inbox tincan-notify tincan-task-send tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show; do
               test -x "${packages.tincan}/bin/$command"
             done
             test ! -e ${packages.tincan}/bin/concierge-brief
             test ! -e ${packages.concierge}/bin/tincan-inbox
             ${packages.tincan-firstmate-send}/bin/tincan-firstmate-send --help >/dev/null
+            ${packages.tincan-task-send}/bin/tincan-task-send --help >/dev/null
             ${packages.tincan-firstmate-check}/bin/tincan-firstmate-check --help >/dev/null
             ${packages.tincan-firstmate-watch}/bin/tincan-firstmate-watch --help >/dev/null
             ${packages.tincan-firstmate-show}/bin/tincan-firstmate-show --help >/dev/null
