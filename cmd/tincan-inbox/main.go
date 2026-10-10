@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/roman/tincan/pkg/inbox"
@@ -22,6 +26,11 @@ type CLI struct {
 	List struct {
 		Recipient string `arg:"" help:"Recipient identifier."`
 	} `cmd:"" help:"List pending messages."`
+	Wait struct {
+		Recipient string        `arg:"" help:"Recipient identifier."`
+		Timeout   time.Duration `help:"Maximum time to wait before a checkpoint." default:"30s"`
+		Interval  time.Duration `help:"Time between inbox checks." default:"250ms"`
+	} `cmd:"" help:"Wait for pending messages or a bounded checkpoint."`
 	Read struct {
 		Recipient string `arg:"" help:"Recipient identifier."`
 		ID        string `arg:"" help:"Message identifier."`
@@ -55,7 +64,37 @@ func messageBody(command *CLI) (string, error) {
 	return string(data), err
 }
 
-func run(command *CLI, selected string) error {
+func waitForPending(
+	ctx context.Context, store *inbox.Store, recipient inbox.Recipient,
+	timeout, interval time.Duration,
+) (int, error) {
+	if timeout <= 0 || interval <= 0 {
+		return 0, errors.New("timeout and interval must be positive")
+	}
+	waitContext, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		messages, err := store.List(recipient)
+		if err != nil {
+			return 0, err
+		}
+		if len(messages) > 0 {
+			return len(messages), nil
+		}
+		select {
+		case <-waitContext.Done():
+			if err := ctx.Err(); err != nil {
+				return 0, err
+			}
+			return 0, nil
+		case <-ticker.C:
+		}
+	}
+}
+
+func run(ctx context.Context, command *CLI, selected string) error {
 	store, err := inbox.New(command.Root)
 	if err != nil {
 		return err
@@ -95,6 +134,21 @@ func run(command *CLI, selected string) error {
 					message.CreatedAt.Format("2006-01-02T15:04:05.999999999Z07:00"),
 				)
 			}
+		}
+	case "wait <recipient>":
+		recipient, err := inbox.ParseRecipient(command.Wait.Recipient)
+		if err != nil {
+			return err
+		}
+		count, err := waitForPending(ctx, store, recipient,
+			command.Wait.Timeout, command.Wait.Interval)
+		if err != nil {
+			return err
+		}
+		if count > 0 {
+			fmt.Printf("status: pending\ncount: %d\n", count)
+		} else {
+			fmt.Print("status: checkpoint\ncount: 0\n")
 		}
 	case "read <recipient> <id>":
 		recipient, err := inbox.ParseRecipient(command.Read.Recipient)
@@ -138,8 +192,10 @@ func run(command *CLI, selected string) error {
 
 func main() {
 	var command CLI
-	context := kong.Parse(&command, kong.Description("A durable mailbox for independent agents."))
-	if err := run(&command, context.Command()); err != nil {
+	parser := kong.Parse(&command, kong.Description("A durable mailbox for independent agents."))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := run(ctx, &command, parser.Command()); err != nil {
 		fmt.Fprintln(os.Stderr, "tincan-inbox:", err)
 		os.Exit(1)
 	}
