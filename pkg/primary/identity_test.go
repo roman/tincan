@@ -43,6 +43,9 @@ func TestResolveHookIdentity(t *testing.T) {
 		{"Codex", Hook{SessionID: "codex-session"}, map[string]string{
 			"CODEX_SESSION_ID": "codex-session",
 		}, "codex", 30, 30, false},
+		{"Codex with inherited session", Hook{SessionID: "codex-session"}, map[string]string{
+			"CODEX_SESSION_ID": "parent-session",
+		}, "codex", 30, 30, false},
 	}
 	for _, check := range checks {
 		t.Run(check.name, func(t *testing.T) {
@@ -59,6 +62,7 @@ func TestResolveHookIdentity(t *testing.T) {
 			}
 			if err == nil &&
 				(identity.Version != 2 || identity.Kind != check.wantKind || identity.PID != check.wantPID ||
+					identity.SessionID != check.payload.SessionID ||
 					identity.BootID != "boot" || identity.PIDNamespace != "pid:[1]") {
 				t.Fatalf("ResolveHookIdentity() = %+v", identity)
 			}

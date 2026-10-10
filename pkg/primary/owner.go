@@ -79,6 +79,20 @@ func sameLegacyOwner(legacy, identity Identity) bool {
 		legacy.BootID == identity.BootID
 }
 
+func sameOwner(current, identity Identity) bool {
+	if current == identity {
+		return true
+	}
+	// Codex does not bind a hook session ID to its process environment.
+	// Its live process tuple remains the ownership key across hook events.
+	return current.Version == 2 && identity.Version == 2 &&
+		current.Kind == "codex" && identity.Kind == "codex" &&
+		current.PID == identity.PID &&
+		current.StartTicks == identity.StartTicks &&
+		current.BootID == identity.BootID &&
+		current.PIDNamespace == identity.PIDNamespace
+}
+
 func writeOwner(root string, identity Identity) error {
 	if err := identity.validate(); err != nil {
 		return err
@@ -148,7 +162,7 @@ func Release(root string, identity Identity) (Status, error) {
 		if err != nil {
 			return "", fmt.Errorf("read primary owner: %w", err)
 		}
-		if current != identity && !sameLegacyOwner(current, identity) {
+		if !sameOwner(current, identity) && !sameLegacyOwner(current, identity) {
 			return Held, nil
 		}
 		if err := os.Remove(filepath.Join(root, "primary.json")); err != nil {
@@ -198,7 +212,7 @@ func claimWithProbe(
 		if !live {
 			return Owner, writeOwner(root, identity)
 		}
-		if current == identity {
+		if sameOwner(current, identity) {
 			return Owner, nil
 		}
 		return Held, nil
@@ -238,7 +252,7 @@ func verifyWithProbe(
 		if !live {
 			return Stale, nil
 		}
-		if current == identity {
+		if sameOwner(current, identity) {
 			return Owner, nil
 		}
 		return Held, nil

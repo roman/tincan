@@ -183,6 +183,46 @@ func TestClaimKeepsOneLiveProcessAndRecoversStaleOwner(t *testing.T) {
 	}
 }
 
+func TestCodexOwnershipFollowsProcessAcrossSessionIDs(t *testing.T) {
+	root := filepath.Join(t.TempDir(), ".concierge")
+	first := testIdentity("codex", "unverified-session", 10)
+	current := testIdentity("codex", "active-session", 10)
+	other := testIdentity("codex", "active-session", 20)
+	live := func(Identity) (bool, error) { return true, nil }
+	if got, err := claimWithProbe(root, first, live); err != nil || got != Owner {
+		t.Fatalf("first claim = %q, %v; want owner", got, err)
+	}
+	if got, err := claimWithProbe(root, current, live); err != nil || got != Owner {
+		t.Fatalf("current claim = %q, %v; want owner", got, err)
+	}
+	if got, err := verifyWithProbe(root, current, live); err != nil || got != Owner {
+		t.Fatalf("current verify = %q, %v; want owner", got, err)
+	}
+	if got, err := verifyWithProbe(root, other, live); err != nil || got != Held {
+		t.Fatalf("other verify = %q, %v; want held", got, err)
+	}
+	for _, check := range []struct {
+		name   string
+		change func(*Identity)
+	}{
+		{"other PID", func(identity *Identity) { identity.PID = 20 }},
+		{"reused PID", func(identity *Identity) { identity.StartTicks = "20" }},
+		{"other boot", func(identity *Identity) { identity.BootID = "other-boot" }},
+		{"other namespace", func(identity *Identity) { identity.PIDNamespace = "pid:[2]" }},
+	} {
+		t.Run(check.name, func(t *testing.T) {
+			candidate := current
+			check.change(&candidate)
+			if got, err := Release(root, candidate); err != nil || got != Held {
+				t.Fatalf("release = %q, %v; want held", got, err)
+			}
+		})
+	}
+	if got, err := Release(root, current); err != nil || got != Vacant {
+		t.Fatalf("current release = %q, %v; want vacant", got, err)
+	}
+}
+
 func TestClaimRejectsMalformedOwner(t *testing.T) {
 	root := filepath.Join(t.TempDir(), ".concierge")
 	if err := os.MkdirAll(root, 0700); err != nil {

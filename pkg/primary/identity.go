@@ -163,9 +163,8 @@ func ResolveHookIdentity(
 			}
 			return Identity{}, errors.New("Claude model process is outside the hook ancestry")
 		case "codex":
-			if environment["CODEX_SESSION_ID"] != hook.SessionID {
-				return Identity{}, errors.New("Codex hook session does not match its process")
-			}
+			// Codex hooks supply the active session ID in their payload. A nested
+			// launch can inherit another session's CODEX_SESSION_ID.
 			return Identity{Version: 2, Kind: "codex", SessionID: hook.SessionID, PID: process.PID,
 				StartTicks: process.StartTicks, BootID: bootID, PIDNamespace: pidNamespace}, nil
 		}
@@ -186,7 +185,6 @@ func CurrentHookIdentity(hook Hook) (Identity, error) {
 	environment := map[string]string{
 		"CLAUDE_CODE_SESSION_ID": os.Getenv("CLAUDE_CODE_SESSION_ID"),
 		"CLAUDE_PID":             os.Getenv("CLAUDE_PID"),
-		"CODEX_SESSION_ID":       os.Getenv("CODEX_SESSION_ID"),
 	}
 	return ResolveHookIdentity(hook, environment, os.Getppid(), readProcess, bootID, pidNamespace)
 }
