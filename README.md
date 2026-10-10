@@ -13,9 +13,9 @@ in this repository.
 | Program | Responsibility |
 | --- | --- |
 | `tincan-inbox` | Store, list, read, and acknowledge messages for a recipient. |
-| `concierge-brief` | Show pending primary wakes, local tasks, and registered workers at session start. |
+| `concierge-brief` | Show pending primary wakes, queued backlog work, local tasks, and registered workers at session start. |
 | `concierge-worker` | Record and inspect local worker launch identities. |
-| `concierge-backlog` | Queue a task in a tasks-axi backlog under the selected supervisor root. |
+| `concierge-backlog` | Queue, list, start, and finish tasks in the supervisor backlog. |
 | `concierge-task` | Adopt a live local worker, cancel an incomplete adoption, or list task records. |
 | `tincan-notify` | Ring an agent while its inbox has pending messages. |
 | `concierge-control` | Inspect, start, or interrupt an agent. |
@@ -113,13 +113,14 @@ tincan-inbox --root ./tincan-state send worker-1 --key task-42 --body 'Please ch
 tincan-notify --root ./tincan-state --recipient worker-1 --target w1:p2 --session work --adapter herdr
 ```
 
-At session start, show pending primary wakes, local tasks, and registered workers. With no
+At session start, show pending primary wakes, queued backlog work, local tasks, and registered workers. With no
 flags, the brief reads supervisor state from `.concierge` and messages from
 `.tincan` in the current directory. `--root` or `CONCIERGE_HOME` selects the
 supervisor root. `--message-root` or `TINCAN_HOME` selects the message root.
-The brief limits each list
-to ten rows by default and reports the full count. Use `--limit` for up to 100
-rows. It reads state without creating it.
+The brief limits each list to ten rows by default and reports the full count.
+Use `--limit` for up to 100 rows. Queued rows come from `backlog.md` under the
+supervisor root. Use `concierge-backlog list` to read all queued rows. The brief
+reads state without creating it.
 
 ```sh
 concierge-brief --root /absolute/concierge-state --message-root /absolute/tincan-state
@@ -133,11 +134,12 @@ existing task unchanged. After adopting a live local worker with `concierge-task
 start the queued backlog row. The start command requires matching task metadata
 and a current worker record. It rejects blocked or held work and can be retried
 after an interrupted transition. The start command requires version 0.2.6
-because it uses that version's backlog lock protocol. Task completion still
-needs a lifecycle command.
+because it uses that version's backlog lock protocol. The `finish` command
+completes a task after its recorded worker pane closes.
 
 ```sh
 concierge-backlog --root /absolute/concierge-state add task-1 'Fix startup' --kind task --repo exmachina
+concierge-backlog --root /absolute/concierge-state list
 concierge-backlog --root /absolute/concierge-state start task-1
 ```
 

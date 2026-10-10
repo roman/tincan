@@ -80,6 +80,10 @@ func printBrief(
 	if err != nil {
 		return err
 	}
+	backlog, err := readQueuedBacklog(root, limit)
+	if err != nil {
+		return err
+	}
 	completions, err := registry.ListPendingCompletions()
 	if err != nil {
 		return err
@@ -105,7 +109,7 @@ func printBrief(
 	fmt.Fprintf(
 		output,
 		"description: %s\n",
-		quoted("Pending primary wakes, local tasks, and registered workers"),
+		quoted("Pending primary wakes, queued backlog work, local tasks, and registered workers"),
 	)
 	if wakeCount == len(wakes) {
 		fmt.Fprintf(output, "wakes: %d pending for %s\n", wakeCount, recipient)
@@ -116,6 +120,17 @@ func printBrief(
 		fmt.Fprintf(output, "wakes[%d]{id,body}:\n", wakeCount)
 		for _, wake := range wakes[:wakeCount] {
 			fmt.Fprintf(output, "  %s,%s\n", quoted(wake.ID.String()), quoted(preview(wake.Body)))
+		}
+	}
+	if len(backlog.rows) == backlog.total {
+		fmt.Fprintf(output, "backlog: %d queued\n", backlog.total)
+	} else {
+		fmt.Fprintf(output, "backlog: %d of %d queued\n", len(backlog.rows), backlog.total)
+	}
+	if len(backlog.rows) > 0 {
+		fmt.Fprintf(output, "backlog[%d]{id,state,kind,repo,title}:\n", len(backlog.rows))
+		for _, row := range backlog.rows {
+			fmt.Fprintln(output, row)
 		}
 	}
 	if taskCount == len(tasks) {
@@ -167,6 +182,9 @@ func printBrief(
 		hints = append(hints, "tincan-inbox --root "+shellQuote(messageRoot)+
 			" list "+recipient.String())
 	}
+	if len(backlog.rows) < backlog.total {
+		hints = append(hints, "concierge-backlog --root "+shellQuote(root)+" list")
+	}
 	if taskCount > 0 {
 		hints = append(hints, "concierge-task --root "+shellQuote(root)+" list")
 	}
@@ -199,9 +217,14 @@ func run(args []string, output io.Writer) int {
 		return 0
 	}
 	var options cli
-	parser, err := kong.New(&options, kong.Name("concierge-brief"),
-		kong.Description("Show pending primary wakes, local tasks, and registered workers."),
-		kong.Writers(output, io.Discard))
+	parser, err := kong.New(
+		&options,
+		kong.Name("concierge-brief"),
+		kong.Description(
+			"Show pending primary wakes, queued backlog work, local tasks, and registered workers.",
+		),
+		kong.Writers(output, io.Discard),
+	)
 	if err != nil {
 		return failure(
 			output,

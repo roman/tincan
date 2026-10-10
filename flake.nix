@@ -45,7 +45,7 @@
           tincan-firstmate-check = mkProgram { name = "tincan-firstmate-check"; runtime = herdrPackage; };
           tincan-firstmate-watch = mkProgram { name = "tincan-firstmate-watch"; runtime = herdrPackage; };
           tincan-firstmate-show = mkProgram { name = "tincan-firstmate-show"; };
-          concierge-brief = mkProgram { name = "concierge-brief"; };
+          concierge-brief = mkProgram { name = "concierge-brief"; runtime = tasksAxi; };
           concierge-primary = mkProgram { name = "concierge-primary"; };
           concierge-worker = mkProgram { name = "concierge-worker"; };
           concierge-backlog = mkProgram { name = "concierge-backlog"; runtime = tasksAxi; };
@@ -93,6 +93,12 @@
               --root "$TMPDIR/concierge" add smoke-a1 'Packaged intake' \
               --kind task --repo exmachina >/dev/null
             grep -q 'smoke-a1 - Packaged intake' "$TMPDIR/concierge/backlog.md"
+            PATH=/usr/bin:/bin ${packages.concierge-backlog}/bin/concierge-backlog \
+              --root "$TMPDIR/concierge" list \
+              | grep -q 'smoke-a1,queued,task,exmachina,Packaged intake'
+            PATH=/usr/bin:/bin ${packages.concierge-brief}/bin/concierge-brief \
+              --root "$TMPDIR/concierge" --message-root "$TMPDIR/messages" \
+              | grep -q 'smoke-a1,queued,task,exmachina,Packaged intake'
             ${packages.concierge-task}/bin/concierge-task --help >/dev/null
             ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''${packages.concierge-primary}/bin/concierge-primary --help >/dev/null''}
             for command in concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise; do

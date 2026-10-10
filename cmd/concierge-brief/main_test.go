@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,7 +27,7 @@ func TestBriefShowsEmptyState(t *testing.T) {
 		t.Fatalf("exit code %d: %s", code, output.String())
 	}
 	for _, line := range []string{"bin: ", "description: ",
-		"wakes: 0 pending for firstmate", "workers: 0 registered"} {
+		"wakes: 0 pending for firstmate", "backlog: 0 queued", "workers: 0 registered"} {
 		if !strings.Contains(output.String(), line) {
 			t.Fatalf("missing %q in %q", line, output.String())
 		}
@@ -119,6 +120,74 @@ func TestBriefShowsLocalTasks(t *testing.T) {
 	}
 }
 
+func TestBriefShowsQueuedBacklogWithTotal(t *testing.T) {
+	root := t.TempDir()
+	backlog := "# Backlog\n\n## In flight\n## Queued\n" +
+		"- [ ] task-1 - Check, startup (repo: exmachina) (kind: task)\n" +
+		"- [ ] task-2 - Check dispatch (repo: exmachina) (kind: task)\n" +
+		"## Done\n- [x] task-old - Old work (repo: exmachina) (kind: task)\n"
+	if err := os.WriteFile(filepath.Join(root, "backlog.md"), []byte(backlog), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if code := run([]string{"--root", root, "--limit", "1"}, &output); code != 0 {
+		t.Fatalf("code=%d output=%s", code, output.String())
+	}
+	for _, expected := range []string{
+		"backlog: 1 of 2 queued",
+		"backlog[1]{id,state,kind,repo,title}:",
+		"task-1,queued,task,exmachina,\"Check, startup\"",
+		"concierge-backlog --root '" + root + "' list",
+	} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("missing %q in %s", expected, output.String())
+		}
+	}
+	if strings.Contains(output.String(), "task-2,queued") ||
+		strings.Contains(output.String(), "task-old") {
+		t.Fatalf("brief included hidden backlog rows: %s", output.String())
+	}
+}
+
+func TestBriefLinksToAllQueuedRowsPastLimit(t *testing.T) {
+	root := t.TempDir()
+	var backlog strings.Builder
+	backlog.WriteString("# Backlog\n\n## In flight\n## Queued\n")
+	for index := 1; index <= 101; index++ {
+		fmt.Fprintf(
+			&backlog,
+			"- [ ] task-%03d - Work %d (repo: exmachina) (kind: task)\n",
+			index,
+			index,
+		)
+	}
+	backlog.WriteString("## Done\n")
+	if err := os.WriteFile(filepath.Join(root, "backlog.md"), []byte(backlog.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if code := run([]string{"--root", root, "--limit", "100"}, &output); code != 0 {
+		t.Fatalf("code=%d output=%s", code, output.String())
+	}
+	if !strings.Contains(output.String(), "backlog: 100 of 101 queued") ||
+		!strings.Contains(output.String(), "concierge-backlog --root '"+root+"' list") ||
+		strings.Contains(output.String(), "--limit 100") {
+		t.Fatalf("missing full-list route: %s", output.String())
+	}
+}
+
+func TestBriefRejectsNonFileBacklog(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "backlog.md"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if code := run([]string{"--root", root}, &output); code != 1 ||
+		!strings.Contains(output.String(), "backlog is not a regular file") {
+		t.Fatalf("code=%d output=%s", code, output.String())
+	}
+}
+
 func TestBriefLimitsLocalTaskRows(t *testing.T) {
 	root := t.TempDir()
 	state := filepath.Join(root, "tasks")
@@ -187,10 +256,11 @@ func TestBriefShowsPendingWakesAndRegisteredCrew(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "bin: " + quoted(executable) + "\n" +
-		"description: \"Pending primary wakes, local tasks, and registered workers\"\n" +
+		"description: \"Pending primary wakes, queued backlog work, local tasks, and registered workers\"\n" +
 		"wakes: 1 pending for firstmate\n" +
 		"wakes[1]{id,body}:\n" +
 		"  \"" + message.ID.String() + "\",\"task: task-1\\nrecord: 001.msg\\n\"\n" +
+		"backlog: 0 queued\n" +
 		"tasks: 0 found\n" +
 		"workers: 1 registered\n" +
 		"workers[1]{task,name,session,pane_id}:\n" +

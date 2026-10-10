@@ -2,11 +2,49 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestListShowsAllQueuedBacklogRows(t *testing.T) {
+	root := t.TempDir()
+	var backlog strings.Builder
+	backlog.WriteString("# Backlog\n\n## In flight\n## Queued\n")
+	for index := 1; index <= 101; index++ {
+		fmt.Fprintf(
+			&backlog,
+			"- [ ] task-%03d - Work %d (repo: exmachina) (kind: task)\n",
+			index,
+			index,
+		)
+	}
+	backlog.WriteString("## Done\n- [x] task-old - Done work (repo: exmachina) (kind: task)\n")
+	if err := os.WriteFile(filepath.Join(root, "backlog.md"), []byte(backlog.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if code := run([]string{"--root", root, "list"}, &output); code != 0 {
+		t.Fatalf("list returned %d: %s", code, output.String())
+	}
+	for _, expected := range []string{"count: 101", "task-001,queued", "task-101,queued"} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("missing %q in %s", expected, output.String())
+		}
+	}
+	if strings.Contains(output.String(), "task-old") ||
+		strings.Contains(output.String(), "tasks-axi") {
+		t.Fatalf("list exposed completed work or dependency hints: %s", output.String())
+	}
+	output.Reset()
+	if code := run([]string{"--root", root, "list", "--state", "done"}, &output); code != 0 ||
+		!strings.Contains(output.String(), "task-old,done") ||
+		strings.Contains(output.String(), "task-001,queued") {
+		t.Fatalf("done list returned %d: %s", code, output.String())
+	}
+}
 
 func TestAddCreatesQueuedTaskInRootBacklog(t *testing.T) {
 	root := filepath.Join(t.TempDir(), ".tincan")
