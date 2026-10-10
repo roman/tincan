@@ -60,10 +60,23 @@ func readOwner(root string) (Identity, error) {
 	if err := json.Unmarshal(data, &identity); err != nil {
 		return Identity{}, err
 	}
-	if err := identity.validate(); err != nil {
+	if identity.Version == 0 && identity.PIDNamespace == "" {
+		if err := identity.validateCore(); err != nil {
+			return Identity{}, err
+		}
+	} else if err := identity.validate(); err != nil {
 		return Identity{}, err
 	}
 	return identity, nil
+}
+
+func sameLegacyOwner(legacy, identity Identity) bool {
+	return legacy.Version == 0 &&
+		legacy.Kind == identity.Kind &&
+		legacy.SessionID == identity.SessionID &&
+		legacy.PID == identity.PID &&
+		legacy.StartTicks == identity.StartTicks &&
+		legacy.BootID == identity.BootID
 }
 
 func writeOwner(root string, identity Identity) error {
@@ -94,10 +107,26 @@ func ownerLive(identity Identity) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	pidNamespace, err := readPIDNamespace()
+	if err != nil {
+		return false, err
+	}
+	return checkOwnerLive(identity, bootID, pidNamespace, readProcess)
+}
+
+func checkOwnerLive(
+	identity Identity,
+	bootID string,
+	pidNamespace string,
+	lookup func(int) (Process, error),
+) (bool, error) {
 	if bootID != identity.BootID {
 		return false, nil
 	}
-	process, err := readProcess(identity.PID)
+	if pidNamespace != identity.PIDNamespace {
+		return true, nil
+	}
+	process, err := lookup(identity.PID)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
@@ -105,6 +134,28 @@ func ownerLive(identity Identity) (bool, error) {
 		return false, err
 	}
 	return sameLiveProcess(identity, bootID, process), nil
+}
+
+func Release(root string, identity Identity) (Status, error) {
+	if err := identity.validate(); err != nil {
+		return "", err
+	}
+	return withLock(root, func() (Status, error) {
+		current, err := readOwner(root)
+		if errors.Is(err, os.ErrNotExist) {
+			return Vacant, nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("read primary owner: %w", err)
+		}
+		if current != identity && !sameLegacyOwner(current, identity) {
+			return Held, nil
+		}
+		if err := os.Remove(filepath.Join(root, "primary.json")); err != nil {
+			return "", err
+		}
+		return Vacant, nil
+	})
 }
 
 func sameLiveProcess(identity Identity, bootID string, process Process) bool {
@@ -133,6 +184,12 @@ func claimWithProbe(
 		}
 		if err != nil {
 			return "", fmt.Errorf("read primary owner: %w", err)
+		}
+		if current.Version == 0 {
+			if sameLegacyOwner(current, identity) {
+				return Owner, writeOwner(root, identity)
+			}
+			return Held, nil
 		}
 		live, err := liveProbe(current)
 		if err != nil {
@@ -167,6 +224,12 @@ func verifyWithProbe(
 		}
 		if err != nil {
 			return "", fmt.Errorf("read primary owner: %w", err)
+		}
+		if current.Version == 0 {
+			if sameLegacyOwner(current, identity) {
+				return Owner, writeOwner(root, identity)
+			}
+			return Held, nil
 		}
 		live, err := liveProbe(current)
 		if err != nil {

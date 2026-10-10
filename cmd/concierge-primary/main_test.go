@@ -49,3 +49,29 @@ func TestRunRejectsWrongHookEvent(t *testing.T) {
 		t.Fatalf("run() = %d, output=%q", status, output.String())
 	}
 }
+
+func TestRunReleasesRecordedSession(t *testing.T) {
+	root := filepath.Join(t.TempDir(), ".concierge")
+	identity := primary.Identity{
+		Version: 2,
+		Kind:    "codex", SessionID: "s1", PID: 1, StartTicks: "10",
+		BootID: "boot", PIDNamespace: "pid:[1]",
+	}
+	resolve := func(primary.Hook) (primary.Identity, error) { return identity, nil }
+	for _, check := range []struct {
+		command string
+		event   string
+	}{
+		{"claim", "SessionStart"},
+		{"release", "SessionEnd"},
+	} {
+		input := strings.NewReader(fmt.Sprintf(
+			`{"session_id":"s1","cwd":%q,"hook_event_name":%q}`,
+			filepath.Dir(root), check.event,
+		))
+		var output bytes.Buffer
+		if status := run([]string{"--root", root, check.command}, input, &output, resolve); status != 0 {
+			t.Fatalf("%s returned %d: %s", check.command, status, output.String())
+		}
+	}
+}

@@ -1,6 +1,7 @@
 package primary
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,7 +10,113 @@ import (
 )
 
 func testIdentity(kind, session string, pid int) Identity {
-	return Identity{Kind: kind, SessionID: session, PID: pid, StartTicks: "10", BootID: "boot"}
+	return Identity{
+		Version:      2,
+		Kind:         kind,
+		SessionID:    session,
+		PID:          pid,
+		StartTicks:   "10",
+		BootID:       "boot",
+		PIDNamespace: "pid:[1]",
+	}
+}
+
+func TestLegacyOwnerLifecycle(t *testing.T) {
+	owner := testIdentity("codex", "owner", 1)
+	legacy := owner
+	legacy.Version = 0
+	legacy.PIDNamespace = ""
+	actions := []struct {
+		name string
+		run  func(string, Identity) (Status, error)
+		want Status
+	}{
+		{"claim", func(root string, identity Identity) (Status, error) {
+			return claimWithProbe(root, identity, nil)
+		}, Owner},
+		{"verify", func(root string, identity Identity) (Status, error) {
+			return verifyWithProbe(root, identity, nil)
+		}, Owner},
+		{"release", Release, Vacant},
+	}
+	for _, action := range actions {
+		for _, match := range []bool{false, true} {
+			name := action.name + "/other"
+			if match {
+				name = action.name + "/owner"
+			}
+			t.Run(name, func(t *testing.T) {
+				root := filepath.Join(t.TempDir(), ".concierge")
+				if err := os.MkdirAll(root, 0700); err != nil {
+					t.Fatal(err)
+				}
+				data, err := json.Marshal(legacy)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(root, "primary.json"), data, 0600); err != nil {
+					t.Fatal(err)
+				}
+				candidate := testIdentity("claude", "other", 2)
+				want := Held
+				if match {
+					candidate = owner
+					want = action.want
+				}
+				status, err := action.run(root, candidate)
+				if err != nil || status != want {
+					t.Fatalf("%s = %q, %v; want %q", action.name, status, err, want)
+				}
+				stored, err := readOwner(root)
+				if match && action.name == "release" {
+					if !os.IsNotExist(err) {
+						t.Fatalf("released owner still exists: %+v, %v", stored, err)
+					}
+				} else {
+					wantOwner := legacy
+					if match {
+						wantOwner = owner
+					}
+					if err != nil || stored != wantOwner {
+						t.Fatalf("stored owner = %+v, %v; want %+v", stored, err, wantOwner)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestOwnerInOtherNamespaceRemainsHeld(t *testing.T) {
+	identity := testIdentity("codex", "owner", 1)
+	called := false
+	live, err := checkOwnerLive(identity, "boot", "pid:[2]", func(int) (Process, error) {
+		called = true
+		return Process{}, os.ErrNotExist
+	})
+	if err != nil || !live || called {
+		t.Fatalf("checkOwnerLive() = %t, %v; lookup called %t", live, err, called)
+	}
+}
+
+func TestReleaseOnlyRecordedOwner(t *testing.T) {
+	root := filepath.Join(t.TempDir(), ".concierge")
+	owner := testIdentity("codex", "owner", 1)
+	other := testIdentity("codex", "owner", 2)
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeOwner(root, owner); err != nil {
+		t.Fatal(err)
+	}
+	if status, err := Release(root, other); err != nil || status != Held {
+		t.Fatalf("Release(other) = %q, %v", status, err)
+	}
+	if status, err := Release(root, owner); err != nil || status != Vacant {
+		t.Fatalf("Release(owner) = %q, %v", status, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "primary.json")); !os.IsNotExist(err) {
+		t.Fatalf("owner record still exists: %v", err)
+	}
 }
 
 func TestSameLiveProcess(t *testing.T) {

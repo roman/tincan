@@ -23,14 +23,26 @@ type Process struct {
 }
 
 type Identity struct {
-	Kind       string `json:"kind"`
-	SessionID  string `json:"session_id"`
-	PID        int    `json:"pid"`
-	StartTicks string `json:"start_ticks"`
-	BootID     string `json:"boot_id"`
+	Version      int    `json:"version"`
+	Kind         string `json:"kind"`
+	SessionID    string `json:"session_id"`
+	PID          int    `json:"pid"`
+	StartTicks   string `json:"start_ticks"`
+	BootID       string `json:"boot_id"`
+	PIDNamespace string `json:"pid_namespace"`
 }
 
 func (identity Identity) validate() error {
+	if err := identity.validateCore(); err != nil {
+		return err
+	}
+	if identity.Version != 2 || identity.PIDNamespace == "" {
+		return errors.New("identity needs version 2 and a PID namespace")
+	}
+	return nil
+}
+
+func (identity Identity) validateCore() error {
 	if identity.Kind != "claude" && identity.Kind != "codex" {
 		return errors.New("identity must name Claude or Codex")
 	}
@@ -99,12 +111,17 @@ func readBootID() (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
+func readPIDNamespace() (string, error) {
+	return os.Readlink("/proc/self/ns/pid")
+}
+
 func ResolveHookIdentity(
 	hook Hook,
 	environment map[string]string,
 	parentPID int,
 	lookup func(int) (Process, error),
 	bootID string,
+	pidNamespace string,
 ) (Identity, error) {
 	if hook.SessionID == "" || strings.ContainsAny(hook.SessionID, "\r\n") {
 		return Identity{}, errors.New("hook needs a valid session ID")
@@ -129,8 +146,15 @@ func ResolveHookIdentity(
 			}
 			for process.Kind == "claude" {
 				if process.PID == modelPID {
-					return Identity{Kind: "claude", SessionID: hook.SessionID, PID: process.PID,
-						StartTicks: process.StartTicks, BootID: bootID}, nil
+					return Identity{
+						Version:      2,
+						Kind:         "claude",
+						SessionID:    hook.SessionID,
+						PID:          process.PID,
+						StartTicks:   process.StartTicks,
+						BootID:       bootID,
+						PIDNamespace: pidNamespace,
+					}, nil
 				}
 				process, err = lookup(process.ParentPID)
 				if err != nil {
@@ -142,8 +166,8 @@ func ResolveHookIdentity(
 			if environment["CODEX_SESSION_ID"] != hook.SessionID {
 				return Identity{}, errors.New("Codex hook session does not match its process")
 			}
-			return Identity{Kind: "codex", SessionID: hook.SessionID, PID: process.PID,
-				StartTicks: process.StartTicks, BootID: bootID}, nil
+			return Identity{Version: 2, Kind: "codex", SessionID: hook.SessionID, PID: process.PID,
+				StartTicks: process.StartTicks, BootID: bootID, PIDNamespace: pidNamespace}, nil
 		}
 		pid = process.ParentPID
 	}
@@ -155,10 +179,14 @@ func CurrentHookIdentity(hook Hook) (Identity, error) {
 	if err != nil {
 		return Identity{}, err
 	}
+	pidNamespace, err := readPIDNamespace()
+	if err != nil {
+		return Identity{}, err
+	}
 	environment := map[string]string{
 		"CLAUDE_CODE_SESSION_ID": os.Getenv("CLAUDE_CODE_SESSION_ID"),
 		"CLAUDE_PID":             os.Getenv("CLAUDE_PID"),
 		"CODEX_SESSION_ID":       os.Getenv("CODEX_SESSION_ID"),
 	}
-	return ResolveHookIdentity(hook, environment, os.Getppid(), readProcess, bootID)
+	return ResolveHookIdentity(hook, environment, os.Getppid(), readProcess, bootID, pidNamespace)
 }

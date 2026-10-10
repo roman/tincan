@@ -12,13 +12,14 @@ import (
 )
 
 type cli struct {
-	Root   string   `help:"Absolute Concierge state root." required:""`
-	Claim  struct{} `cmd:"" help:"Claim the primary role from a SessionStart hook."`
-	Verify struct{} `cmd:"" help:"Verify the primary role from a Stop hook."`
+	Root    string   `help:"Absolute Concierge state root." required:""`
+	Claim   struct{} `cmd:"" help:"Claim the primary role from a SessionStart hook."`
+	Verify  struct{} `cmd:"" help:"Verify the primary role from a Stop hook."`
+	Release struct{} `cmd:"" help:"Release the primary role from a SessionEnd hook."`
 }
 
 func help() string {
-	return "concierge-primary --root ROOT claim|verify < HOOK_JSON"
+	return "concierge-primary --root ROOT claim|verify|release < HOOK_JSON"
 }
 
 func fail(output io.Writer, code int, err error, next string) int {
@@ -59,6 +60,8 @@ func run(
 	expectedEvent := "SessionStart"
 	if selected.Command() == "verify" {
 		expectedEvent = "Stop"
+	} else if selected.Command() == "release" {
+		expectedEvent = "SessionEnd"
 	}
 	if hook.HookEventName != expectedEvent {
 		return fail(
@@ -75,14 +78,16 @@ func run(
 	var status primary.Status
 	if selected.Command() == "claim" {
 		status, err = primary.Claim(command.Root, identity)
-	} else {
+	} else if selected.Command() == "verify" {
 		status, err = primary.Verify(command.Root, identity)
+	} else {
+		status, err = primary.Release(command.Root, identity)
 	}
 	if err != nil {
 		return fail(output, 1, err, "inspect the Concierge primary state")
 	}
 	fmt.Fprintf(output, "status: %s\nkind: %s\n", status, identity.Kind)
-	if status == primary.Owner {
+	if status == primary.Owner || (selected.Command() == "release" && status == primary.Vacant) {
 		return 0
 	}
 	fmt.Fprintln(

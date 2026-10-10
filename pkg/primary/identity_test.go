@@ -52,11 +52,14 @@ func TestResolveHookIdentity(t *testing.T) {
 				check.parentPID,
 				lookup,
 				"boot",
+				"pid:[1]",
 			)
 			if (err != nil) != check.wantError {
 				t.Fatalf("ResolveHookIdentity() error = %v, wantError %t", err, check.wantError)
 			}
-			if err == nil && (identity.Kind != check.wantKind || identity.PID != check.wantPID) {
+			if err == nil &&
+				(identity.Version != 2 || identity.Kind != check.wantKind || identity.PID != check.wantPID ||
+					identity.BootID != "boot" || identity.PIDNamespace != "pid:[1]") {
 				t.Fatalf("ResolveHookIdentity() = %+v", identity)
 			}
 		})
