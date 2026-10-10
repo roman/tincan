@@ -113,6 +113,8 @@ tincan-inbox --root ./tincan-state send worker-1 --key task-42 --body 'Please ch
 tincan-notify --root ./tincan-state --recipient worker-1 --target w1:p2 --session work --adapter herdr
 ```
 
+The notifier keeps running until it receives an interrupt or termination signal.
+
 At session start, show pending primary wakes, queued backlog work, local tasks, and registered workers. With no
 flags, the brief reads supervisor state from `.concierge` and messages from
 `.tincan` in the current directory. `--root` or `CONCIERGE_HOME` selects the
@@ -143,8 +145,7 @@ concierge-backlog --root /absolute/concierge-state list
 concierge-backlog --root /absolute/concierge-state start task-1
 ```
 
-The second command keeps running. The worker reads the pending message and
-acknowledges it after handling it:
+The worker reads the pending message and acknowledges it after handling it:
 
 ```sh
 tincan-inbox --root ./tincan-state list worker-1
