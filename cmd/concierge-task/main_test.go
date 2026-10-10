@@ -506,3 +506,26 @@ func TestCancelKeepsActiveTaskAndPublishedPendingTask(t *testing.T) {
 		})
 	}
 }
+
+func TestPendingListsCompletionAfterTaskRecordsRetire(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, "tasks")
+	if err := os.Mkdir(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker := `{"task_id":"task-1","spawn_generation":"gen-1","session":"crew","pane":"pane-1","mode":"close"}`
+	if err := os.WriteFile(filepath.Join(state, "task-1.completion.json"), []byte(marker), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if code := run(context.Background(), []string{"--root", root, "pending"}, &output, herdr.Client{}); code != 0 {
+		t.Fatalf("code=%d output=%s", code, output.String())
+	}
+	for _, expected := range []string{
+		"pending_completions: 1", "\"task-1\",\"close\"",
+	} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("missing %q in %s", expected, output.String())
+		}
+	}
+}

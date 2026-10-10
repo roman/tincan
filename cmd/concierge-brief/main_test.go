@@ -330,3 +330,27 @@ func TestBriefVersionFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestBriefShowsCompletionAfterTaskRecordsRetire(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, "supervisor", "tasks")
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker := `{"task_id":"task-1","spawn_generation":"gen-1","session":"crew","pane":"pane-1","mode":"retain"}`
+	if err := os.WriteFile(filepath.Join(state, "task-1.completion.json"), []byte(marker), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if code := run([]string{"--root", filepath.Join(root, "supervisor"), "--message-root", filepath.Join(root, "messages")}, &output); code != 0 {
+		t.Fatalf("code=%d output=%s", code, output.String())
+	}
+	for _, expected := range []string{
+		"tasks: 0 found", "pending_completions: 1", "\"task-1\",\"retain\"",
+		"finish <task-id> --mode <recorded-mode>",
+	} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("missing %q in %s", expected, output.String())
+		}
+	}
+}

@@ -14,14 +14,16 @@ import (
 )
 
 type cli struct {
-	Root   string        `help:"Absolute Concierge state root." required:""`
-	Adopt  adoptCommand  `cmd:"" help:"Record a live local Herdr worker as a task."`
-	Stop   stopCommand   `cmd:"" help:"Close the recorded worker pane for a local task."`
-	Cancel cancelCommand `cmd:"" help:"Release a pending adoption without task metadata."`
-	List   listCommand   `cmd:"" help:"List local task metadata."`
+	Root    string         `help:"Absolute Concierge state root." required:""`
+	Adopt   adoptCommand   `cmd:"" help:"Record a live local Herdr worker as a task."`
+	Stop    stopCommand    `cmd:"" help:"Close the recorded worker pane for a local task."`
+	Cancel  cancelCommand  `cmd:"" help:"Release a pending adoption without task metadata."`
+	List    listCommand    `cmd:"" help:"List local task metadata."`
+	Pending pendingCommand `cmd:"" help:"List unfinished backlog completions."`
 }
 
 type listCommand struct{}
+type pendingCommand struct{}
 
 type stopCommand struct {
 	TaskID string `arg:"" help:"Local task ID whose worker pane should close."`
@@ -43,7 +45,7 @@ type adoptCommand struct {
 }
 
 func help() string {
-	return "usage: concierge-task --root ROOT adopt TASK_ID --session SESSION --pane PANE --name NAME --project PROJECT --worktree WORKTREE --agent-arg ARG; or stop TASK_ID; or cancel TASK_ID; or list"
+	return "usage: concierge-task --root ROOT adopt TASK_ID --session SESSION --pane PANE --name NAME --project PROJECT --worktree WORKTREE --agent-arg ARG; or stop TASK_ID; or cancel TASK_ID; or list; or pending"
 }
 
 func fail(output io.Writer, code int, err error, next string) int {
@@ -126,6 +128,22 @@ func run(ctx context.Context, arguments []string, output io.Writer, client herdr
 			fmt.Fprintf(output, "tasks[%d]{task,kind,worktree}:\n", len(tasks))
 			for _, task := range tasks {
 				fmt.Fprintf(output, "  %q,%q,%q\n", task.TaskID(), task.Kind(), task.Worktree())
+			}
+		}
+	case "pending":
+		registry, err := crew.New(command.Root)
+		if err != nil {
+			return fail(output, 2, err, help())
+		}
+		completions, err := registry.ListPendingCompletions()
+		if err != nil {
+			return fail(output, 1, err, "inspect the Concierge task state")
+		}
+		fmt.Fprintf(output, "pending_completions: %d\n", len(completions))
+		if len(completions) > 0 {
+			fmt.Fprintf(output, "pending_completions[%d]{task,mode}:\n", len(completions))
+			for _, completion := range completions {
+				fmt.Fprintf(output, "  %q,%q\n", completion.TaskID, completion.Mode)
 			}
 		}
 	default:

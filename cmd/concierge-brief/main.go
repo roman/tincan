@@ -80,6 +80,10 @@ func printBrief(
 	if err != nil {
 		return err
 	}
+	completions, err := registry.ListPendingCompletions()
+	if err != nil {
+		return err
+	}
 	var workers, pending []crew.Record
 	for _, record := range allRecords {
 		if record.PendingAdoption {
@@ -92,6 +96,7 @@ func printBrief(
 	taskCount := min(len(tasks), limit)
 	workerCount := min(len(workers), limit)
 	pendingCount := min(len(pending), limit)
+	completionCount := min(len(completions), limit)
 	executable, err := os.Executable()
 	if err != nil {
 		return err
@@ -145,6 +150,14 @@ func printBrief(
 				quoted(record.HerdrSession), quoted(record.PaneID))
 		}
 	}
+	if completionCount > 0 {
+		fmt.Fprintf(output, "pending_completions: %d of %d\n", completionCount, len(completions))
+		fmt.Fprintf(output, "pending_completions[%d]{task,mode}:\n", completionCount)
+		for _, completion := range completions[:completionCount] {
+			fmt.Fprintf(output, "  %s,%s\n", quoted(completion.TaskID),
+				quoted(string(completion.Mode)))
+		}
+	}
 	var hints []string
 	if wakeCount > 0 {
 		hints = append(hints, "tincan-inbox --root "+shellQuote(messageRoot)+
@@ -162,6 +175,13 @@ func printBrief(
 	}
 	if workerCount < len(workers) || pendingCount < len(pending) {
 		hints = append(hints, "concierge-worker --root "+shellQuote(root)+" list")
+	}
+	if completionCount > 0 {
+		if completionCount < len(completions) {
+			hints = append(hints, "concierge-task --root "+shellQuote(root)+" pending")
+		}
+		hints = append(hints, "concierge-backlog --root "+shellQuote(root)+
+			" finish <task-id> --mode <recorded-mode>")
 	}
 	if len(hints) > 0 {
 		encoded := make([]string, 0, len(hints))
