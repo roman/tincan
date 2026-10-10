@@ -46,6 +46,7 @@
           tincan-firstmate-watch = mkProgram { name = "tincan-firstmate-watch"; runtime = herdrPackage; };
           tincan-firstmate-show = mkProgram { name = "tincan-firstmate-show"; };
           concierge-brief = mkProgram { name = "concierge-brief"; };
+          concierge-primary = mkProgram { name = "concierge-primary"; };
           concierge-worker = mkProgram { name = "concierge-worker"; };
           concierge-backlog = mkProgram { name = "concierge-backlog"; runtime = tasksAxi; };
           concierge-task = mkProgram { name = "concierge-task"; runtime = herdrPackage; };
@@ -57,13 +58,14 @@
           };
           concierge = pkgs.symlinkJoin {
             name = "concierge-0.1.0";
-            paths = [ concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise ];
+            paths = [ concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise ]
+              ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ concierge-primary ];
           };
         in
         {
           default = tincan;
           inherit tincan concierge tincan-inbox tincan-notify tincan-task-send tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise;
-        });
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux { inherit concierge-primary; });
 
       formatter = forEachSystem (pkgs: pkgs.writeShellApplication {
         name = "tincan-format";
@@ -92,9 +94,11 @@
               --kind task --repo exmachina >/dev/null
             grep -q 'smoke-a1 - Packaged intake' "$TMPDIR/concierge/backlog.md"
             ${packages.concierge-task}/bin/concierge-task --help >/dev/null
+            ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''${packages.concierge-primary}/bin/concierge-primary --help >/dev/null''}
             for command in concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise; do
               test -x "${packages.concierge}/bin/$command"
             done
+            ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''test -x "${packages.concierge}/bin/concierge-primary"''}
             for command in tincan-inbox tincan-notify tincan-task-send tincan-firstmate-send tincan-firstmate-check tincan-firstmate-watch tincan-firstmate-show; do
               test -x "${packages.tincan}/bin/$command"
             done
@@ -129,7 +133,7 @@
               runHook postCheck
             '';
           });
-        });
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux { inherit (packages) concierge-primary; });
 
       devShells = forEachSystem (pkgs:
         let
