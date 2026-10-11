@@ -231,7 +231,7 @@ func TestBriefShowsPendingWakesAndRegisteredCrew(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	message, err := store.Send(recipient, "task-1-stale", "task: task-1\nrecord: 001.msg\n")
+	message, err := store.Send(recipient, "task-1-reply", "task: task-1\nreply: Done\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestBriefShowsPendingWakesAndRegisteredCrew(t *testing.T) {
 		"description: \"Pending primary wakes, queued backlog work, local tasks, and registered workers\"\n" +
 		"wakes: 1 pending for firstmate\n" +
 		"wakes[1]{id,body}:\n" +
-		"  \"" + message.ID.String() + "\",\"task: task-1\\nrecord: 001.msg\\n\"\n" +
+		"  \"" + message.ID.String() + "\",\"task: task-1\\nreply: Done\\n\"\n" +
 		"backlog: 0 queued\n" +
 		"tasks: 0 found\n" +
 		"workers: 1 registered\n" +

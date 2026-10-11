@@ -3,7 +3,6 @@
 > [!NOTE]
 > Herdr is currently the only terminal adapter supported by `tincan-notify`.
 > `concierge-control` and `concierge-supervise` use Herdr directly.
-> The optional Firstmate compatibility commands support local Herdr tasks only.
 
 Tincan provides small Go programs for agent messaging. Concierge provides
 local task and worker supervision. Each program can run on its own. The
@@ -73,7 +72,7 @@ The flake pins Nixpkgs, Herdr, and the Go module dependencies. The
 development shell provides Go 1.25, golines, and Herdr.
 Each command has its own package output, so an inbox installation does not bring
 Herdr into its runtime path.
-The notifier, control, supervisor, and Firstmate compatibility packages include
+The notifier, task sender, task manager, control, and supervisor packages include
 the pinned Herdr command.
 
 ```sh
@@ -92,19 +91,15 @@ nix build .#concierge-task
 nix build .#tincan-notify
 nix build .#concierge-control
 nix build .#concierge-supervise
-nix build .#tincan-firstmate-send
-nix build .#tincan-firstmate-check
-nix build .#tincan-firstmate-watch
-nix build .#tincan-firstmate-show
 ```
 
 Each individual command build places one command in `result/bin/`. To install one command
 in a user profile, use `nix profile install .#tincan-inbox` (or another output
-name). `.#tincan` provides the message commands and legacy Firstmate message
-compatibility commands. `.#concierge` provides the six supervisor commands.
+name). `.#tincan` provides the message commands. `.#concierge` provides the
+six supervisor commands.
 `nix fmt` formats Go files with golines at 100 columns. The flake check
-verifies that formatting, builds every separate output, checks the Firstmate
-executables, and runs the complete Go test suite once in a dedicated check.
+verifies formatting, builds every separate output, and runs the complete Go
+test suite once in a dedicated check.
 
 ## Example
 
@@ -219,69 +214,3 @@ Herdr can retain an agent registration after the process exits. Task mode
 refuses that pane without changing its spawn generation. The pinned Herdr
 release command does not clear built-in agent registrations, so stale-pane
 recovery needs a server-side Herdr operation.
-
-`tincan-firstmate-send`, `tincan-firstmate-check`,
-`tincan-firstmate-watch`, and `tincan-firstmate-show` use Firstmate's ordinary
-`.msg` task inbox format. This format is separate from the JSON mailbox used by
-`tincan-inbox`. The compatibility commands require an explicit absolute
-`--state` directory. Send, check, and show require a task ID bound to a local
-task metadata file. Watch scans the metadata files in the state directory.
-
-```sh
-tincan-firstmate-send --state /absolute/firstmate/state task-1 --body 'Please check the task.'
-tincan-firstmate-check --state /absolute/firstmate/state task-1
-tincan-firstmate-check --state /absolute/firstmate/state --wake-root /absolute/tincan-state task-1
-tincan-firstmate-watch --state /absolute/firstmate/state --wake-root /absolute/tincan-state
-tincan-firstmate-show --state /absolute/firstmate/state task-1 001.msg
-```
-
-The send command commits a numbered `.msg` record before it tries a terminal
-doorbell. A committed record returns exit 0 even when the doorbell is deferred,
-fails, or finds the endpoint unavailable. The recipient reads the record and
-acknowledges it by moving it into its inbox's `handled/` directory. The send
-command returns exit 2 for usage errors, exit 6 for an opposing live supervision
-lease, and exit 1 for an operational error before the record commits.
-
-The check command runs once. It examines the oldest ordinary pending record.
-After the default 90-second grace period, it waits for a busy agent or tries a
-doorbell. Each sent, deferred, or failed ring consumes one watcher attempt.
-The default budget is three attempts. A missing or dead endpoint, or an idle
-agent with a spent budget, produces an escalation outcome. Set
-`--grace-seconds` and `--max-attempts` to change the policy. Their environment
-defaults are `FM_TASK_INBOX_GRACE_SECS` and `FM_TASK_INBOX_RING_MAX`. The check
-command returns exit 0 for quiet, wait, ring, and escalation outcomes; usage
-errors return exit 2 and operational errors return exit 1.
-
-A fresh doorbell is deferred. The conservative Herdr ring can press Enter only
-when it sees the exact doorbell on a single visible composer row. Full
-Firstmate composer and terminal behavior remains unsupported. These commands
-do not replace `fm-send` or `fm-watch`. They do not support remote or secondmate
-delivery, correlations, `--resolve-key`, fire-and-forget delivery, typed
-commands, or other backends. The resident watcher scans local task metadata and
-checks each task on a five-second interval. `--once` runs one sweep for a
-scheduled check or a diagnostic. It continues checking other tasks when one
-task fails. The one-shot check and resident watcher share one Tincan retry
-writer lock. A second Tincan writer exits without changing retry state.
-
-The Tincan lock does not coordinate with Firstmate's Bash watcher. Stop the
-Bash watcher before starting the Tincan watcher against the same state directory.
-
-The show command reads validated current task metadata and one numbered message
-record without changing retry state. It reports whether the record is pending,
-handled, or missing. The default body preview is 800 characters; use `--full`
-to read the complete message. Compare the current spawn generation and record
-state with a durable wake before acting on it.
-
-With `--wake-root`, the check command publishes an escalation to Tincan's JSON
-inbox under recipient `firstmate`. The wake identifies the absolute Firstmate
-state directory, task, pending record, and spawn generation. Repeated
-publication for that identity returns the same message. The command writes
-`.escalated` only after the wake is durable. Without `--wake-root`, it reports
-escalation without writing that marker. Read and acknowledge a wake with
-`tincan-inbox --root /absolute/tincan-state list firstmate`, then `read` and
-`ack` with the returned message ID. An operator can inspect these pending
-wakes now; a resident supervisor that consumes them is still needed. A wake
-requires a current-state check before action. The marker suppresses another
-wake for the same pending record, even if the worker restarts. The spawn
-generation scopes wake identity if the record is rearmed. Keep one retry-state
-writer when moving from Firstmate's watcher to this command.
