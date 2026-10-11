@@ -205,6 +205,10 @@ Run task-bound supervision after registration:
 concierge-supervise --root /absolute/concierge-state --message-root /absolute/tincan-state --task task-1
 ```
 
+Task mode holds one controller lease per task. It watches the task inbox,
+prompts the registered pane when a message arrives, and retries prompts while
+messages remain pending. Restarting the supervisor scans pending messages.
+
 Task mode checks the current task metadata, the registered worker, the named
 Herdr session, and the pane's live foreground directory before restart. It
 stores a generation-bound bootstrap message before it records the new spawn

@@ -10,12 +10,136 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/roman/tincan/pkg/crew"
 	"github.com/roman/tincan/pkg/herdr"
 	"github.com/roman/tincan/pkg/inbox"
 	"github.com/roman/tincan/pkg/supervise"
 )
+
+type staleTaskRunner struct{ prompted chan struct{} }
+
+type healthyTaskRunner struct {
+	worktree string
+	prompted chan struct{}
+}
+
+func (runner healthyTaskRunner) RunSession(
+	_ context.Context, _ string, args ...string,
+) ([]byte, []byte, error) {
+	if len(args) >= 2 && args[0] == "pane" && args[1] == "get" {
+		return []byte(fmt.Sprintf(
+			`{"result":{"pane":{"pane_id":"pane-1","foreground_cwd":%q}}}`,
+			runner.worktree,
+		)), nil, nil
+	}
+	if len(args) >= 2 && args[0] == "agent" && args[1] == "get" {
+		return []byte(`{"result":{"agent":{"pane_id":"pane-1","agent_status":"working","agent":"codex"}}}`), nil, nil
+	}
+	if len(args) >= 2 && args[0] == "pane" && args[1] == "process-info" {
+		return []byte(`{"result":{"type":"pane_process_info","process_info":{"pane_id":"pane-1","shell_pid":100,"foreground_processes":[{"pid":101,"name":"codex","argv0":"codex"}]}}}`), nil, nil
+	}
+	if len(args) >= 2 && args[0] == "agent" && args[1] == "prompt" {
+		select {
+		case runner.prompted <- struct{}{}:
+		default:
+		}
+		return []byte(`{"result":{}}`), nil, nil
+	}
+	return nil, nil, fmt.Errorf("unexpected Herdr command: %v", args)
+}
+
+func TestResidentTaskWakesRegisteredPane(t *testing.T) {
+	root, worktree, registry := registeredSupervisorTask(t)
+	messageRoot := filepath.Join(root, "messages")
+	store, err := inbox.New(messageRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := healthyTaskRunner{worktree: worktree, prompted: make(chan struct{}, 1)}
+	worker := registeredWorker{
+		registry: registry, taskRoot: root, taskID: "task-1", messageRoot: messageRoot,
+		client: herdr.Client{SessionRunner: runner},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	ended := make(chan error, 1)
+	go func() {
+		ended <- runResidentTask(ctx, worker, supervise.Config{
+			Interval: time.Second, RestartTolerance: 1, RestartWindow: time.Minute,
+		})
+	}()
+	defer cancel()
+	recipient, _ := inbox.ParseRecipient("task-1")
+	if _, err := store.Send(recipient, "assignment", "Read task"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-runner.prompted:
+	case err := <-ended:
+		t.Fatalf("controller stopped before prompt: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("registered pane did not receive a prompt")
+	}
+	cancel()
+	select {
+	case err := <-ended:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("controller did not stop")
+	}
+}
+
+func (runner staleTaskRunner) RunSession(
+	_ context.Context, _ string, args ...string,
+) ([]byte, []byte, error) {
+	if len(args) >= 2 && args[0] == "pane" && args[1] == "get" {
+		time.Sleep(50 * time.Millisecond)
+		return []byte(fmt.Sprintf(
+			`{"result":{"pane":{"pane_id":"pane-1","foreground_cwd":%q}}}`,
+			"/wrong-worktree",
+		)), nil, nil
+	}
+	if len(args) >= 2 && args[0] == "agent" && args[1] == "prompt" {
+		select {
+		case runner.prompted <- struct{}{}:
+		default:
+		}
+		return []byte(`{"result":{}}`), nil, nil
+	}
+	return nil, nil, fmt.Errorf("unexpected Herdr command: %v", args)
+}
+
+func TestResidentTaskDoesNotPromptStalePane(t *testing.T) {
+	root, _, registry := registeredSupervisorTask(t)
+	messageRoot := filepath.Join(root, "messages")
+	store, err := inbox.New(messageRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipient, _ := inbox.ParseRecipient("task-1")
+	if _, err := store.Send(recipient, "assignment", "Read task"); err != nil {
+		t.Fatal(err)
+	}
+	runner := staleTaskRunner{prompted: make(chan struct{}, 1)}
+	worker := registeredWorker{
+		registry: registry, taskRoot: root, taskID: "task-1", messageRoot: messageRoot,
+		client: herdr.Client{SessionRunner: runner},
+	}
+	err = runResidentTask(context.Background(), worker, supervise.Config{
+		Interval: time.Second, RestartTolerance: 1, RestartWindow: time.Minute,
+	})
+	if err == nil {
+		t.Fatalf("stale task error = %v", err)
+	}
+	select {
+	case <-runner.prompted:
+		t.Fatal("stale pane received a prompt")
+	default:
+	}
+}
 
 type sessionReply struct {
 	stdout string
