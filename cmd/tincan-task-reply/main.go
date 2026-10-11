@@ -13,6 +13,7 @@ import (
 	"github.com/roman/tincan/pkg/crew"
 	"github.com/roman/tincan/pkg/firstmate"
 	"github.com/roman/tincan/pkg/inbox"
+	"github.com/roman/tincan/pkg/taskprotocol"
 )
 
 type cli struct {
@@ -23,10 +24,11 @@ type cli struct {
 }
 
 type sendCommand struct {
-	TaskID     string `arg:"" help:"Bound local task ID."`
-	Generation string `help:"Worker generation from the assignment." required:""`
-	Key        string `help:"Stable key for retry-safe sends." required:""`
-	BodyFile   string `help:"Read reply body from a file; use - for stdin." required:""`
+	TaskID       string `arg:"" help:"Bound local task ID."`
+	Generation   string `help:"Worker generation from the assignment." required:""`
+	Key          string `help:"Stable key for retry-safe sends." required:""`
+	AssignmentID string `help:"Assignment to acknowledge after the reply is durable."`
+	BodyFile     string `help:"Read reply body from a file; use - for stdin." required:""`
 }
 
 type checkCommand struct {
@@ -38,6 +40,8 @@ type replyEnvelope struct {
 	State           string `json:"state"`
 	Task            string `json:"task"`
 	SpawnGeneration string `json:"spawn_generation"`
+	AssignmentID    string `json:"assignment_id,omitempty"`
+	ReplyKey        string `json:"reply_key,omitempty"`
 	Body            string `json:"body"`
 }
 
@@ -58,6 +62,27 @@ func replyBody(path string, stdin io.Reader) (string, error) {
 		return "", inbox.ErrBlankBody
 	}
 	return string(data), nil
+}
+
+func readBoundAssignment(
+	store *inbox.Store, taskRoot, taskID, generation string, id inbox.MessageID,
+) error {
+	worker, _ := inbox.ParseRecipient(taskID)
+	assignment, err := store.Read(worker, id)
+	if errors.Is(err, os.ErrNotExist) {
+		assignment, err = store.ReadHandled(worker, id)
+	}
+	if err != nil {
+		return err
+	}
+	envelope, err := taskprotocol.DecodeAssignment(assignment.Body, taskRoot, taskID)
+	if err != nil {
+		return err
+	}
+	if envelope.SpawnGeneration != generation {
+		return errors.New("assignment does not match this task and generation")
+	}
+	return nil
 }
 
 func send(command cli, stdin io.Reader, stdout io.Writer) error {
@@ -85,21 +110,50 @@ func send(command cli, stdin io.Reader, stdout io.Writer) error {
 	}
 	recipient, _ := inbox.ParseRecipient("firstmate")
 	var message inbox.Message
+	var assignmentID inbox.MessageID
+	if input.AssignmentID != "" {
+		assignmentID, err = inbox.ParseMessageID(input.AssignmentID)
+		if err != nil {
+			return err
+		}
+	}
 	err = registry.WithCurrentTask(input.TaskID, func(task *crew.CurrentTask) error {
 		if task.Record().SpawnGeneration != input.Generation {
 			return errOldGeneration
 		}
+		if input.AssignmentID != "" {
+			if err := readBoundAssignment(store, command.TaskRoot, input.TaskID,
+				input.Generation, assignmentID); err != nil {
+				return err
+			}
+		}
+		replyKey := ""
+		if input.AssignmentID != "" {
+			replyKey = input.Key
+		}
 		envelope, err := json.Marshal(replyEnvelope{
 			Kind: "task-reply", State: filepath.Join(command.TaskRoot, "tasks"),
-			Task: input.TaskID, SpawnGeneration: input.Generation, Body: body,
+			Task: input.TaskID, SpawnGeneration: input.Generation,
+			AssignmentID: input.AssignmentID, ReplyKey: replyKey, Body: body,
 		})
 		if err != nil {
 			return err
 		}
+		keySuffix := input.Key
+		if input.AssignmentID != "" {
+			keySuffix = input.AssignmentID
+		}
 		key := fmt.Sprintf("task-reply:%s:%s:%s:%s",
-			command.TaskRoot, input.TaskID, input.Generation, input.Key)
+			command.TaskRoot, input.TaskID, input.Generation, keySuffix)
 		message, err = store.Send(recipient, key, string(envelope))
-		return err
+		if err != nil {
+			return err
+		}
+		if input.AssignmentID != "" {
+			worker, _ := inbox.ParseRecipient(input.TaskID)
+			return store.Acknowledge(worker, assignmentID)
+		}
+		return nil
 	})
 	if err != nil {
 		return err
@@ -111,6 +165,9 @@ func send(command cli, stdin io.Reader, stdout io.Writer) error {
 		input.TaskID,
 		input.Generation,
 	)
+	if input.AssignmentID != "" {
+		fmt.Fprintln(stdout, "assignment: acknowledged")
+	}
 	return nil
 }
 
@@ -143,6 +200,16 @@ func check(command cli, stdout io.Writer) error {
 	if err := firstmate.ValidateSpawnGeneration(envelope.SpawnGeneration); err != nil {
 		return err
 	}
+	if envelope.AssignmentID != "" {
+		if _, err := inbox.ParseMessageID(envelope.AssignmentID); err != nil {
+			return err
+		}
+		expectedKey := fmt.Sprintf("task-reply:%s:%s:%s:%s",
+			command.TaskRoot, envelope.Task, envelope.SpawnGeneration, envelope.AssignmentID)
+		if strings.TrimSpace(envelope.ReplyKey) == "" || message.Key != expectedKey {
+			return errors.New("bound reply has an invalid key")
+		}
+	}
 	registry, err := crew.New(command.TaskRoot)
 	if err != nil {
 		return err
@@ -150,6 +217,16 @@ func check(command cli, stdout io.Writer) error {
 	err = registry.WithCurrentTask(envelope.Task, func(task *crew.CurrentTask) error {
 		if task.Record().SpawnGeneration != envelope.SpawnGeneration {
 			return errOldGeneration
+		}
+		if envelope.AssignmentID != "" {
+			assignmentID, err := inbox.ParseMessageID(envelope.AssignmentID)
+			if err != nil {
+				return err
+			}
+			if err := readBoundAssignment(store, command.TaskRoot, envelope.Task,
+				envelope.SpawnGeneration, assignmentID); err != nil {
+				return err
+			}
 		}
 		return nil
 	})

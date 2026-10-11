@@ -232,6 +232,20 @@ func (store *Store) Read(recipient Recipient, id MessageID) (Message, error) {
 	return readMessage(store.mailboxPath(recipient).pendingPath().messagePath(id), recipient, id)
 }
 
+// ReadHandled returns a previously acknowledged message for retry validation.
+func (store *Store) ReadHandled(recipient Recipient, id MessageID) (Message, error) {
+	if store == nil || store.root == (rootPath{}) {
+		return Message{}, ErrInvalidRoot
+	}
+	if !recipient.valid() {
+		return Message{}, ErrInvalidRecipient
+	}
+	if !id.valid() {
+		return Message{}, ErrInvalidID
+	}
+	return readMessage(store.mailboxPath(recipient).handledPath().messagePath(id), recipient, id)
+}
+
 // List returns pending messages in creation order.
 func (store *Store) List(recipient Recipient) ([]Message, error) {
 	if store == nil || store.root == (rootPath{}) {

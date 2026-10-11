@@ -7,12 +7,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/alecthomas/kong"
 	"github.com/roman/tincan/pkg/crew"
 	"github.com/roman/tincan/pkg/firstmate"
 	"github.com/roman/tincan/pkg/inbox"
+	"github.com/roman/tincan/pkg/taskprotocol"
 )
 
 type cli struct {
@@ -26,14 +26,6 @@ type messageCommand struct {
 	TaskID     string `arg:"" help:"Local task ID."`
 	MessageID  string `arg:"" help:"Pending assignment ID."`
 	Generation string `help:"Generation supplied to this worker." required:""`
-}
-
-type assignmentEnvelope struct {
-	Kind            string `json:"kind"`
-	State           string `json:"state"`
-	Task            string `json:"task"`
-	SpawnGeneration string `json:"spawn_generation"`
-	Body            string `json:"body"`
 }
 
 type assignmentStatus struct {
@@ -85,16 +77,8 @@ func readAssignment(options cli, input messageCommand, action operation) (assign
 		if err != nil {
 			return err
 		}
-		var assignment assignmentEnvelope
-		if err := json.Unmarshal([]byte(message.Body), &assignment); err != nil {
-			return fmt.Errorf("invalid assignment: %w", err)
-		}
-		if assignment.Kind != "task-assignment" ||
-			assignment.State != filepath.Join(options.TaskRoot, "tasks") ||
-			assignment.Task != input.TaskID || strings.TrimSpace(assignment.Body) == "" {
-			return errors.New("message is not an assignment for this task root")
-		}
-		if err := firstmate.ValidateSpawnGeneration(assignment.SpawnGeneration); err != nil {
+		assignment, err := taskprotocol.DecodeAssignment(message.Body, options.TaskRoot, input.TaskID)
+		if err != nil {
 			return err
 		}
 		if assignment.SpawnGeneration != input.Generation {

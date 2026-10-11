@@ -161,7 +161,10 @@ to read and acknowledge the assignment against its launch generation. A stale
 assignment reports `status: stale` without its body. The worker sends a reply through
 `tincan-task-reply send` with the generation from the assignment. The reply
 command checks the current task binding before it stores a
-structured message for `firstmate`. An assignment retry with the same key and
+structured message for `firstmate`. Pass `--assignment-id` to acknowledge the
+assignment after the reply is durable. Reusing the reply key after a crash
+returns the same reply and completes the acknowledgement. A changed reply key
+for the same assignment is rejected. An assignment retry with the same key and
 body returns the same message ID within one worker generation. A new generation
 gets a new assignment ID. The primary uses `check` before acting on the reply. It
 reports `stale` without the reply body if the task has ended or its worker
@@ -171,7 +174,7 @@ while its inbox has pending messages.
 ```sh
 tincan-task-receive --task-root /absolute/concierge-state --message-root /absolute/tincan-state read task-1 MESSAGE_ID --generation GEN
 tincan-task-receive --task-root /absolute/concierge-state --message-root /absolute/tincan-state ack task-1 MESSAGE_ID --generation GEN
-tincan-task-reply --task-root /absolute/concierge-state --message-root /absolute/tincan-state send task-1 --generation GEN --key answer-1 --body-file reply.txt
+tincan-task-reply --task-root /absolute/concierge-state --message-root /absolute/tincan-state send task-1 --generation GEN --key answer-1 --assignment-id MESSAGE_ID --body-file reply.txt
 tincan-inbox --root /absolute/tincan-state list firstmate
 tincan-task-reply --task-root /absolute/concierge-state --message-root /absolute/tincan-state check MESSAGE_ID
 tincan-inbox --root /absolute/tincan-state ack firstmate MESSAGE_ID
