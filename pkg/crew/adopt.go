@@ -169,7 +169,7 @@ func (registry *Registry) adoptLocked(
 	if err != nil {
 		return err
 	}
-	if agent.PaneID != input.Pane || agent.Kind == "" || agent.Status == herdr.Done {
+	if agent.PaneID != input.Pane || agent.Kind == "" {
 		return fmt.Errorf("worker identity or state differs from the requested pane")
 	}
 	if health := bound.Health(ctx, target); health.Endpoint != herdr.Alive {

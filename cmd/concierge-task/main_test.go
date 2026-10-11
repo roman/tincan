@@ -323,7 +323,6 @@ func TestAdoptRefusesUnverifiedWorkerWithoutPublishing(t *testing.T) {
 	for _, test := range []struct{ name, directory, status, process string }{
 		{name: "wrong directory", directory: "/other", status: "working", process: "codex"},
 		{name: "shell only", status: "working", process: "zsh"},
-		{name: "done agent", status: "done", process: "codex"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -347,6 +346,27 @@ func TestAdoptRefusesUnverifiedWorkerWithoutPublishing(t *testing.T) {
 				err,
 			) {
 				t.Fatalf("metadata: %v", err)
+			}
+		})
+	}
+}
+
+func TestAdoptAcceptsReadyWorkerStates(t *testing.T) {
+	for _, status := range []string{"idle", "done"} {
+		t.Run(status, func(t *testing.T) {
+			root := t.TempDir()
+			worktree := filepath.Join(root, "worktree")
+			if err := os.Mkdir(worktree, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			runner := &liveRunner{worktree: worktree, status: status, process: "codex"}
+			var output bytes.Buffer
+			if code := run(context.Background(), adoptionArguments(root, worktree),
+				&output, herdr.Client{SessionRunner: runner}); code != 0 {
+				t.Fatalf("adopt code=%d output=%s", code, output.String())
+			}
+			if _, err := os.Stat(filepath.Join(root, "tasks", "task-1.meta")); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}
