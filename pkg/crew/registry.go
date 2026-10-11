@@ -41,6 +41,7 @@ type Record struct {
 	Worktree          string   `json:"worktree"`
 	SpawnGeneration   string   `json:"spawn_generation"`
 	PendingGeneration string   `json:"pending_generation,omitempty"`
+	PendingLaunch     string   `json:"pending_launch,omitempty"`
 	PendingAdoption   bool     `json:"pending_adoption,omitempty"`
 	AgentArgs         []string `json:"agent_args"`
 }
@@ -92,12 +93,20 @@ func validRecord(record Record) bool {
 		firstmate.ValidateSpawnGeneration(record.SpawnGeneration) != nil {
 		return false
 	}
-	if record.PendingAdoption && record.PendingGeneration != "" {
+	if record.PendingAdoption && (record.PendingGeneration != "" || record.PendingLaunch != "") {
+		return false
+	}
+	if record.PendingLaunch != "" &&
+		firstmate.ValidateSpawnGeneration(record.PendingLaunch) != nil {
 		return false
 	}
 	if record.PendingGeneration != "" &&
 		(firstmate.ValidateSpawnGeneration(record.PendingGeneration) != nil ||
 			record.PendingGeneration == record.SpawnGeneration) {
+		return false
+	}
+	if record.PendingGeneration != "" && record.PendingLaunch != "" &&
+		record.PendingGeneration != record.PendingLaunch {
 		return false
 	}
 	if _, err := herdr.ParseTarget(record.HerdrSession, record.PaneID); err != nil {
@@ -307,7 +316,8 @@ func (registry *Registry) registerAfter(record Record, prepare func() error) err
 }
 
 func (registry *Registry) register(record Record, prepare func() error) error {
-	if !validRecord(record) || record.PendingGeneration != "" || record.PendingAdoption {
+	if !validRecord(record) || record.PendingGeneration != "" ||
+		record.PendingLaunch != "" || record.PendingAdoption {
 		return ErrInvalidRecord
 	}
 	data, err := json.Marshal(record)

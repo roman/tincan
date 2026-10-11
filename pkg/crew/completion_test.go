@@ -18,6 +18,30 @@ type completionRunner struct {
 	during   func()
 }
 
+func TestCompletionRejectsPendingLaunch(t *testing.T) {
+	root := t.TempDir()
+	writeCurrentTask(t, root)
+	registry, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Register(testRecord()); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.WithLaunchTask("task-1", func(task *CurrentTask) error {
+		_, err := task.ReserveLaunch("gen-2")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.WithCompletion("task-1", func(*Completion) error {
+		t.Fatal("completion reached a reserved launch")
+		return nil
+	}); !errors.Is(err, ErrStaleRecord) {
+		t.Fatalf("completion = %v", err)
+	}
+}
+
 func (runner *completionRunner) RunSession(
 	_ context.Context, session string, args ...string,
 ) ([]byte, []byte, error) {

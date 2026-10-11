@@ -49,6 +49,26 @@ func TestCurrentTaskAdvancesGeneration(t *testing.T) {
 	}
 }
 
+func TestReservedLaunchRejectsDifferentGeneration(t *testing.T) {
+	root, registry := registeredTask(t)
+	if err := registry.WithLaunchTask("task-1", func(task *CurrentTask) error {
+		if _, err := task.ReserveLaunch("gen-2"); err != nil {
+			return err
+		}
+		return task.AdvanceGeneration("gen-3")
+	}); !errors.Is(err, ErrInvalidRecord) {
+		t.Fatalf("mismatched generation = %v", err)
+	}
+	record, err := registry.Get("task-1")
+	if err != nil || record.SpawnGeneration != "gen-1" || record.PendingLaunch != "gen-2" {
+		t.Fatalf("record = %+v, error = %v", record, err)
+	}
+	metadata, err := os.ReadFile(filepath.Join(root, "tasks", "task-1.meta"))
+	if err != nil || !strings.Contains(string(metadata), "spawn_gen=gen-1\n") {
+		t.Fatalf("metadata = %q, error = %v", metadata, err)
+	}
+}
+
 func TestCurrentTaskRecoversPendingGeneration(t *testing.T) {
 	for _, metadataGeneration := range []string{"gen-1", "gen-2"} {
 		t.Run(metadataGeneration, func(t *testing.T) {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/roman/tincan/pkg/crew"
 	"github.com/roman/tincan/pkg/herdr"
+	"github.com/roman/tincan/pkg/inbox"
 	"github.com/roman/tincan/pkg/supervise"
 )
 
@@ -116,22 +118,50 @@ func missingAgent() sessionReply {
 
 func TestRegisteredWorkerRestartsMissingTaskWorker(t *testing.T) {
 	root, worktree, registry := registeredSupervisorTask(t)
+	messageRoot := filepath.Join(root, "messages")
+	var bootstrapGeneration string
 	runner := &scriptedSessionRunner{replies: []sessionReply{
 		paneReply(worktree), missingAgent(),
 		paneReply(worktree), missingAgent(), missingAgent(),
 		{stdout: `{"result":{}}`}, registeredAgentReply(),
+		{stdout: `{"result":{}}`},
 	}}
 	runner.onCall = func(args []string) {
 		if len(args) < 2 || args[0] != "agent" || args[1] != "start" {
 			return
 		}
+		store, err := inbox.New(messageRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		recipient, _ := inbox.ParseRecipient("task-1")
+		messages, err := store.List(recipient)
+		if err != nil || len(messages) != 1 {
+			t.Fatalf("bootstrap before launch=%+v err=%v", messages, err)
+		}
+		var bootstrap struct {
+			Kind            string `json:"kind"`
+			State           string `json:"state"`
+			Task            string `json:"task"`
+			SpawnGeneration string `json:"spawn_generation"`
+		}
+		if err := json.Unmarshal([]byte(messages[0].Body), &bootstrap); err != nil {
+			t.Fatal(err)
+		}
+		if bootstrap.Kind != "task-bootstrap" || bootstrap.State != filepath.Join(root, "tasks") ||
+			bootstrap.Task != "task-1" || bootstrap.SpawnGeneration == "gen-1" ||
+			bootstrap.SpawnGeneration == "" {
+			t.Fatalf("bootstrap=%+v", bootstrap)
+		}
+		bootstrapGeneration = bootstrap.SpawnGeneration
 		data, err := os.ReadFile(filepath.Join(root, "tasks", "task-1.meta"))
 		if err != nil || strings.Contains(string(data), "spawn_gen=gen-1\n") {
 			t.Fatalf("generation was not published before launch: %q, %v", data, err)
 		}
 	}
 	worker := registeredWorker{
-		registry: registry, taskID: "task-1", client: herdr.Client{SessionRunner: runner},
+		registry: registry, taskRoot: root, taskID: "task-1", messageRoot: messageRoot,
+		client: herdr.Client{SessionRunner: runner},
 	}
 	if err := supervise.Check(context.Background(), worker); !errors.Is(
 		err,
@@ -140,7 +170,7 @@ func TestRegisteredWorkerRestartsMissingTaskWorker(t *testing.T) {
 		t.Fatalf("check error = %v", err)
 	}
 	record, err := registry.Get("task-1")
-	if err != nil || record.SpawnGeneration == "gen-1" || record.PendingGeneration != "" {
+	if err != nil || record.SpawnGeneration != bootstrapGeneration || record.PendingGeneration != "" {
 		t.Fatalf("record after restart = %+v, error %v", record, err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "tasks", "task-1.meta"))
@@ -153,13 +183,18 @@ func TestRegisteredWorkerRestartsMissingTaskWorker(t *testing.T) {
 		}
 	}
 	launches := 0
+	prompts := 0
 	for _, call := range runner.calls {
 		if len(call.args) >= 3 &&
 			reflect.DeepEqual(call.args[:3], []string{"agent", "start", "worker-1"}) {
 			launches++
 		}
+		if len(call.args) >= 4 && call.args[0] == "agent" && call.args[1] == "prompt" &&
+			call.args[2] == "pane-1" {
+			prompts++
+		}
 	}
-	if len(runner.replies) != 0 || launches != 1 {
+	if len(runner.replies) != 0 || launches != 1 || prompts != 1 {
 		t.Fatalf("Herdr calls = %+v, unused replies = %d", runner.calls, len(runner.replies))
 	}
 }
@@ -302,5 +337,213 @@ func TestTaskModeRejectsMixedLaunchFlags(t *testing.T) {
 	_, err = workerFromCLI(cli{Task: "task-1"}, herdr.Client{})
 	if err == nil {
 		t.Fatal("accepted task mode without state root")
+	}
+	_, err = workerFromCLI(cli{Root: root, Task: "task-1"}, herdr.Client{})
+	if err == nil {
+		t.Fatal("accepted task mode without message root")
+	}
+	worker, err := workerFromCLI(cli{
+		Root: root, MessageRoot: filepath.Join(root, "messages"), Task: "task-1",
+	}, herdr.Client{})
+	if err != nil || worker == nil {
+		t.Fatalf("task mode with message root: worker=%v err=%v", worker, err)
+	}
+}
+
+func TestRestartDoesNotRotateWhenBootstrapCannotPublish(t *testing.T) {
+	root, worktree, registry := registeredSupervisorTask(t)
+	messageRoot := filepath.Join(root, "blocked-messages")
+	if err := os.WriteFile(messageRoot, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &scriptedSessionRunner{replies: []sessionReply{
+		paneReply(worktree), missingAgent(),
+	}}
+	worker := registeredWorker{
+		registry: registry, taskRoot: root, messageRoot: messageRoot, taskID: "task-1",
+		client: herdr.Client{SessionRunner: runner},
+	}
+	if err := worker.Restart(context.Background()); err == nil {
+		t.Fatal("restart succeeded without a durable bootstrap")
+	}
+	record, err := registry.Get("task-1")
+	if err != nil || record.SpawnGeneration != "gen-1" || record.PendingLaunch == "" || len(runner.calls) != 2 {
+		t.Fatalf("record=%+v err=%v calls=%+v", record, err, runner.calls)
+	}
+	if err := os.Remove(messageRoot); err != nil {
+		t.Fatal(err)
+	}
+	runner.replies = []sessionReply{
+		paneReply(worktree), missingAgent(), missingAgent(),
+		{stdout: `{"result":{}}`}, registeredAgentReply(), {stdout: `{"result":{}}`},
+	}
+	if err := worker.Restart(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	final, err := registry.Get("task-1")
+	if err != nil || final.SpawnGeneration != record.PendingLaunch || final.PendingLaunch != "" {
+		t.Fatalf("retried record=%+v err=%v", final, err)
+	}
+}
+
+func TestRestartReusesBootstrapAfterFailedLaunch(t *testing.T) {
+	root, worktree, registry := registeredSupervisorTask(t)
+	messageRoot := filepath.Join(root, "messages")
+	runner := &scriptedSessionRunner{replies: []sessionReply{
+		paneReply(worktree), missingAgent(), missingAgent(),
+		{stderr: `{"error":{"code":"launch_failed"}}`, err: errors.New("exit 1")},
+	}}
+	worker := registeredWorker{
+		registry: registry, taskRoot: root, messageRoot: messageRoot, taskID: "task-1",
+		client: herdr.Client{SessionRunner: runner},
+	}
+	if err := worker.Restart(context.Background()); err == nil {
+		t.Fatal("expected launch failure")
+	}
+	first, err := registry.Get("task-1")
+	if err != nil || first.PendingLaunch == "" || first.SpawnGeneration != first.PendingLaunch {
+		t.Fatalf("failed launch record=%+v err=%v", first, err)
+	}
+	runner.replies = []sessionReply{
+		paneReply(worktree), missingAgent(), missingAgent(),
+		{stdout: `{"result":{}}`}, registeredAgentReply(), {stdout: `{"result":{}}`},
+	}
+	if err := worker.Restart(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	final, err := registry.Get("task-1")
+	if err != nil || final.SpawnGeneration != first.SpawnGeneration || final.PendingLaunch != "" {
+		t.Fatalf("retried launch record=%+v err=%v", final, err)
+	}
+	store, err := inbox.New(messageRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipient, _ := inbox.ParseRecipient("task-1")
+	messages, err := store.List(recipient)
+	if err != nil || len(messages) != 1 || len(runner.replies) != 0 {
+		t.Fatalf("messages=%+v err=%v unused replies=%d", messages, err, len(runner.replies))
+	}
+}
+
+func TestObserveRetriesBootstrapPromptAfterLaunch(t *testing.T) {
+	root, worktree, registry := registeredSupervisorTask(t)
+	runner := &scriptedSessionRunner{replies: []sessionReply{
+		paneReply(worktree), missingAgent(), missingAgent(),
+		{stdout: `{"result":{}}`}, registeredAgentReply(),
+		{stderr: `{"error":{"code":"prompt_failed"}}`, err: errors.New("exit 1")},
+	}}
+	worker := registeredWorker{
+		registry: registry, taskRoot: root, messageRoot: filepath.Join(root, "messages"),
+		taskID: "task-1", client: herdr.Client{SessionRunner: runner},
+	}
+	if err := worker.Restart(context.Background()); err == nil {
+		t.Fatal("expected prompt failure")
+	}
+	runner.replies = []sessionReply{
+		paneReply(worktree), registeredAgentReply(),
+		paneReply(worktree), registeredAgentReply(),
+		{stdout: `{"result":{"type":"pane_process_info","process_info":{"pane_id":"pane-1","shell_pid":100,"foreground_processes":[{"pid":200,"name":"codex","argv0":"codex"}]}}}`},
+		{stdout: `{"result":{}}`},
+	}
+	if err := worker.Observe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.replies) != 0 {
+		t.Fatalf("unused replies: %d", len(runner.replies))
+	}
+}
+
+func TestObserveRecoversLaunchAfterStartCrash(t *testing.T) {
+	root, worktree, registry := registeredSupervisorTask(t)
+	if err := registry.WithLaunchTask("task-1", func(task *crew.CurrentTask) error {
+		if _, err := task.ReserveLaunch("gen-2"); err != nil {
+			return err
+		}
+		return task.AdvanceGeneration("gen-2")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	messageRoot := filepath.Join(root, "messages")
+	store, err := inbox.New(messageRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipient, _ := inbox.ParseRecipient("task-1")
+	body, err := json.Marshal(bootstrapEnvelope{
+		Kind: "task-bootstrap", State: filepath.Join(root, "tasks"),
+		Task: "task-1", SpawnGeneration: "gen-2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Send(recipient, "test-bootstrap", string(body)); err != nil {
+		t.Fatal(err)
+	}
+	runner := &scriptedSessionRunner{replies: []sessionReply{
+		paneReply(worktree), registeredAgentReply(),
+		paneReply(worktree), registeredAgentReply(),
+		{stdout: `{"result":{"type":"pane_process_info","process_info":{"pane_id":"pane-1","shell_pid":100,"foreground_processes":[{"pid":200,"name":"codex","argv0":"codex"}]}}}`},
+		{stdout: `{"result":{}}`},
+	}}
+	worker := registeredWorker{
+		registry: registry, taskRoot: root, messageRoot: messageRoot,
+		taskID: "task-1", client: herdr.Client{SessionRunner: runner},
+	}
+	if err := worker.Observe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	record, err := registry.Get("task-1")
+	if err != nil || record.PendingLaunch != "" || len(runner.replies) != 0 {
+		t.Fatalf("record=%+v err=%v unused replies=%d", record, err, len(runner.replies))
+	}
+}
+
+func TestObserveCancelsFutureLaunchWhenOldWorkerLives(t *testing.T) {
+	root, worktree, registry := registeredSupervisorTask(t)
+	if err := registry.WithLaunchTask("task-1", func(task *crew.CurrentTask) error {
+		_, err := task.ReserveLaunch("gen-2")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	messageRoot := filepath.Join(root, "messages")
+	store, err := inbox.New(messageRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipient, _ := inbox.ParseRecipient("task-1")
+	body, err := json.Marshal(bootstrapEnvelope{
+		Kind: "task-bootstrap", State: filepath.Join(root, "tasks"),
+		Task: "task-1", SpawnGeneration: "gen-2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Send(recipient, "test-bootstrap", string(body)); err != nil {
+		t.Fatal(err)
+	}
+	runner := &scriptedSessionRunner{replies: []sessionReply{
+		paneReply(worktree), registeredAgentReply(),
+		paneReply(worktree), registeredAgentReply(),
+		{stdout: `{"result":{"type":"pane_process_info","process_info":{"pane_id":"pane-1","shell_pid":100,"foreground_processes":[{"pid":200,"name":"codex","argv0":"codex"}]}}}`},
+	}}
+	worker := registeredWorker{
+		registry: registry, taskRoot: root, messageRoot: messageRoot,
+		taskID: "task-1", client: herdr.Client{SessionRunner: runner},
+	}
+	if err := worker.Observe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	record, err := registry.Get("task-1")
+	if err != nil || record.PendingLaunch != "" || record.SpawnGeneration != "gen-1" {
+		t.Fatalf("record=%+v err=%v", record, err)
+	}
+	messages, err := store.List(recipient)
+	if err != nil || len(messages) != 0 {
+		t.Fatalf("pending messages=%+v err=%v", messages, err)
+	}
+	if err := registry.WithCurrentTask("task-1", func(*crew.CurrentTask) error { return nil }); err != nil {
+		t.Fatalf("ordinary access remains blocked: %v", err)
 	}
 }

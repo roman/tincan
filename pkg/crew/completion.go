@@ -166,6 +166,7 @@ func (completion *Completion) load() error {
 	if info == nil {
 		if completion.metaInfo == nil || completion.recordInfo == nil ||
 			completion.record.PendingAdoption || completion.record.PendingGeneration != "" ||
+			completion.record.PendingLaunch != "" ||
 			!matchesTask(completion.record, completion.metadata) {
 			return ErrStaleRecord
 		}
@@ -181,7 +182,7 @@ func (completion *Completion) load() error {
 		(completion.record.SpawnGeneration != marker.SpawnGeneration ||
 			completion.record.HerdrSession != marker.Session ||
 			completion.record.PaneID != marker.Pane || completion.record.PendingAdoption ||
-			completion.record.PendingGeneration != "") {
+			completion.record.PendingGeneration != "" || completion.record.PendingLaunch != "") {
 		return ErrStaleRecord
 	}
 	if completion.metaInfo != nil && completion.recordInfo != nil &&

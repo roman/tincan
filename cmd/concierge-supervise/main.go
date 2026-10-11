@@ -16,6 +16,7 @@ import (
 
 type cli struct {
 	Root             string        `help:"Absolute Concierge state root for a registered task."`
+	MessageRoot      string        `help:"Absolute Tincan message root for task bootstrap messages."`
 	Task             string        `help:"Registered local task ID to supervise."`
 	Pane             string        `help:"Herdr pane ID for manual supervision."`
 	Name             string        `help:"Agent name for manual supervision."`

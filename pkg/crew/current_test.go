@@ -30,6 +30,38 @@ func writeCurrentTask(t *testing.T, root string) {
 	}
 }
 
+func TestPendingLaunchBlocksOrdinaryTaskAccess(t *testing.T) {
+	root := t.TempDir()
+	writeCurrentTask(t, root)
+	registry, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Register(testRecord()); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.WithLaunchTask("task-1", func(task *CurrentTask) error {
+		_, err := task.ReserveLaunch("gen-2")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.WithCurrentTask("task-1", func(*CurrentTask) error {
+		t.Fatal("ordinary access reached a reserved launch")
+		return nil
+	}); !errors.Is(err, ErrStaleRecord) {
+		t.Fatalf("ordinary access = %v", err)
+	}
+	if err := registry.WithLaunchTask("task-1", func(task *CurrentTask) error {
+		if task.Record().PendingLaunch != "gen-2" {
+			t.Fatalf("record = %+v", task.Record())
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWithCurrentTaskHoldsMetadataLockDuringOperation(t *testing.T) {
 	root := t.TempDir()
 	writeCurrentTask(t, root)

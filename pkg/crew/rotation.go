@@ -10,11 +10,91 @@ import (
 	"github.com/roman/tincan/pkg/firstmate"
 )
 
+// ReserveLaunch keeps one generation across message publication and launch retries.
+func (task *CurrentTask) ReserveLaunch(candidate string) (string, error) {
+	if task == nil || task.crewRoot == nil ||
+		firstmate.ValidateSpawnGeneration(candidate) != nil {
+		return "", ErrInvalidRecord
+	}
+	var generation string
+	err := withCrewLock(task.crewRoot, func() error {
+		latest, err := readRecord(task.crewRoot, task.id.String())
+		if err != nil {
+			return err
+		}
+		if !reflect.DeepEqual(latest, task.record) {
+			return ErrConflict
+		}
+		if latest.PendingLaunch != "" {
+			generation = latest.PendingLaunch
+			return nil
+		}
+		if candidate == latest.SpawnGeneration {
+			return ErrInvalidRecord
+		}
+		latest.PendingLaunch = candidate
+		if err := replaceRecord(task.crewRoot, latest); err != nil {
+			return err
+		}
+		task.record = latest
+		generation = candidate
+		return nil
+	})
+	return generation, err
+}
+
+// CompleteLaunch clears a reserved generation after Herdr confirms the worker.
+func (task *CurrentTask) CompleteLaunch() error {
+	if task == nil || task.crewRoot == nil || task.record.PendingLaunch == "" ||
+		task.record.PendingLaunch != task.record.SpawnGeneration {
+		return ErrInvalidRecord
+	}
+	return withCrewLock(task.crewRoot, func() error {
+		latest, err := readRecord(task.crewRoot, task.id.String())
+		if err != nil {
+			return err
+		}
+		if !reflect.DeepEqual(latest, task.record) {
+			return ErrConflict
+		}
+		latest.PendingLaunch = ""
+		if err := replaceRecord(task.crewRoot, latest); err != nil {
+			return err
+		}
+		task.record = latest
+		return nil
+	})
+}
+
+// CancelLaunch releases a future launch when the current worker is alive.
+func (task *CurrentTask) CancelLaunch() error {
+	if task == nil || task.crewRoot == nil || task.record.PendingLaunch == "" ||
+		task.record.PendingLaunch == task.record.SpawnGeneration {
+		return ErrInvalidRecord
+	}
+	return withCrewLock(task.crewRoot, func() error {
+		latest, err := readRecord(task.crewRoot, task.id.String())
+		if err != nil {
+			return err
+		}
+		if !reflect.DeepEqual(latest, task.record) {
+			return ErrConflict
+		}
+		latest.PendingLaunch = ""
+		if err := replaceRecord(task.crewRoot, latest); err != nil {
+			return err
+		}
+		task.record = latest
+		return nil
+	})
+}
+
 // AdvanceGeneration records a new incarnation before a replacement worker starts.
 func (task *CurrentTask) AdvanceGeneration(next string) error {
 	if task == nil || task.taskRoot == nil || task.crewRoot == nil ||
 		firstmate.ValidateSpawnGeneration(next) != nil ||
-		next == task.record.SpawnGeneration {
+		next == task.record.SpawnGeneration ||
+		(task.record.PendingLaunch != "" && next != task.record.PendingLaunch) {
 		return ErrInvalidRecord
 	}
 	return withCrewLock(task.crewRoot, func() error {

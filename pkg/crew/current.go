@@ -69,8 +69,29 @@ func (task *CurrentTask) StopPane(ctx context.Context, client herdr.Client) erro
 
 // WithCurrentTask holds the task metadata lock while a caller uses its crew record.
 func (registry *Registry) WithCurrentTask(
+	taskID string, operation func(*CurrentTask) error,
+) error {
+	return registry.withCurrentTask(taskID, operation, ordinaryTaskAccess)
+}
+
+// WithLaunchTask permits a supervisor to recover a reserved worker launch.
+func (registry *Registry) WithLaunchTask(
+	taskID string, operation func(*CurrentTask) error,
+) error {
+	return registry.withCurrentTask(taskID, operation, launchTaskAccess)
+}
+
+type taskAccess int
+
+const (
+	ordinaryTaskAccess taskAccess = iota
+	launchTaskAccess
+)
+
+func (registry *Registry) withCurrentTask(
 	taskID string,
 	operation func(*CurrentTask) error,
+	access taskAccess,
 ) (result error) {
 	if registry == nil || registry.root == "" || operation == nil {
 		return ErrInvalidRecord
@@ -118,6 +139,9 @@ func (registry *Registry) WithCurrentTask(
 	}
 	if record.PendingAdoption {
 		return fmt.Errorf("%w: task adoption is pending", ErrStaleRecord)
+	}
+	if record.PendingLaunch != "" && access != launchTaskAccess {
+		return fmt.Errorf("%w: worker launch is pending", ErrStaleRecord)
 	}
 	if record.PendingGeneration != "" {
 		record, err = recoverPendingGeneration(taskRoot, crewRoot, id, record)

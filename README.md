@@ -202,13 +202,15 @@ concierge-worker --root /absolute/concierge-state show task-1
 Run task-bound supervision after registration:
 
 ```sh
-concierge-supervise --root /absolute/concierge-state --task task-1
+concierge-supervise --root /absolute/concierge-state --message-root /absolute/tincan-state --task task-1
 ```
 
 Task mode checks the current task metadata, the registered worker, the named
 Herdr session, and the pane's live foreground directory before restart. It
-records a new spawn generation before launching the replacement. A pending
-generation is recovered after an interrupted transition. `concierge-worker show`
+stores a generation-bound bootstrap message before it records the new spawn
+generation and launches the replacement. It then prompts the worker to read
+its inbox. A pending generation is recovered after an interrupted transition.
+`concierge-worker show`
 reports that pending value until recovery completes. The manual pane flags
 remain available for a worker without task metadata.
 
