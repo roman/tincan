@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/roman/tincan/pkg/inbox"
 )
 
 func TestTaskLifecycleKeepsReplyAcrossProcesses(t *testing.T) {
@@ -137,10 +139,38 @@ esac
 	if !strings.Contains(checked, "status: current") {
 		t.Fatalf("reply after restart: %s", checked)
 	}
+	store, err := inbox.New(messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipient, _ := inbox.ParseRecipient("firstmate")
+	messageID, err := inbox.ParseMessageID(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, created, err := store.BeginDisposition(recipient, messageID, "finish:task-1")
+	if err != nil || !created {
+		t.Fatalf("begin disposition: created=%t err=%v", created, err)
+	}
 	run("concierge-task", "--root", root, "stop", "task-1")
 	finished := run("concierge-backlog", "--root", root, "finish", "task-1")
 	if !strings.Contains(finished, "state: done") {
 		t.Fatalf("finish: %s", finished)
+	}
+	// Simulate a primary crash after the state change but before disposition completion.
+	reopened, err := inbox.New(messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, created, err = reopened.BeginDisposition(recipient, messageID, "finish:task-1")
+	if err != nil || created {
+		t.Fatalf("replayed action: created=%t err=%v", created, err)
+	}
+	if row := run("concierge-backlog", "--root", root, "show", "task-1"); !strings.Contains(row, "state: done") {
+		t.Fatalf("completed task after restart: %s", row)
+	}
+	if _, err := reopened.CompleteDisposition(recipient, messageID, "done"); err != nil {
+		t.Fatal(err)
 	}
 	run("tincan-inbox", "--root", messages, "ack", "firstmate", id)
 	if listed := run("tincan-inbox", "--root", messages, "list", "firstmate"); !strings.Contains(listed, "count: 0") {
