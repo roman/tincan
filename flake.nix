@@ -19,7 +19,7 @@
         version = "0.1.0";
         src = self;
         go = pkgs.go_1_25;
-        vendorHash = "sha256-tVSpcHc3/3/iTdcl0dpOU/pmiR/ljhrKDIw3Op7qK+U=";
+        vendorHash = "sha256-KNGoecqWFIvAdO+VI85k9SbAXmqg1rOuB50FCmmJWr8=";
       };
     in
     {
