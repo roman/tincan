@@ -13,6 +13,7 @@ in this repository.
 | --- | --- |
 | `tincan-inbox` | Store, list, read, and acknowledge messages for a recipient. |
 | `tincan-task-reply` | Send and check worker replies against a task generation. |
+| `tincan-task-receive` | Read and acknowledge assignments for the current worker generation. |
 | `concierge-brief` | Show pending primary wakes, queued backlog work, local tasks, and registered workers at session start. |
 | `concierge-worker` | Record and inspect local worker launch identities. |
 | `concierge-backlog` | Queue, list, start, and finish tasks in the supervisor backlog. |
@@ -84,6 +85,7 @@ nix build .#tincan
 nix build .#concierge
 nix build .#tincan-inbox
 nix build .#tincan-task-reply
+nix build .#tincan-task-receive
 nix build .#concierge-brief
 nix build .#concierge-worker
 nix build .#concierge-backlog
@@ -154,8 +156,9 @@ tincan-inbox --root ./tincan-state ack task-1 MESSAGE_ID
 ```
 
 For a supervised task, `tincan-task-send` stores a JSON assignment with the task
-ID, state path, spawn generation, and body. The worker compares that generation
-with `concierge-worker show` before acting. The worker sends a reply through
+ID, state path, spawn generation, and body. The worker uses `tincan-task-receive`
+to read and acknowledge the assignment against its launch generation. A stale
+assignment reports `status: stale` without its body. The worker sends a reply through
 `tincan-task-reply send` with the generation from the assignment. The reply
 command checks the current task binding before it stores a
 structured message for `firstmate`. An assignment retry with the same key and
@@ -166,6 +169,8 @@ generation changed. A separate `tincan-notify` process can ring the primary
 while its inbox has pending messages.
 
 ```sh
+tincan-task-receive --task-root /absolute/concierge-state --message-root /absolute/tincan-state read task-1 MESSAGE_ID --generation GEN
+tincan-task-receive --task-root /absolute/concierge-state --message-root /absolute/tincan-state ack task-1 MESSAGE_ID --generation GEN
 tincan-task-reply --task-root /absolute/concierge-state --message-root /absolute/tincan-state send task-1 --generation GEN --key answer-1 --body-file reply.txt
 tincan-inbox --root /absolute/tincan-state list firstmate
 tincan-task-reply --task-root /absolute/concierge-state --message-root /absolute/tincan-state check MESSAGE_ID

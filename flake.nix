@@ -42,6 +42,7 @@
           tincan-notify = mkProgram { name = "tincan-notify"; runtime = herdrPackage; };
           tincan-task-send = mkProgram { name = "tincan-task-send"; runtime = herdrPackage; };
           tincan-task-reply = mkProgram { name = "tincan-task-reply"; };
+          tincan-task-receive = mkProgram { name = "tincan-task-receive"; };
           concierge-brief = mkProgram { name = "concierge-brief"; runtime = tasksAxi; };
           concierge-primary = mkProgram { name = "concierge-primary"; };
           concierge-worker = mkProgram { name = "concierge-worker"; };
@@ -51,7 +52,7 @@
           concierge-supervise = mkProgram { name = "concierge-supervise"; runtime = herdrPackage; };
           tincan = pkgs.symlinkJoin {
             name = "tincan-0.1.0";
-            paths = [ tincan-inbox tincan-notify tincan-task-send tincan-task-reply ];
+            paths = [ tincan-inbox tincan-notify tincan-task-send tincan-task-reply tincan-task-receive ];
           };
           concierge = pkgs.symlinkJoin {
             name = "concierge-0.1.0";
@@ -61,7 +62,7 @@
         in
         {
           default = tincan;
-          inherit tincan concierge tincan-inbox tincan-notify tincan-task-send tincan-task-reply concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise;
+          inherit tincan concierge tincan-inbox tincan-notify tincan-task-send tincan-task-reply tincan-task-receive concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise;
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux { inherit concierge-primary; });
 
       formatter = forEachSystem (pkgs: pkgs.writeShellApplication {
@@ -81,7 +82,7 @@
           tasksAxi = pkgs.callPackage ./nix/tasks-axi.nix { };
         in
         {
-          inherit (packages) tincan-inbox tincan-notify tincan-task-send tincan-task-reply concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise;
+          inherit (packages) tincan-inbox tincan-notify tincan-task-send tincan-task-reply tincan-task-receive concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise;
           concierge-smoke = pkgs.runCommand "concierge-smoke" { } ''
             ${packages.concierge-worker}/bin/concierge-worker --help >/dev/null
             ${packages.concierge-backlog}/bin/concierge-backlog --help >/dev/null
@@ -102,13 +103,14 @@
               test -x "${packages.concierge}/bin/$command"
             done
             ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''test -x "${packages.concierge}/bin/concierge-primary"''}
-            for command in tincan-inbox tincan-notify tincan-task-send tincan-task-reply; do
+            for command in tincan-inbox tincan-notify tincan-task-send tincan-task-reply tincan-task-receive; do
               test -x "${packages.tincan}/bin/$command"
             done
             test ! -e ${packages.tincan}/bin/concierge-brief
             test ! -e ${packages.concierge}/bin/tincan-inbox
             ${packages.tincan-task-send}/bin/tincan-task-send --help >/dev/null
             ${packages.tincan-task-reply}/bin/tincan-task-reply --help >/dev/null
+            ${packages.tincan-task-receive}/bin/tincan-task-receive --help >/dev/null
             touch "$out"
           '';
           go-format = pkgs.runCommand "tincan-go-format" {
