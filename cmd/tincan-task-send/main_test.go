@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -122,8 +123,24 @@ func TestSendRecordsMessageAndNotifiesBoundWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	messages, err := store.List(recipient)
-	if err != nil || len(messages) != 1 || messages[0].Body != "Inspect the task.\n" {
+	if err != nil || len(messages) != 1 {
 		t.Fatalf("messages=%+v err=%v", messages, err)
+	}
+	var assignment struct {
+		Kind            string `json:"kind"`
+		State           string `json:"state"`
+		Task            string `json:"task"`
+		SpawnGeneration string `json:"spawn_generation"`
+		Body            string `json:"body"`
+	}
+	if err := json.Unmarshal([]byte(messages[0].Body), &assignment); err != nil {
+		t.Fatalf("assignment is not JSON: %v", err)
+	}
+	if assignment.Kind != "task-assignment" ||
+		assignment.State != filepath.Join(root, "tasks") ||
+		assignment.Task != "task-1" || assignment.SpawnGeneration != "gen-1" ||
+		assignment.Body != "Inspect the task.\n" {
+		t.Fatalf("assignment=%+v", assignment)
 	}
 	for _, session := range runner.sessions {
 		if session != "work" {
@@ -133,6 +150,52 @@ func TestSendRecordsMessageAndNotifiesBoundWorker(t *testing.T) {
 	if len(runner.calls) != 3 ||
 		runner.calls[2][3] != "Pending Tincan inbox messages are available. Read and acknowledge them." {
 		t.Fatalf("Herdr calls = %v", runner.calls)
+	}
+}
+
+func TestSendReusesKeyForNewWorkerGeneration(t *testing.T) {
+	root, messageRoot, worktree := taskSendFixture(t)
+	arguments := []string{
+		"--task-root", root, "--message-root", messageRoot,
+		"task-1", "--key", "assignment-1", "--body-file", "-",
+	}
+	client := herdr.Client{SessionRunner: &taskSessionRunner{worktree: worktree}}
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), arguments, strings.NewReader("Inspect the task"),
+		&stdout, &stderr, client); code != 0 {
+		t.Fatalf("first send code=%d stderr=%s", code, stderr.String())
+	}
+	registry, err := crew.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.WithCurrentTask("task-1", func(task *crew.CurrentTask) error {
+		return task.AdvanceGeneration("gen-2")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run(context.Background(), arguments, strings.NewReader("Inspect the task"),
+		&stdout, &stderr, client); code != 0 {
+		t.Fatalf("replacement send code=%d stderr=%s", code, stderr.String())
+	}
+	store, _ := inbox.New(messageRoot)
+	recipient, _ := inbox.ParseRecipient("task-1")
+	messages, err := store.List(recipient)
+	if err != nil || len(messages) != 2 || messages[0].ID == messages[1].ID {
+		t.Fatalf("generation messages=%+v err=%v", messages, err)
+	}
+	var generations []string
+	for _, message := range messages {
+		var assignment assignmentEnvelope
+		if err := json.Unmarshal([]byte(message.Body), &assignment); err != nil {
+			t.Fatal(err)
+		}
+		generations = append(generations, assignment.SpawnGeneration)
+	}
+	if !reflect.DeepEqual(generations, []string{"gen-1", "gen-2"}) {
+		t.Fatalf("assignment generations=%v", generations)
 	}
 }
 
@@ -151,8 +214,11 @@ func TestSendKeepsDurableMessageWhenNotificationFails(t *testing.T) {
 	store, _ := inbox.New(messageRoot)
 	recipient, _ := inbox.ParseRecipient("task-1")
 	messages, err := store.List(recipient)
-	if err != nil || len(messages) != 1 || messages[0].Body != "Read this later" {
+	if err != nil || len(messages) != 1 {
 		t.Fatalf("messages=%+v err=%v", messages, err)
+	}
+	if body := assignmentText(t, messages[0]); body != "Read this later" {
+		t.Fatalf("assignment body=%q", body)
 	}
 }
 
@@ -169,6 +235,22 @@ func TestSendRejectsTaskWithoutWorkerBinding(t *testing.T) {
 	}
 	if _, err := os.Stat(messageRoot); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("message root exists after rejected send: %v", err)
+	}
+}
+
+func TestSendRejectsBlankAssignmentWithoutMessage(t *testing.T) {
+	root, messageRoot, worktree := taskSendFixture(t)
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), []string{
+		"--task-root", root, "--message-root", messageRoot,
+		"task-1", "--key", "blank", "--body-file", "-",
+	}, strings.NewReader(" \n\t"), &stdout, &stderr,
+		herdr.Client{SessionRunner: &taskSessionRunner{worktree: worktree}})
+	if code == 0 || stdout.Len() != 0 {
+		t.Fatalf("blank send code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(messageRoot); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("blank assignment created a mailbox: %v", err)
 	}
 }
 
@@ -228,11 +310,23 @@ func TestSendWithholdsNotificationFromChangedWorkerIdentity(t *testing.T) {
 			store, _ := inbox.New(messageRoot)
 			recipient, _ := inbox.ParseRecipient("task-1")
 			messages, err := store.List(recipient)
-			if err != nil || len(messages) != 1 || messages[0].Body != "Keep this" {
+			if err != nil || len(messages) != 1 {
 				t.Fatalf("durable message missing: messages=%+v err=%v", messages, err)
+			}
+			if body := assignmentText(t, messages[0]); body != "Keep this" {
+				t.Fatalf("assignment body=%q", body)
 			}
 		})
 	}
+}
+
+func assignmentText(t *testing.T, message inbox.Message) string {
+	t.Helper()
+	var assignment assignmentEnvelope
+	if err := json.Unmarshal([]byte(message.Body), &assignment); err != nil {
+		t.Fatal(err)
+	}
+	return assignment.Body
 }
 
 func TestRetryOfAcknowledgedKeyNotifiesForOtherPendingMessage(t *testing.T) {

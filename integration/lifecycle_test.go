@@ -1,6 +1,7 @@
 package integration_test
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -87,22 +88,43 @@ esac
 		"--pane", "pane-1", "--name", "worker-1", "--project", root,
 		"--worktree", worktree, "--agent-arg", "resume", "--agent-arg", "thread-1")
 	run("concierge-backlog", "--root", root, "start", "task-1")
-	assignment := filepath.Join(root, "assignment.txt")
-	if err := os.WriteFile(assignment, []byte("Inspect the task"), 0o600); err != nil {
+	assignmentFile := filepath.Join(root, "assignment.txt")
+	if err := os.WriteFile(assignmentFile, []byte("Inspect the task"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	assignmentSent := run("tincan-task-send", "--task-root", root, "--message-root", messages,
-		"task-1", "--key", "assignment-1", "--body-file", assignment)
+		"task-1", "--key", "assignment-1", "--body-file", assignmentFile)
 	workerMessage := run("tincan-inbox", "--root", messages, "list", "task-1")
 	if !strings.Contains(workerMessage, "count: 1") {
 		t.Fatalf("worker inbox: %s", workerMessage)
+	}
+	var assignmentBody string
+	read := run("tincan-inbox", "--root", messages, "read", "task-1", field(assignmentSent, "id"))
+	if err := json.Unmarshal([]byte(field(read, "body")), &assignmentBody); err != nil {
+		t.Fatalf("decode inbox body: %v", err)
+	}
+	var assignment struct {
+		Kind            string `json:"kind"`
+		Task            string `json:"task"`
+		SpawnGeneration string `json:"spawn_generation"`
+		Body            string `json:"body"`
+	}
+	if err := json.Unmarshal([]byte(assignmentBody), &assignment); err != nil {
+		t.Fatalf("decode task assignment: %v", err)
+	}
+	if assignment.Kind != "task-assignment" || assignment.Task != "task-1" ||
+		assignment.Body != "Inspect the task" || assignment.SpawnGeneration == "" {
+		t.Fatalf("invalid task assignment: %+v", assignment)
 	}
 	run("tincan-inbox", "--root", messages, "ack", "task-1", field(assignmentSent, "id"))
 	reply := filepath.Join(root, "reply.txt")
 	if err := os.WriteFile(reply, []byte("Done"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	generation := field(run("concierge-worker", "--root", root, "show", "task-1"), "spawn_generation")
+	generation := assignment.SpawnGeneration
+	if current := field(run("concierge-worker", "--root", root, "show", "task-1"), "spawn_generation"); current != generation {
+		t.Fatalf("assignment generation=%q worker generation=%q", generation, current)
+	}
 	sent := run("tincan-task-reply", "--task-root", root, "--message-root", messages,
 		"send", "task-1", "--generation", generation, "--key", "reply-1", "--body-file", reply)
 	id := field(sent, "id")

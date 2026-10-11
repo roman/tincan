@@ -148,16 +148,19 @@ Use `show ID --full` to read the complete title and body for a listed task.
 The worker reads the pending message and acknowledges it after handling it:
 
 ```sh
-tincan-inbox --root ./tincan-state list worker-1
-tincan-inbox --root ./tincan-state read worker-1 MESSAGE_ID
-tincan-inbox --root ./tincan-state ack worker-1 MESSAGE_ID
+tincan-inbox --root ./tincan-state list task-1
+tincan-inbox --root ./tincan-state read task-1 MESSAGE_ID
+tincan-inbox --root ./tincan-state ack task-1 MESSAGE_ID
 ```
 
-For a supervised task, pass the recorded spawn generation to the worker in its
-assignment. The worker sends a reply through `tincan-task-reply send` with that
-generation. The command checks the current task binding before it stores a
-structured message for `firstmate`. A retry with the same key and body returns
-the same message ID. The primary uses `check` before acting on the reply. It
+For a supervised task, `tincan-task-send` stores a JSON assignment with the task
+ID, state path, spawn generation, and body. The worker compares that generation
+with `concierge-worker show` before acting. The worker sends a reply through
+`tincan-task-reply send` with the generation from the assignment. The reply
+command checks the current task binding before it stores a
+structured message for `firstmate`. An assignment retry with the same key and
+body returns the same message ID within one worker generation. A new generation
+gets a new assignment ID. The primary uses `check` before acting on the reply. It
 reports `stale` without the reply body if the task has ended or its worker
 generation changed. A separate `tincan-notify` process can ring the primary
 while its inbox has pending messages.
@@ -183,7 +186,6 @@ Its default health interval is five seconds. Use `--interval`,
 policy. A tolerance of two permits two failures; the third stops
 supervision. The supervisor does not create panes.
 
-## Optional Firstmate task compatibility
 
 The worker registry records the launch details for an existing local task. It
 copies the pane, project, worktree, harness, and spawn generation from the task

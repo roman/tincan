@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/alecthomas/kong"
 	"github.com/roman/tincan/pkg/crew"
@@ -30,6 +32,14 @@ type sendResult struct {
 	notifyErr    error
 }
 
+type assignmentEnvelope struct {
+	Kind            string `json:"kind"`
+	State           string `json:"state"`
+	Task            string `json:"task"`
+	SpawnGeneration string `json:"spawn_generation"`
+	Body            string `json:"body"`
+}
+
 func messageBody(path string, stdin io.Reader) (string, error) {
 	var data []byte
 	var err error
@@ -38,7 +48,13 @@ func messageBody(path string, stdin io.Reader) (string, error) {
 	} else {
 		data, err = os.ReadFile(path)
 	}
-	return string(data), err
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		return "", inbox.ErrBlankBody
+	}
+	return string(data), nil
 }
 
 func notifyWorker(
@@ -94,7 +110,20 @@ func send(
 	}
 	var result sendResult
 	err = registry.WithCurrentTask(options.TaskID, func(task *crew.CurrentTask) error {
-		message, err := store.Send(recipient, options.Key, body)
+		generation := task.Record().SpawnGeneration
+		envelope, err := json.Marshal(assignmentEnvelope{
+			Kind: "task-assignment", State: filepath.Join(options.TaskRoot, "tasks"),
+			Task: options.TaskID, SpawnGeneration: generation, Body: body,
+		})
+		if err != nil {
+			return err
+		}
+		key := options.Key
+		if key != "" {
+			key = fmt.Sprintf("task-assignment:%s:%s:%s:%s",
+				options.TaskRoot, options.TaskID, generation, key)
+		}
+		message, err := store.Send(recipient, key, string(envelope))
 		if err != nil {
 			return err
 		}
@@ -146,6 +175,12 @@ func run(
 		fmt.Fprintln(stderr, "tincan-task-send: state roots must be absolute")
 		return 2
 	}
+	resolvedRoot, err := filepath.EvalSymlinks(options.TaskRoot)
+	if err != nil {
+		fmt.Fprintln(stderr, "tincan-task-send:", err)
+		return 1
+	}
+	options.TaskRoot = resolvedRoot
 	body, err := messageBody(options.BodyFile, stdin)
 	if err != nil {
 		fmt.Fprintln(stderr, "tincan-task-send:", err)
