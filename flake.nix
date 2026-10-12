@@ -26,13 +26,11 @@
         vendorHash = "sha256-dnZtAeufL7NxseT95FGiPCvq6oGp6eUO7/sIQEHNRa0=";
       };
       buildCommands = pkgs:
-        let tasksAxi = pkgs.callPackage ./nix/tasks-axi.nix { };
-        in pkgs.buildGoModule ((goModule pkgs) // {
+        pkgs.buildGoModule ((goModule pkgs) // {
           pname = "tincan-commands";
           subPackages = [ "cmd/..." ];
           checkPhase = ''
             runHook preCheck
-            export PATH=${tasksAxi}/bin:$PATH
             go list -deps ./cmd/tincan > tincan-dependencies
             while IFS= read -r dependency; do
               case "$dependency" in
@@ -53,7 +51,6 @@
         let
           system = pkgs.stdenv.hostPlatform.system;
           herdrPackage = herdr.packages.${system}.default;
-          tasksAxi = pkgs.callPackage ./nix/tasks-axi.nix { };
           allCommands = buildCommands pkgs;
           mkProgram = { name, runtime ? null }: pkgs.runCommand "${name}-0.1.0" {
             nativeBuildInputs = pkgs.lib.optionals (runtime != null) [ pkgs.makeWrapper ];
@@ -64,21 +61,7 @@
               wrapProgram "$out/bin/${name}" --prefix PATH : ${runtime}/bin
             ''}
           '';
-          tincan-command = mkProgram { name = "tincan"; runtime = herdrPackage; };
-          tincan-inbox = mkProgram { name = "tincan-inbox"; };
-          tincan-notify = mkProgram { name = "tincan-notify"; runtime = herdrPackage; };
-          tincan-task-send = mkProgram { name = "tincan-task-send"; runtime = herdrPackage; };
-          tincan-task-reply = mkProgram { name = "tincan-task-reply"; };
-          tincan-task-receive = mkProgram { name = "tincan-task-receive"; };
-          concierge-brief = mkProgram { name = "concierge-brief"; runtime = tasksAxi; };
-          concierge-primary = mkProgram { name = "concierge-primary"; };
-          concierge-worker = mkProgram { name = "concierge-worker"; };
-          concierge-backlog = mkProgram { name = "concierge-backlog"; runtime = tasksAxi; };
-          concierge-task = mkProgram { name = "concierge-task"; runtime = herdrPackage; };
-          concierge-migrate = mkProgram { name = "concierge-migrate"; };
-          concierge-control = mkProgram { name = "concierge-control"; runtime = herdrPackage; };
-          concierge-supervise = mkProgram { name = "concierge-supervise"; runtime = herdrPackage; };
-          tincan = tincan-command;
+          tincan = mkProgram { name = "tincan"; runtime = herdrPackage; };
           processTools = if pkgs.stdenv.isLinux then pkgs.procps else
             pkgs.writeShellScriptBin "ps" ''
               exec /bin/ps "$@"
@@ -91,8 +74,8 @@
         in
         {
           default = tincan;
-          inherit tincan concierge tincan-command tincan-inbox tincan-notify tincan-task-send tincan-task-reply tincan-task-receive concierge-brief concierge-worker concierge-backlog concierge-task concierge-migrate concierge-control concierge-supervise;
-        } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux { inherit concierge-primary; });
+          inherit tincan concierge;
+        });
 
       formatter = forEachSystem (pkgs: pkgs.writeShellApplication {
         name = "tincan-format";
@@ -119,11 +102,11 @@
           '';
         in
         {
-          inherit (packages) tincan-command tincan-inbox tincan-notify tincan-task-send tincan-task-reply tincan-task-receive concierge-brief concierge-worker concierge-backlog concierge-task concierge-migrate concierge-control concierge-supervise;
+          inherit (packages) tincan concierge;
           tincan-smoke = pkgs.runCommand "tincan-smoke" { } ''
             unset TINCAN_HOME HERDR_SESSION HERDR_SOCKET_PATH HERDR_WORKSPACE_ID HERDR_TAB_ID HERDR_PANE_ID
             export PATH=
-            test -x ${packages.tincan-command}/bin/tincan
+            test -x ${packages.tincan}/bin/tincan
             test "$(${packages.tincan}/bin/tincan --version)" = 0.1.0
             ${packages.tincan}/bin/tincan --root "$TMPDIR/messages" inbox send smoke --body 'Packaged message' > sent
             ${pkgs.gnugrep}/bin/grep -q '^id: ' sent
@@ -201,15 +184,12 @@
             touch "$out"
           '';
           go-tests = buildCommands pkgs;
-        } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux { inherit (packages) concierge-primary; });
+        });
 
       devShells = forEachSystem (pkgs:
-        let
-          tasksAxi = pkgs.callPackage ./nix/tasks-axi.nix { };
-        in
         {
           default = pkgs.mkShell {
-            packages = [ pkgs.go_1_25 pkgs.gopls pkgs.golines tasksAxi herdr.packages.${pkgs.stdenv.hostPlatform.system}.default ];
+            packages = [ pkgs.go_1_25 pkgs.gopls pkgs.golines herdr.packages.${pkgs.stdenv.hostPlatform.system}.default ];
           };
         });
     };

@@ -3,7 +3,6 @@ package tincancli
 import (
 	"context"
 	"fmt"
-	"io"
 	"time"
 
 	"github.com/roman/tincan/pkg/herdr"
@@ -27,25 +26,6 @@ func selectDoorbell(adapter, herdrExecutable, session string) (notify.Doorbell, 
 	default:
 		return nil, fmt.Errorf("unsupported adapter %q; supported adapter: herdr", adapter)
 	}
-}
-
-type legacyNotifyCLI struct {
-	Root           string `help:"Inbox state directory." required:"" type:"path"`
-	NotifyCommands `embed:""`
-}
-
-// RunNotify preserves the standalone notifier parser with shared handlers.
-func RunNotify(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	var command legacyNotifyCLI
-	_, code := parse(args, &command, "tincan-notify", stdout, stderr)
-	if code >= 0 {
-		return code
-	}
-	report := func(err error) { fmt.Fprintln(stderr, "tincan-notify:", err) }
-	if err := runNotify(ctx, command.Root, &command.NotifyCommands, report); err != nil {
-		return fail(stderr, "tincan-notify", err)
-	}
-	return 0
 }
 
 func runNotify(ctx context.Context, root string, args *NotifyCommands, report func(error)) error {

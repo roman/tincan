@@ -23,15 +23,13 @@ func TestAdapterSelection(t *testing.T) {
 		{name: "unsupported adapter", args: []string{"--adapter", "tmux"}, wantAdapter: "tmux", wantError: "unsupported adapter"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			var options legacyNotifyCLI
+			var options NotifyCommands
 			parser, err := kong.New(&options)
 			if err != nil {
 				t.Fatal(err)
 			}
 			args := append(
 				[]string{
-					"--root",
-					t.TempDir(),
 					"--recipient",
 					"worker",
 					"--target",
@@ -75,12 +73,12 @@ func TestTargetOption(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			var options legacyNotifyCLI
+			var options NotifyCommands
 			parser, err := kong.New(&options)
 			if err != nil {
 				t.Fatal(err)
 			}
-			args := []string{"--root", t.TempDir(), "--recipient", "worker", "--session", "work"}
+			args := []string{"--recipient", "worker", "--session", "work"}
 			if test.target != "" {
 				args = append(args, "--target", test.target)
 			}
@@ -97,13 +95,13 @@ func TestTargetOption(t *testing.T) {
 
 func TestEmptyAmbientSessionRejected(t *testing.T) {
 	t.Setenv("HERDR_SESSION", "")
-	var options legacyNotifyCLI
+	var options NotifyCommands
 	parser, err := kong.New(&options)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = parser.Parse(
-		[]string{"--root", t.TempDir(), "--recipient", "worker", "--target", "worker"},
+		[]string{"--recipient", "worker", "--target", "worker"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -123,13 +121,13 @@ func TestDoorbellUsesAmbientHerdrSession(t *testing.T) {
 	}
 	t.Setenv("HERDR_SESSION", "work")
 	t.Setenv("TINCAN_TEST_CAPTURE", capture)
-	var options legacyNotifyCLI
+	var options NotifyCommands
 	parser, err := kong.New(&options)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := parser.Parse([]string{
-		"--root", directory, "--recipient", "worker", "--target", "worker", "--herdr", executable,
+		"--recipient", "worker", "--target", "worker", "--herdr", executable,
 	}); err != nil {
 		t.Fatal(err)
 	}

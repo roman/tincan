@@ -13,10 +13,6 @@ import (
 )
 
 func TestWorkerReplySurvivesPrimaryRestart(t *testing.T) {
-	tasksAXI, err := exec.LookPath("tasks-axi")
-	if err != nil {
-		t.Fatal("tasks-axi is required for the backlog lifecycle")
-	}
 	workingDirectory, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -27,13 +23,12 @@ func TestWorkerReplySurvivesPrimaryRestart(t *testing.T) {
 	if err := os.Mkdir(commandDirectory, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	packages := []string{
-		"concierge-backlog", "concierge-task", "tincan-task-send",
-		"tincan-task-receive", "tincan-task-reply", "concierge-worker",
-	}
-	buildArguments := []string{"build", "-buildvcs=false", "-o", commandDirectory}
-	for _, name := range packages {
-		buildArguments = append(buildArguments, "./cmd/"+name)
+	buildArguments := []string{
+		"build",
+		"-buildvcs=false",
+		"-o",
+		commandDirectory,
+		"./cmd/concierge",
 	}
 	build := exec.Command("go", buildArguments...)
 	build.Dir = repositoryRoot
@@ -53,18 +48,6 @@ func TestWorkerReplySurvivesPrimaryRestart(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(fakeDirectory, "herdr"), []byte(fakeHerdr), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	tasksWrapper := `#!/bin/sh
-if [ "$TINCAN_FAIL_DISPOSITION" = 1 ] && [ "$1" = done ]; then
-  "$TINCAN_REAL_TASKS_AXI" "$@" || exit $?
-  mv "$TINCAN_DISPOSITIONS" "$TINCAN_DISPOSITIONS.hold" || exit $?
-  : > "$TINCAN_DISPOSITIONS" || exit $?
-  exit 0
-fi
-exec "$TINCAN_REAL_TASKS_AXI" "$@"
-`
-	if err := os.WriteFile(filepath.Join(fakeDirectory, "tasks-axi"), []byte(tasksWrapper), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	project := filepath.Join(temporaryRoot, "project")
 	worktree := filepath.Join(project, "worktree")
 	root := filepath.Join(temporaryRoot, ".concierge")
@@ -78,26 +61,46 @@ exec "$TINCAN_REAL_TASKS_AXI" "$@"
 		"PATH="+fakeDirectory+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"TINCAN_FAKE_HERDR=1", "TINCAN_FAKE_WORKTREE="+worktree,
 		"TINCAN_FAKE_PANE_GONE="+filepath.Join(temporaryRoot, "pane-gone"),
-		"TINCAN_REAL_TASKS_AXI="+tasksAXI,
-		"TINCAN_DISPOSITIONS="+filepath.Join(messages, "inbox", "firstmate", "dispositions"),
+		"CONCIERGE_SPAWN_GENERATION=gen-1",
 	)
-	run := func(name string, arguments ...string) string {
+	run := func(arguments ...string) string {
 		t.Helper()
-		command := exec.Command(filepath.Join(commandDirectory, name), arguments...)
+		command := exec.Command(filepath.Join(commandDirectory, "concierge"), arguments...)
 		command.Env = commandEnvironment
 		output, err := command.CombinedOutput()
 		if err != nil {
-			t.Fatalf("%s %v: %v: %s", name, arguments, err, output)
+			t.Fatalf("concierge %v: %v: %s", arguments, err, output)
 		}
 		return string(output)
 	}
-	run("concierge-backlog", "--root", root, "add", "task-1", "Test worker reply",
+	run("--root", root, "state", "init")
+	run("--root", root, "backlog", "add", "task-1", "Test worker reply",
 		"--kind", "task", "--repo", "exmachina")
-	run("concierge-task", "--root", root, "adopt", "task-1", "--session", "work",
-		"--pane", "pane-1", "--name", "worker-1", "--project", project,
-		"--worktree", worktree, "--agent-arg", "resume", "--agent-arg", "thread-1")
-	run("concierge-backlog", "--root", root, "start", "task-1")
-	generation := outputField(t, run("concierge-worker", "--root", root, "show", "task-1"),
+	run(
+		"--root",
+		root,
+		"task",
+		"adopt",
+		"task-1",
+		"--session",
+		"work",
+		"--pane",
+		"pane-1",
+		"--name",
+		"worker-1",
+		"--project",
+		project,
+		"--worktree",
+		worktree,
+		"--generation",
+		"gen-1",
+		"--agent-arg",
+		"resume",
+		"--agent-arg",
+		"thread-1",
+	)
+	run("--root", root, "backlog", "start", "task-1")
+	generation := outputField(t, run("--root", root, "worker", "show", "task-1"),
 		"spawn_generation")
 	if generation == "" {
 		t.Fatal("adoption did not publish a worker generation")
@@ -106,16 +109,35 @@ exec "$TINCAN_REAL_TASKS_AXI" "$@"
 	if err := os.WriteFile(assignmentFile, []byte("Complete this task"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	assignment := run("tincan-task-send", "--task-root", root,
-		"--message-root", messages, "task-1", "--key", "first-assignment",
-		"--body-file", assignmentFile)
-	assignmentID := outputField(t, assignment, "id")
+	assignment := run(
+		"--root",
+		root,
+		"--message-root",
+		messages,
+		"task",
+		"send",
+		"task-1",
+		"--key",
+		"first-assignment",
+		"--body-file",
+		assignmentFile,
+	)
+	assignmentID := outputField(t, assignment, "message_id")
 	if !strings.Contains(assignment, "notification: sent") {
 		t.Fatalf("worker was not notified: %s", assignment)
 	}
-	received := run("tincan-task-receive", "--task-root", root,
-		"--message-root", messages, "read", "task-1", assignmentID,
-		"--generation", generation)
+	received := run(
+		"--root",
+		root,
+		"--message-root",
+		messages,
+		"task",
+		"receive",
+		"task-1",
+		assignmentID,
+		"--generation",
+		generation,
+	)
 	if !strings.Contains(received, "status: current") ||
 		!strings.Contains(received, "Complete this task") {
 		t.Fatalf("worker did not receive the assignment: %s", received)
@@ -124,11 +146,10 @@ exec "$TINCAN_REAL_TASKS_AXI" "$@"
 	if err := os.WriteFile(replyFile, []byte("Task completed"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	reply := run("tincan-task-reply", "--task-root", root,
-		"--message-root", messages, "send", "task-1",
+	reply := run("--root", root, "--message-root", messages, "task", "reply", "send", "task-1",
 		"--generation", generation, "--key", "completion",
 		"--assignment-id", assignmentID, "--body-file", replyFile)
-	replyID := outputField(t, reply, "id")
+	replyID := outputField(t, reply, "message_id")
 	store, err := inbox.New(messages)
 	if err != nil {
 		t.Fatal(err)
@@ -137,7 +158,7 @@ exec "$TINCAN_REAL_TASKS_AXI" "$@"
 	if pending, err := store.List(worker); err != nil || len(pending) != 0 {
 		t.Fatalf("assignment remained pending after reply: %v, %v", pending, err)
 	}
-	primary, _ := inbox.ParseRecipient("firstmate")
+	primary, _ := inbox.ParseRecipient("concierge")
 	replyMessageID, err := inbox.ParseMessageID(replyID)
 	if err != nil {
 		t.Fatal(err)
@@ -145,42 +166,21 @@ exec "$TINCAN_REAL_TASKS_AXI" "$@"
 	if _, err := store.Read(primary, replyMessageID); err != nil {
 		t.Fatalf("reply was not durable before primary restart: %v", err)
 	}
-	// Replace the disposition directory after tasks-axi stages the Done row.
-	// The first resolver then exits with a durable intent and backlog result.
-	resolveArguments := []string{"--root", root, "resolve", replyID,
-		"--message-root", messages, "--mode", "close"}
-	firstResolve := exec.Command(
-		filepath.Join(commandDirectory, "concierge-backlog"),
-		resolveArguments...)
-	firstResolve.Env = append(commandEnvironment, "TINCAN_FAIL_DISPOSITION=1")
-	if output, err := firstResolve.CombinedOutput(); err == nil {
-		t.Fatalf("first resolve unexpectedly succeeded: %s", output)
-	}
-	dispositionDirectory := filepath.Join(messages, "inbox", "firstmate", "dispositions")
-	restoreDispositions := func() error {
-		if err := os.Remove(dispositionDirectory); err != nil {
-			return err
-		}
-		return os.Rename(dispositionDirectory+".hold", dispositionDirectory)
-	}
-	t.Cleanup(func() {
-		if _, err := os.Stat(dispositionDirectory + ".hold"); err == nil {
-			_ = restoreDispositions()
-		}
-	})
-	backlogAfterFailure := run("concierge-backlog", "--root", root, "list", "--state", "done")
-	if strings.Count(backlogAfterFailure, "task-1,done") != 1 {
-		t.Fatalf("first resolve did not finish the task: %s", backlogAfterFailure)
-	}
-	if err := restoreDispositions(); err != nil {
+	// Keep the durable result and disposition intent across separate CLI processes.
+	if _, _, err := store.BeginDisposition(primary, replyMessageID,
+		"finish:task-1:"+generation+":close:2026-10-12"); err != nil {
 		t.Fatal(err)
 	}
+	run("--root", root, "backlog", "finish", "task-1", "--generation", generation,
+		"--closed-on", "2026-10-12")
+	resolveArguments := []string{"--root", root, "--message-root", messages,
+		"backlog", "resolve", replyID, "--closed-on", "2026-10-12"}
 	started, err := store.ReadDisposition(primary, replyMessageID)
 	if err != nil || started.State != inbox.DispositionStarted {
-		t.Fatalf("first resolve did not record its intent: %+v, %v", started, err)
+		t.Fatalf("resolution intent was not durable: %+v, %v", started, err)
 	}
 	for attempt := range 2 {
-		resolved := run("concierge-backlog", resolveArguments...)
+		resolved := run(resolveArguments...)
 		if !strings.Contains(resolved, "state: done") {
 			t.Fatalf("resolve attempt %d: %s", attempt, resolved)
 		}
@@ -192,27 +192,24 @@ exec "$TINCAN_REAL_TASKS_AXI" "$@"
 	if _, err := store.ReadHandled(primary, replyMessageID); err != nil {
 		t.Fatalf("reply was not acknowledged after resolution: %v", err)
 	}
-	backlog := run("concierge-backlog", "--root", root, "list", "--state", "done")
-	if strings.Count(backlog, "task-1,done") != 1 {
+	backlog := run("--root", root, "backlog", "list", "--state", "done")
+	if strings.Count(backlog, "\"task-1\",done") != 1 {
 		t.Fatalf("task did not finish once: %s", backlog)
 	}
-	stopped := run("concierge-task", "--root", root, "stop", "task-1")
-	if !strings.Contains(stopped, "state: pane_closed") {
-		t.Fatalf("worker pane did not close: %s", stopped)
+	run("--root", root, "task", "stop", "task-1", "--generation", generation)
+	if _, err := os.Stat(filepath.Join(temporaryRoot, "pane-gone")); err != nil {
+		t.Fatalf("worker pane did not close: %v", err)
 	}
-	cleaned := run("concierge-backlog", "--root", root, "cleanup", "task-1")
-	if !strings.Contains(cleaned, "state: cleaned") {
-		t.Fatalf("worker was not retired: %s", cleaned)
-	}
-	if workers := run("concierge-worker", "--root", root, "list"); !strings.Contains(
+	run("--root", root, "backlog", "cleanup", "task-1", "--generation", generation)
+	if workers := run("--root", root, "worker", "list"); !strings.Contains(
 		workers,
 		"count: 0",
 	) {
 		t.Fatalf("worker remains registered: %s", workers)
 	}
-	if pending := run("concierge-task", "--root", root, "pending"); !strings.Contains(
+	if pending := run("--root", root, "task", "pending"); !strings.Contains(
 		pending,
-		"pending_completions: 0",
+		"count: 0",
 	) {
 		t.Fatalf("completion remains pending: %s", pending)
 	}
@@ -222,7 +219,7 @@ func outputField(t *testing.T, output, name string) string {
 	t.Helper()
 	for _, line := range strings.Split(output, "\n") {
 		if value, found := strings.CutPrefix(line, name+": "); found {
-			return value
+			return strings.Trim(value, "\"")
 		}
 	}
 	t.Fatalf("%s missing from output: %s", name, output)

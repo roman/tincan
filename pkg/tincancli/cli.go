@@ -50,22 +50,6 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	return 0
 }
 
-// RunInbox preserves the standalone inbox parser while sharing its handlers.
-func RunInbox(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	var command struct {
-		Root          string `help:"Directory that stores mailboxes." env:"TINCAN_HOME" required:""`
-		InboxCommands `embed:""`
-	}
-	selected, code := parse(args, &command, "tincan-inbox", stdout, stderr)
-	if code >= 0 {
-		return code
-	}
-	if err := runInbox(ctx, command.Root, &command.InboxCommands, selected, stdin, stdout); err != nil {
-		return fail(stderr, "tincan-inbox", err)
-	}
-	return 0
-}
-
 func parse(args []string, model any, name string, stdout, stderr io.Writer) (string, int) {
 	exitCode := -1
 	parser, err := kong.New(
