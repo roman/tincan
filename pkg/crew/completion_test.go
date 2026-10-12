@@ -42,6 +42,45 @@ func TestCompletionRejectsPendingLaunch(t *testing.T) {
 	}
 }
 
+func TestCompletionAcceptsResultBeforePaneDeparture(t *testing.T) {
+	root := t.TempDir()
+	writeCurrentTask(t, root)
+	registry, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Register(testRecord()); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := range 2 {
+		if err := registry.WithCompletion("task-1", func(completion *Completion) error {
+			if err := completion.Accept(CloseTask); err != nil {
+				return err
+			}
+			if !completion.Pending() || completion.Mode() != CloseTask {
+				t.Fatal("accepted result was not retained")
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("accept attempt %d: %v", attempt, err)
+		}
+	}
+	for _, path := range []string{
+		filepath.Join(root, "tasks", "task-1.meta"),
+		filepath.Join(root, "crew", "task-1.json"),
+		filepath.Join(root, "tasks", "task-1.completion.json"),
+	} {
+		if _, err := os.Lstat(path); err != nil {
+			t.Fatalf("accepted result lost %s: %v", path, err)
+		}
+	}
+	if err := registry.WithCompletion("task-1", func(completion *Completion) error {
+		return completion.Accept(RetainTask)
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("changed accepted result = %v", err)
+	}
+}
+
 func (runner *completionRunner) RunSession(
 	_ context.Context, session string, args ...string,
 ) ([]byte, []byte, error) {

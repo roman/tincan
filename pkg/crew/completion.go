@@ -234,6 +234,30 @@ func (completion *Completion) Pending() bool { return completion.markerInfo != n
 // Mode returns the recorded transition for a pending completion.
 func (completion *Completion) Mode() CompletionMode { return completion.marker.Mode }
 
+// Accept records the selected result before pane cleanup begins.
+func (completion *Completion) Accept(mode CompletionMode) error {
+	if completion == nil || !validCompletionMode(mode) {
+		return ErrInvalidRecord
+	}
+	if completion.Pending() {
+		if completion.marker.Mode != mode {
+			return ErrConflict
+		}
+		return completion.checkCurrent()
+	}
+	if completion.metaInfo == nil || completion.recordInfo == nil {
+		return ErrStaleRecord
+	}
+	if err := completion.checkCurrent(); err != nil {
+		return err
+	}
+	completion.marker = completionMarker{
+		TaskID: completion.id.String(), SpawnGeneration: completion.record.SpawnGeneration,
+		Session: completion.record.HerdrSession, Pane: completion.record.PaneID, Mode: mode,
+	}
+	return completion.publishMarker()
+}
+
 // Retire confirms the exact pane is gone, records intent, then removes both task records.
 func (completion *Completion) Retire(
 	ctx context.Context, client herdr.Client, mode CompletionMode,
@@ -263,14 +287,8 @@ func (completion *Completion) Retire(
 	if err := completion.checkCurrent(); err != nil {
 		return err
 	}
-	if !completion.Pending() {
-		completion.marker = completionMarker{
-			TaskID: completion.id.String(), SpawnGeneration: completion.record.SpawnGeneration,
-			Session: completion.record.HerdrSession, Pane: completion.record.PaneID, Mode: mode,
-		}
-		if err := completion.publishMarker(); err != nil {
-			return err
-		}
+	if err := completion.Accept(mode); err != nil {
+		return err
 	}
 	if err := completion.checkCurrent(); err != nil {
 		return err
