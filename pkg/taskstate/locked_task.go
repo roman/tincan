@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 
 	"github.com/roman/tincan/pkg/firstmate"
@@ -16,10 +17,22 @@ type LockedTask struct {
 	active  bool
 	failure error
 	publish func(Task) error
+	check   func() error
 }
 
 // Current returns the most recently published task.
 func (task *LockedTask) Current() Task { return task.current }
+
+// CheckCurrent verifies the pinned binding without publishing a task record.
+func (task *LockedTask) CheckCurrent() error {
+	if task == nil || !task.active || task.check == nil {
+		return ErrInvalidTask
+	}
+	if task.failure != nil {
+		return task.failure
+	}
+	return task.check()
+}
 
 // Apply publishes a transition before returning, including unchanged records.
 // New worker identities require Store.ReserveAdoption's global reservation lock.
@@ -100,7 +113,37 @@ func (store *Store) withTaskPinned(
 		if err != nil {
 			return err
 		}
+		selectedRoot, err := root.Stat(".")
+		if err != nil {
+			return err
+		}
 		locked := &LockedTask{current: current, active: true}
+		locked.check = func() error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			currentRoot, err := os.Lstat(store.path)
+			if err != nil || !currentRoot.IsDir() || !os.SameFile(selectedRoot, currentRoot) {
+				return fmt.Errorf("%w: task-state root changed", ErrInvalidTask)
+			}
+			currentDirectory, err := root.Lstat("records")
+			if err != nil || !os.SameFile(selectedDirectory, currentDirectory) {
+				return fmt.Errorf("%w: task records directory changed", ErrInvalidTask)
+			}
+			selectedTask, selected, err := readRecord(records, id.String())
+			if err != nil || !os.SameFile(selectedRecord, selected) {
+				return fmt.Errorf("%w: task record changed", ErrInvalidTask)
+			}
+			currentData, err := locked.current.Encode()
+			if err != nil {
+				return err
+			}
+			selectedData, err := selectedTask.Encode()
+			if err != nil || !bytes.Equal(currentData, selectedData) {
+				return fmt.Errorf("%w: task record contents changed", ErrInvalidTask)
+			}
+			return nil
+		}
 		defer func() { locked.active = false }()
 		locked.publish = func(candidate Task) error {
 			if err := ctx.Err(); err != nil {
