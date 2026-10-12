@@ -16,27 +16,57 @@ import (
 
 var ErrIncompatible = errors.New("task-state version is incompatible with this command")
 var ErrLockTimeout = errors.New("task-state version lock timed out")
+var ErrPublicationUnconfirmed = errors.New("task-state version publication requires reconciliation")
+var ErrCleanupUnconfirmed = errors.New("task-state migration cleanup requires reconciliation")
 
 const versionFile = ".task-state-version"
+const pendingFile = ".task-state-migration-pending"
 const lockSuffix = ".task-state-version.lock"
 const lockTimeout = 2 * time.Second
 
 // Guard holds a shared command lease or an exclusive migration lease.
 type Guard struct {
-	root      *os.Root
-	parent    *os.Root
-	lock      *os.File
-	exclusive bool
+	root          *os.Root
+	parent        *os.Root
+	lock          *os.File
+	exclusive     bool
+	syncDirectory func(*os.Root) error
 }
 
 // AcquireLegacy holds a shared lease while a version 1 command uses task state.
 func AcquireLegacy(ctx context.Context, root string) (*Guard, error) {
-	return acquireVersionOne(ctx, root, syscall.LOCK_SH)
+	return acquireVersion(ctx, root, syscall.LOCK_SH, 1)
+}
+
+// AcquireVersionTwo holds a shared lease while a version 2 command uses task state.
+func AcquireVersionTwo(ctx context.Context, root string) (*Guard, error) {
+	return acquireVersion(ctx, root, syscall.LOCK_SH, 2)
+}
+
+// AcquireRecovery holds an exclusive lease while a pending migration is repaired.
+func AcquireRecovery(ctx context.Context, root string) (*Guard, error) {
+	guard, err := acquire(ctx, root, syscall.LOCK_EX)
+	if err != nil {
+		return nil, err
+	}
+	pending, err := guard.readPending()
+	if err != nil || !pending {
+		guard.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, ErrIncompatible
+	}
+	if _, err := guard.readVersion(); err != nil {
+		guard.Close()
+		return nil, err
+	}
+	return guard, nil
 }
 
 // AcquireMigration holds an exclusive lease for a version switch.
 func AcquireMigration(ctx context.Context, root string) (*Guard, error) {
-	guard, err := acquireVersionOne(ctx, root, syscall.LOCK_EX)
+	guard, err := acquireVersion(ctx, root, syscall.LOCK_EX, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -47,20 +77,42 @@ func AcquireMigration(ctx context.Context, root string) (*Guard, error) {
 	return guard, nil
 }
 
-func acquireVersionOne(ctx context.Context, path string, mode int) (*Guard, error) {
+func acquireVersion(ctx context.Context, path string, mode, expected int) (*Guard, error) {
 	guard, err := acquire(ctx, path, mode)
 	if err != nil {
 		return nil, err
 	}
 	version, err := guard.readVersion()
-	if err != nil || version != 1 {
+	if err != nil || version != expected {
 		guard.Close()
 		if err != nil {
 			return nil, err
 		}
-		return nil, fmt.Errorf("%w: found version %d; requires version 1", ErrIncompatible, version)
+		return nil, fmt.Errorf(
+			"%w: found version %d; requires version %d",
+			ErrIncompatible,
+			version,
+			expected,
+		)
+	}
+	pending, err := guard.readPending()
+	if err != nil || pending {
+		guard.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: task-state migration requires recovery", ErrIncompatible)
 	}
 	return guard, nil
+}
+
+// StateRoot returns the pinned directory while the guard remains open.
+// Callers must not close the returned handle.
+func (guard *Guard) StateRoot() *os.Root {
+	if guard == nil {
+		return nil
+	}
+	return guard.root
 }
 
 func acquire(ctx context.Context, path string, mode int) (*Guard, error) {
@@ -78,7 +130,10 @@ func acquire(ctx context.Context, path string, mode int) (*Guard, error) {
 		parent.Close()
 		return nil, err
 	}
-	guard := &Guard{parent: parent, lock: lock, exclusive: mode == syscall.LOCK_EX}
+	guard := &Guard{
+		parent: parent, lock: lock, exclusive: mode == syscall.LOCK_EX,
+		syncDirectory: syncStateDirectory,
+	}
 	selected, err := parent.Lstat(lockName)
 	if err != nil {
 		guard.Close()
@@ -89,9 +144,15 @@ func acquire(ctx context.Context, path string, mode int) (*Guard, error) {
 		guard.Close()
 		return nil, fmt.Errorf("invalid task-state version lock")
 	}
-	deadline, cancel := context.WithTimeout(ctx, lockTimeout)
-	defer cancel()
+	timer := time.NewTimer(lockTimeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
 	for {
+		if err := ctx.Err(); err != nil {
+			guard.Close()
+			return nil, err
+		}
 		err = syscall.Flock(int(lock.Fd()), mode|syscall.LOCK_NB)
 		if err == nil {
 			break
@@ -101,14 +162,21 @@ func acquire(ctx context.Context, path string, mode int) (*Guard, error) {
 			return nil, err
 		}
 		select {
-		case <-deadline.Done():
+		case <-ctx.Done():
 			guard.Close()
-			if errors.Is(deadline.Err(), context.DeadlineExceeded) {
-				return nil, ErrLockTimeout
+			return nil, ctx.Err()
+		case <-timer.C:
+			guard.Close()
+			if err := ctx.Err(); err != nil {
+				return nil, err
 			}
-			return nil, deadline.Err()
-		case <-time.After(10 * time.Millisecond):
+			return nil, ErrLockTimeout
+		case <-ticker.C:
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		guard.Close()
+		return nil, err
 	}
 	selectedRoot, err := parent.Lstat(baseName)
 	if errors.Is(err, os.ErrNotExist) {
@@ -174,6 +242,39 @@ func (guard *Guard) readVersion() (int, error) {
 	}
 }
 
+func (guard *Guard) readPending() (bool, error) {
+	if guard.root == nil {
+		return false, nil
+	}
+	selected, err := guard.root.Lstat(pendingFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !selected.Mode().IsRegular() {
+		return false, ErrIncompatible
+	}
+	file, err := guard.root.Open(pendingFile)
+	if err != nil {
+		return false, err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(selected, opened) {
+		return false, ErrIncompatible
+	}
+	data, err := io.ReadAll(io.LimitReader(file, 3))
+	if err != nil {
+		return false, err
+	}
+	if string(data) != "2\n" {
+		return false, ErrIncompatible
+	}
+	return true, nil
+}
+
 // PublishVersion commits a new marker while the migration lease is held.
 func (guard *Guard) PublishVersion(version int) error {
 	if guard == nil || !guard.exclusive || version != 2 {
@@ -185,6 +286,12 @@ func (guard *Guard) PublishVersion(version int) error {
 	}
 	if current != 1 && current != version {
 		return ErrIncompatible
+	}
+	if err := guard.preparePending(); err != nil {
+		return err
+	}
+	if current == version {
+		return guard.ConfirmPublishedVersion()
 	}
 	name := ".task-state-version-" + rand.Text()
 	temporary, err := guard.root.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -206,7 +313,82 @@ func (guard *Guard) PublishVersion(version int) error {
 	if err := guard.root.Rename(name, versionFile); err != nil {
 		return err
 	}
-	directory, err := guard.root.Open(".")
+	if err := guard.syncDirectory(guard.root); err != nil {
+		return errors.Join(ErrPublicationUnconfirmed, err)
+	}
+	return guard.finishPending()
+}
+
+// ConfirmPublishedVersion syncs an already visible version 2 marker.
+func (guard *Guard) ConfirmPublishedVersion() error {
+	if guard == nil || !guard.exclusive || guard.root == nil {
+		return ErrIncompatible
+	}
+	version, err := guard.readVersion()
+	if err != nil {
+		return err
+	}
+	if version != 2 {
+		return ErrIncompatible
+	}
+	pending, err := guard.readPending()
+	if err != nil {
+		return err
+	}
+	if !pending {
+		return ErrIncompatible
+	}
+	if err := guard.syncDirectory(guard.root); err != nil {
+		return errors.Join(ErrPublicationUnconfirmed, err)
+	}
+	return guard.finishPending()
+}
+
+func (guard *Guard) preparePending() error {
+	pending, err := guard.readPending()
+	if err != nil {
+		return err
+	}
+	if !pending {
+		name := ".task-state-migration-" + rand.Text()
+		file, err := guard.root.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			return err
+		}
+		defer guard.root.Remove(name)
+		if _, err := file.WriteString("2\n"); err != nil {
+			file.Close()
+			return err
+		}
+		if err := file.Sync(); err != nil {
+			file.Close()
+			return err
+		}
+		if err := file.Close(); err != nil {
+			return err
+		}
+		if err := guard.root.Link(name, pendingFile); err != nil {
+			return err
+		}
+	}
+	if err := guard.syncDirectory(guard.root); err != nil {
+		return errors.Join(ErrPublicationUnconfirmed, err)
+	}
+	return nil
+}
+
+func (guard *Guard) finishPending() error {
+	if err := guard.root.Remove(pendingFile); err != nil {
+		return errors.Join(ErrCleanupUnconfirmed, err)
+	}
+	if err := guard.syncDirectory(guard.root); err != nil {
+		return errors.Join(ErrCleanupUnconfirmed, err)
+	}
+	return nil
+}
+
+func syncStateDirectory(root *os.Root) error {
+	directory, err := root.Open(".")
 	if err != nil {
 		return err
 	}

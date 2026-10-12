@@ -45,6 +45,33 @@ func TestMigrationGuardRejectsAbsentRoot(t *testing.T) {
 	}
 }
 
+func TestVersionTwoGuardRequiresPublishedMarker(t *testing.T) {
+	root := t.TempDir()
+	if _, err := AcquireVersionTwo(context.Background(), root); !errors.Is(err, ErrIncompatible) {
+		t.Fatalf("version 2 command accepted unmarked state: %v", err)
+	}
+	migration, err := AcquireMigration(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := migration.PublishVersion(2); err != nil {
+		t.Fatal(err)
+	}
+	if err := migration.Close(); err != nil {
+		t.Fatal(err)
+	}
+	guard, err := AcquireVersionTwo(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if guard.StateRoot() == nil {
+		t.Fatal("version 2 guard has no selected state directory")
+	}
+	if err := guard.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLegacyGuardRejectsSymlinkRoot(t *testing.T) {
 	parent := t.TempDir()
 	target := filepath.Join(parent, "target")
@@ -78,7 +105,7 @@ func TestRootReplacementDoesNotSplitVersionLock(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
 	defer cancel()
-	if _, err := AcquireMigration(ctx, root); !errors.Is(err, ErrLockTimeout) {
+	if _, err := AcquireMigration(ctx, root); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("migration acquired a split lock: %v", err)
 	}
 	if err := legacy.Close(); err != nil {
@@ -105,7 +132,7 @@ func TestMigrationGuardWaitsForReaders(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
 	defer cancel()
-	if _, err := AcquireMigration(ctx, root); !errors.Is(err, ErrLockTimeout) {
+	if _, err := AcquireMigration(ctx, root); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("migration acquired lock while readers ran: %v", err)
 	}
 	if err := first.Close(); err != nil {
@@ -136,6 +163,133 @@ func TestMigrationGuardWaitsForReaders(t *testing.T) {
 	}
 }
 
+func TestVersionGuardRespectsCancelledContextBeforeFreeLock(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	root := t.TempDir()
+	if guard, err := AcquireLegacy(ctx, root); !errors.Is(err, context.Canceled) {
+		if guard != nil {
+			guard.Close()
+		}
+		t.Fatalf("AcquireLegacy error = %v, want cancellation", err)
+	}
+}
+
+func TestMigrationCanConfirmMarkerAfterSyncFailure(t *testing.T) {
+	root := t.TempDir()
+	migration, err := AcquireMigration(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	syncFailure := errors.New("injected directory sync failure")
+	syncCount := 0
+	migration.syncDirectory = func(root *os.Root) error {
+		syncCount++
+		if syncCount == 2 {
+			return syncFailure
+		}
+		return syncStateDirectory(root)
+	}
+	if err := migration.PublishVersion(2); !errors.Is(err, ErrPublicationUnconfirmed) ||
+		!errors.Is(err, syncFailure) {
+		t.Fatalf("PublishVersion error = %v, want unconfirmed marker and sync cause", err)
+	}
+	if err := migration.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AcquireMigration(context.Background(), root); !errors.Is(err, ErrIncompatible) {
+		t.Fatalf("version 1 migration resumed after marker publication: %v", err)
+	}
+	if _, err := AcquireVersionTwo(context.Background(), root); !errors.Is(err, ErrIncompatible) {
+		t.Fatalf("version 2 command entered pending migration: %v", err)
+	}
+	recovery, err := AcquireRecovery(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := recovery.ConfirmPublishedVersion(); err != nil {
+		t.Fatal(err)
+	}
+	if err := recovery.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ready, err := AcquireVersionTwo(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready.Close()
+}
+
+func TestMigrationRecoveryBeforeVersionMarkerChanges(t *testing.T) {
+	root := t.TempDir()
+	migration, err := AcquireMigration(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	syncFailure := errors.New("pending marker sync failure")
+	migration.syncDirectory = func(*os.Root) error { return syncFailure }
+	if err := migration.PublishVersion(2); !errors.Is(err, syncFailure) ||
+		!errors.Is(err, ErrPublicationUnconfirmed) {
+		t.Fatalf("PublishVersion error = %v, want unconfirmed pending publication", err)
+	}
+	if err := migration.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AcquireLegacy(context.Background(), root); !errors.Is(err, ErrIncompatible) {
+		t.Fatalf("legacy command entered pending migration: %v", err)
+	}
+	recovery, err := AcquireRecovery(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := recovery.PublishVersion(2); err != nil {
+		t.Fatal(err)
+	}
+	if err := recovery.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ready, err := AcquireVersionTwo(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready.Close()
+}
+
+func TestMigrationReportsCleanupSyncFailureAfterVersionTwoIsReady(t *testing.T) {
+	root := t.TempDir()
+	migration, err := AcquireMigration(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	syncFailure := errors.New("cleanup sync failure")
+	syncCount := 0
+	migration.syncDirectory = func(root *os.Root) error {
+		syncCount++
+		if syncCount == 3 {
+			return syncFailure
+		}
+		return syncStateDirectory(root)
+	}
+	if err := migration.PublishVersion(2); !errors.Is(err, ErrCleanupUnconfirmed) ||
+		!errors.Is(err, syncFailure) {
+		t.Fatalf("PublishVersion error = %v, want unconfirmed cleanup", err)
+	}
+	if err := migration.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, pendingFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("pending marker after removal = %v, want absent", err)
+	}
+	ready, err := AcquireVersionTwo(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready.Close()
+	if _, err := AcquireRecovery(context.Background(), root); !errors.Is(err, ErrIncompatible) {
+		t.Fatalf("recovery accepted removed marker: %v", err)
+	}
+}
+
 func TestSharedGuardCannotPublishVersion(t *testing.T) {
 	root := t.TempDir()
 	guard, err := AcquireLegacy(context.Background(), root)
@@ -152,7 +306,7 @@ func TestSharedGuardCannotPublishVersion(t *testing.T) {
 }
 
 func TestSymlinkedGateFilesAreRejected(t *testing.T) {
-	for _, name := range []string{lockSuffix, versionFile} {
+	for _, name := range []string{lockSuffix, versionFile, pendingFile} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			selected := filepath.Join(root, name)
@@ -160,7 +314,11 @@ func TestSymlinkedGateFilesAreRejected(t *testing.T) {
 				selected = filepath.Join(filepath.Dir(root), "."+filepath.Base(root)+lockSuffix)
 			}
 			target := filepath.Join(filepath.Dir(selected), "target")
-			if err := os.WriteFile(target, []byte("1\n"), 0o600); err != nil {
+			content := "1\n"
+			if name == pendingFile {
+				content = "2\n"
+			}
+			if err := os.WriteFile(target, []byte(content), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.Symlink("target", selected); err != nil {
@@ -181,7 +339,10 @@ func TestMalformedVersionRefusesLegacy(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, versionFile), []byte(version), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := AcquireLegacy(context.Background(), root); !errors.Is(err, ErrIncompatible) {
+			if _, err := AcquireLegacy(context.Background(), root); !errors.Is(
+				err,
+				ErrIncompatible,
+			) {
 				t.Fatalf("legacy command accepted version %q: %v", version, err)
 			}
 		})

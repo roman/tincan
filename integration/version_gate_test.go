@@ -28,7 +28,14 @@ func TestBacklogWriterKeepsVersionLeaseUntilExit(t *testing.T) {
 		t.Fatal(err)
 	}
 	backlogCommand := filepath.Join(directory, "concierge-backlog")
-	build := exec.Command("go", "build", "-buildvcs=false", "-o", backlogCommand, "./cmd/concierge-backlog")
+	build := exec.Command(
+		"go",
+		"build",
+		"-buildvcs=false",
+		"-o",
+		backlogCommand,
+		"./cmd/concierge-backlog",
+	)
 	build.Dir = filepath.Dir(workingDirectory)
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build backlog command: %v: %s", err, output)
@@ -71,7 +78,10 @@ func TestBacklogWriterKeepsVersionLeaseUntilExit(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
 	defer cancel()
-	if _, err := stateversion.AcquireMigration(ctx, stateRoot); !errors.Is(err, stateversion.ErrLockTimeout) {
+	if _, err := stateversion.AcquireMigration(ctx, stateRoot); !errors.Is(
+		err,
+		context.DeadlineExceeded,
+	) {
 		t.Fatalf("migration acquired lock while writer ran: %v", err)
 	}
 	if err := os.WriteFile(release, nil, 0o600); err != nil {
@@ -127,12 +137,42 @@ func TestLegacyTaskCommandsRefuseVersionTwo(t *testing.T) {
 	}{
 		{"concierge-backlog", []string{"--root", stateRoot, "list"}},
 		{"concierge-brief", []string{"--root", stateRoot, "--message-root", messageRoot}},
-		{"concierge-supervise", []string{"--root", stateRoot, "--message-root", messageRoot, "--task", "task-1"}},
+		{
+			"concierge-supervise",
+			[]string{"--root", stateRoot, "--message-root", messageRoot, "--task", "task-1"},
+		},
 		{"concierge-task", []string{"--root", stateRoot, "list"}},
 		{"concierge-worker", []string{"--root", stateRoot, "list"}},
-		{"tincan-task-send", []string{"--task-root", stateRoot, "--message-root", messageRoot, "task-1", "--body-file", bodyFile}},
-		{"tincan-task-receive", []string{"--task-root", stateRoot, "--message-root", messageRoot, "read", "task-1", "k-1", "--generation", "gen-1"}},
-		{"tincan-task-reply", []string{"--task-root", stateRoot, "--message-root", messageRoot, "check", "k-1"}},
+		{
+			"tincan-task-send",
+			[]string{
+				"--task-root",
+				stateRoot,
+				"--message-root",
+				messageRoot,
+				"task-1",
+				"--body-file",
+				bodyFile,
+			},
+		},
+		{
+			"tincan-task-receive",
+			[]string{
+				"--task-root",
+				stateRoot,
+				"--message-root",
+				messageRoot,
+				"read",
+				"task-1",
+				"k-1",
+				"--generation",
+				"gen-1",
+			},
+		},
+		{
+			"tincan-task-reply",
+			[]string{"--task-root", stateRoot, "--message-root", messageRoot, "check", "k-1"},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.command, func(t *testing.T) {

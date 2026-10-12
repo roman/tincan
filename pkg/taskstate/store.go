@@ -1,0 +1,307 @@
+package taskstate
+
+import (
+	"context"
+	"crypto/rand"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"syscall"
+	"time"
+
+	"github.com/roman/tincan/pkg/firstmate"
+	"github.com/roman/tincan/pkg/stateversion"
+)
+
+var ErrStoreLockTimeout = errors.New("task record lock timed out")
+var ErrPublicationUnconfirmed = errors.New("task record publication requires reconciliation")
+
+const storeLockTimeout = 2 * time.Second
+
+// Store selects a version 2 task-state root without changing it.
+type Store struct {
+	path          string
+	syncDirectory func(*os.Root) error
+}
+
+// NewStore validates the directory path used by all task operations.
+func NewStore(path string) (*Store, error) {
+	root, err := firstmate.ParseAbsolutePath(path)
+	if err != nil {
+		return nil, err
+	}
+	return &Store{path: root.String(), syncDirectory: syncDirectory}, nil
+}
+
+// Create writes a task only when its ID has no record.
+func (store *Store) Create(ctx context.Context, task Task) error {
+	data, err := task.Encode()
+	if err != nil {
+		return err
+	}
+	id, err := parseStoreTaskID(task.ID())
+	if err != nil {
+		return err
+	}
+	return store.withVersionTwo(ctx, func(root *os.Root) error {
+		return withTaskLock(ctx, root, id, func() error {
+			records, selected, err := openRecords(root)
+			if err != nil {
+				return err
+			}
+			defer records.Close()
+			return writeRecord(root, records, selected, id.String(), data, nil, store.syncDirectory)
+		})
+	})
+}
+
+// Read returns one complete task from the selected version 2 root.
+func (store *Store) Read(ctx context.Context, taskID string) (Task, error) {
+	id, err := parseStoreTaskID(taskID)
+	if err != nil {
+		return Task{}, err
+	}
+	var task Task
+	err = store.withVersionTwo(ctx, func(root *os.Root) error {
+		records, _, err := openRecords(root)
+		if err != nil {
+			return err
+		}
+		defer records.Close()
+		task, _, err = readRecord(records, id.String())
+		return err
+	})
+	return task, err
+}
+
+// Update serializes a task transition and publishes its complete record.
+func (store *Store) Update(
+	ctx context.Context, taskID string, transition func(Task) (Task, error),
+) (Task, error) {
+	if transition == nil {
+		return Task{}, ErrInvalidTask
+	}
+	id, err := parseStoreTaskID(taskID)
+	if err != nil {
+		return Task{}, err
+	}
+	var updated Task
+	err = store.withVersionTwo(ctx, func(root *os.Root) error {
+		return withTaskLock(ctx, root, id, func() error {
+			records, selectedDirectory, err := openRecords(root)
+			if err != nil {
+				return err
+			}
+			defer records.Close()
+			current, selectedRecord, err := readRecord(records, id.String())
+			if err != nil {
+				return err
+			}
+			updated, err = transition(current)
+			if err != nil {
+				return err
+			}
+			if updated.ID() != id.String() {
+				return ErrInvalidTask
+			}
+			data, err := updated.Encode()
+			if err != nil {
+				return err
+			}
+			return writeRecord(root, records, selectedDirectory, id.String(), data,
+				selectedRecord, store.syncDirectory)
+		})
+	})
+	if err != nil && !errors.Is(err, ErrPublicationUnconfirmed) {
+		return Task{}, err
+	}
+	return updated, err
+}
+
+func parseStoreTaskID(value string) (firstmate.TaskID, error) {
+	id, err := firstmate.ParseTaskID(value)
+	if err != nil || len(value) > maximumTaskIDBytes {
+		return firstmate.TaskID{}, ErrInvalidTask
+	}
+	return id, nil
+}
+
+func (store *Store) withVersionTwo(ctx context.Context, operation func(*os.Root) error) error {
+	if store == nil || store.path == "" {
+		return ErrInvalidTask
+	}
+	guard, err := stateversion.AcquireVersionTwo(ctx, store.path)
+	if err != nil {
+		return err
+	}
+	defer guard.Close()
+	return operation(guard.StateRoot())
+}
+
+func openRecords(root *os.Root) (*os.Root, os.FileInfo, error) {
+	selected, err := root.Lstat("records")
+	if err != nil {
+		return nil, nil, err
+	}
+	if !selected.IsDir() {
+		return nil, nil, fmt.Errorf("%w: task records path is not a directory", ErrInvalidTask)
+	}
+	records, err := root.OpenRoot("records")
+	if err != nil {
+		return nil, nil, err
+	}
+	opened, err := records.Stat(".")
+	if err != nil || !os.SameFile(selected, opened) {
+		records.Close()
+		return nil, nil, fmt.Errorf(
+			"%w: task records directory changed during open",
+			ErrInvalidTask,
+		)
+	}
+	return records, selected, nil
+}
+
+func withTaskLock(
+	ctx context.Context, root *os.Root, id firstmate.TaskID, operation func() error,
+) error {
+	name := ".task-" + id.String() + ".lock"
+	lock, err := root.OpenFile(name, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	selected, err := root.Lstat(name)
+	if err != nil {
+		return err
+	}
+	opened, err := lock.Stat()
+	if err != nil || !selected.Mode().IsRegular() || !os.SameFile(selected, opened) {
+		return fmt.Errorf("%w: task record lock is not a regular file", ErrInvalidTask)
+	}
+	timer := time.NewTimer(storeLockTimeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return ErrStoreLockTimeout
+		case <-ticker.C:
+		}
+	}
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return operation()
+}
+
+func readRecord(root *os.Root, taskID string) (Task, os.FileInfo, error) {
+	name := taskID + ".json"
+	selected, err := root.Lstat(name)
+	if err != nil {
+		return Task{}, nil, err
+	}
+	if !selected.Mode().IsRegular() {
+		return Task{}, nil, fmt.Errorf("%w: task record is not a regular file", ErrInvalidTask)
+	}
+	file, err := root.Open(name)
+	if err != nil {
+		return Task{}, nil, err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(selected, opened) {
+		return Task{}, nil, fmt.Errorf("%w: task record changed during open", ErrInvalidTask)
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maximumTaskBytes+1))
+	if err != nil {
+		return Task{}, nil, err
+	}
+	task, err := Decode(data)
+	if err != nil || task.ID() != taskID {
+		return Task{}, nil, fmt.Errorf("%w: task record does not match %s", ErrInvalidTask, taskID)
+	}
+	return task, opened, nil
+}
+
+func writeRecord(
+	stateRoot, records *os.Root, selectedDirectory os.FileInfo,
+	taskID string, data []byte, previous os.FileInfo,
+	syncDirectory func(*os.Root) error,
+) error {
+	name := taskID + ".json"
+	temporaryName := ".writing-" + rand.Text()
+	temporary, err := records.OpenFile(temporaryName, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer records.Remove(temporaryName)
+	if _, err := temporary.Write(data); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	currentDirectory, err := stateRoot.Lstat("records")
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(selectedDirectory, currentDirectory) {
+		return fmt.Errorf("%w: task records directory changed before publish", ErrInvalidTask)
+	}
+	currentRecord, err := records.Lstat(name)
+	if previous == nil && err == nil {
+		return fmt.Errorf("%w: task record already exists", os.ErrExist)
+	}
+	if previous == nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if previous != nil && (err != nil || !os.SameFile(previous, currentRecord)) {
+		return fmt.Errorf("%w: task record changed before publish", ErrInvalidTask)
+	}
+	if err := records.Rename(temporaryName, name); err != nil {
+		return err
+	}
+	if err := syncDirectory(records); err != nil {
+		return errors.Join(ErrPublicationUnconfirmed, err)
+	}
+	currentDirectory, err = stateRoot.Lstat("records")
+	if err != nil {
+		return errors.Join(ErrPublicationUnconfirmed, err)
+	}
+	if !os.SameFile(selectedDirectory, currentDirectory) {
+		return fmt.Errorf("%w: records directory changed after publish", ErrPublicationUnconfirmed)
+	}
+	return nil
+}
+
+func syncDirectory(records *os.Root) error {
+	directory, err := records.Open(".")
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
+}

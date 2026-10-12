@@ -21,6 +21,7 @@ var ErrInvalidTask = errors.New("invalid task record")
 
 const formatVersion = 2
 const maximumTaskBytes = 1 << 20
+const maximumTaskIDBytes = 200
 
 // State is the task's queue position. A hold is recorded separately.
 type State string
@@ -264,6 +265,7 @@ func validate(selected record) error {
 
 func validDefinition(input Definition) bool {
 	if _, err := firstmate.ParseTaskID(input.ID); err != nil ||
+		len(input.ID) > maximumTaskIDBytes ||
 		input.ID[0] == '.' || input.ID[0] == '_' || input.ID[0] == '-' {
 		return false
 	}
@@ -346,7 +348,10 @@ func validAtom(value string, allowColon bool) bool {
 		return false
 	}
 	for _, character := range value {
-		if strings.ContainsRune("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._@%+-", character) ||
+		if strings.ContainsRune(
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._@%+-",
+			character,
+		) ||
 			(allowColon && character == ':') {
 			continue
 		}
@@ -371,7 +376,8 @@ func validDate(value string) bool {
 }
 
 func validHoldKind(value string) bool {
-	return value == "" || slices.Contains([]string{"captain", "external", "load", "parked", "future"}, value)
+	return value == "" ||
+		slices.Contains([]string{"captain", "external", "load", "parked", "future"}, value)
 }
 
 func validDependencyType(value string) bool {
