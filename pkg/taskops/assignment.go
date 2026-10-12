@@ -51,11 +51,9 @@ func (worker *SupervisedWorker) sendAssignment(
 	service, taskID := worker.service, worker.taskID
 	var result AssignmentResult
 	_, err := service.store.WithTask(ctx, taskID, func(task *taskstate.LockedTask) error {
-		snapshot := task.Current().Snapshot()
-		bound := snapshot.Worker
-		if snapshot.State != taskstate.InFlight || snapshot.Completion != nil || bound == nil ||
-			bound.PendingAdoption || bound.PendingGeneration != "" || bound.PendingLaunch != "" {
-			return taskstate.ErrInvalidTransition
+		bound, err := assignmentWorker(task.Current())
+		if err != nil {
+			return err
 		}
 		envelope, err := json.Marshal(taskprotocol.Assignment{
 			Kind: "task-assignment", State: filepath.Join(service.root, "tasks"),
@@ -88,13 +86,23 @@ func (worker *SupervisedWorker) sendAssignment(
 			result.Notification = NotificationAcknowledged
 			return nil
 		}
-		result.NotificationError = worker.promptBoundWorker(ctx, *bound)
+		result.NotificationError = worker.promptBoundWorker(ctx, bound)
 		if result.NotificationError == nil {
 			result.Notification = NotificationSent
 		}
 		return nil
 	})
 	return result, err
+}
+
+func assignmentWorker(task taskstate.Task) (taskstate.Worker, error) {
+	snapshot := task.Snapshot()
+	bound := snapshot.Worker
+	if snapshot.State != taskstate.InFlight || snapshot.Completion != nil || bound == nil ||
+		bound.PendingAdoption || bound.PendingGeneration != "" || bound.PendingLaunch != "" {
+		return taskstate.Worker{}, taskstate.ErrInvalidTransition
+	}
+	return *bound, nil
 }
 
 func (worker *SupervisedWorker) promptBoundWorker(
