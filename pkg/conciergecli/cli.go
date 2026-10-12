@@ -11,13 +11,31 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/roman/tincan/pkg/firstmate"
+	"github.com/roman/tincan/pkg/taskops"
 )
 
 const version = "0.1.0"
 
+const cliHelp = "commands: brief [--limit N], backlog, worker list|show, task list|pending; global flags: --root, --message-root, --recipient, --help; run concierge COMMAND --help for arguments"
+
 type cli struct {
-	Root    string          `help:"Absolute Concierge state root; defaults to .concierge in the current directory." env:"CONCIERGE_HOME"`
-	Backlog backlogCommands `cmd:"" help:"Queue and inspect authoritative task records."`
+	Root        string          `help:"Absolute Concierge state root; defaults to .concierge in the current directory." env:"CONCIERGE_HOME"`
+	MessageRoot string          `help:"Absolute message root; defaults to .tincan in the current directory." env:"TINCAN_HOME"`
+	Recipient   string          `help:"Primary inbox recipient." default:"${primaryRecipient}"`
+	Backlog     backlogCommands `cmd:"" help:"Queue and inspect authoritative task records."`
+	Worker      struct {
+		List struct{} `cmd:"" help:"List confirmed workers and pending adoptions."`
+		Show struct {
+			TaskID string `arg:"" help:"Task ID."`
+		} `cmd:"" help:"Show a worker's launch identity and recovery markers."`
+	} `cmd:"" help:"Inspect local worker bindings."`
+	Task struct {
+		List    struct{} `cmd:"" help:"List tasks with confirmed worker bindings."`
+		Pending struct{} `cmd:"" help:"List accepted results awaiting completion recovery."`
+	} `cmd:"" help:"Inspect local tasks and pending completions."`
+	Brief struct {
+		Limit int `help:"Maximum rows from each source." default:"10"`
+	} `cmd:"" default:"1" help:"Show root context from task records and pending messages."`
 }
 
 // Run executes Concierge without exiting the caller's process.
@@ -36,17 +54,18 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		kong.Name("concierge"),
 		kong.Description("Local task intake and worker supervision."),
 		kong.Writers(stdout, stderr),
+		kong.Vars{"primaryRecipient": taskops.DefaultPrimaryRecipient},
 		kong.Exit(func(code int) { exitCode = code }),
 	)
 	if err != nil {
-		return fail(stdout, 2, err, backlogHelp)
+		return fail(stdout, 2, err, cliHelp)
 	}
 	selected, err := parser.Parse(args)
 	if exitCode >= 0 {
 		return exitCode
 	}
 	if err != nil {
-		return fail(stdout, 2, err, backlogHelp)
+		return fail(stdout, 2, err, cliHelp)
 	}
 	root := command.Root
 	if root == "" {
@@ -59,7 +78,14 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	if _, err := firstmate.ParseAbsolutePath(root); err != nil {
 		return fail(stdout, 2, err, "use an absolute, clean --root path")
 	}
-	return command.Backlog.run(ctx, root, selected.Command(), stdin, stdout)
+	switch selected.Command() {
+	case "worker list", "worker show <task-id>", "task list", "task pending":
+		return runRecordView(ctx, root, selected.Command(), command.Worker.Show.TaskID, stdout)
+	case "brief":
+		return command.runBrief(ctx, root, stdout)
+	default:
+		return command.Backlog.run(ctx, root, selected.Command(), stdin, stdout)
+	}
 }
 
 func quote(value string) string {
