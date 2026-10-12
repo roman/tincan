@@ -163,3 +163,84 @@ func TestStateOutputFailure(t *testing.T) {
 		t.Fatalf("code %d want 1", code)
 	}
 }
+
+func TestStateInitFreshRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	t.Setenv("CONCIERGE_HOME", root)
+	t.Setenv("TINCAN_HOME", "unused-relative-path")
+	for range 2 {
+		var output bytes.Buffer
+		code := Run(
+			context.Background(),
+			[]string{"--recipient", "../unused", "state", "init"},
+			nil,
+			&output,
+			io.Discard,
+		)
+		if code != 0 || output.String() != "version: 2\n" {
+			t.Fatalf("code %d output %s", code, &output)
+		}
+	}
+	var output bytes.Buffer
+	code := Run(context.Background(), []string{"task", "list"}, nil, &output, io.Discard)
+	if code != 0 {
+		t.Fatalf("initialized task view: code %d output %s", code, &output)
+	}
+}
+
+func TestStateInitRejectsLegacyAndChecksOutput(t *testing.T) {
+	root, _ := legacyStateFixture(t)
+	var output bytes.Buffer
+	code := Run(
+		context.Background(),
+		[]string{"--root", root, "state", "init"},
+		nil,
+		&output,
+		io.Discard,
+	)
+	if code != 1 || strings.Contains(output.String(), "version:") {
+		t.Fatalf("legacy code %d output %s", code, &output)
+	}
+	fresh := filepath.Join(t.TempDir(), "state")
+	code = Run(
+		context.Background(),
+		[]string{"--root", fresh, "state", "init"},
+		nil,
+		failedOutput{},
+		io.Discard,
+	)
+	if code != 1 {
+		t.Fatalf("writer failure code %d", code)
+	}
+	output.Reset()
+	code = Run(
+		context.Background(),
+		[]string{"--root", fresh, "state", "init"},
+		nil,
+		&output,
+		io.Discard,
+	)
+	if code != 0 || output.String() != "version: 2\n" {
+		t.Fatalf("output failure retry code %d output %s", code, &output)
+	}
+}
+
+func TestStateInitUsage(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args []string
+		code int
+	}{
+		{"help", []string{"--root", "relative", "state", "init", "--help"}, 0},
+		{"relative root", []string{"--root", "relative", "state", "init"}, 2},
+		{"unused backup", []string{"state", "init", "--backup", "/tmp/unused"}, 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			code := Run(context.Background(), test.args, nil, &output, io.Discard)
+			if code != test.code {
+				t.Fatalf("code %d output %s", code, &output)
+			}
+		})
+	}
+}

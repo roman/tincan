@@ -14,6 +14,7 @@ type migrationTarget struct {
 }
 
 type stateCommands struct {
+	Init    struct{}        `cmd:"" help:"Initialize fresh task state; stop state writers and installers first."`
 	Backup  migrationTarget `cmd:"" help:"Copy legacy state into a new backup directory; refuse an existing destination."`
 	Migrate migrationTarget `cmd:"" help:"Convert legacy state into version two; verify and reuse an existing backup."`
 	Recover migrationTarget `cmd:"" help:"Finish a pending migration using its verified backup."`
@@ -58,6 +59,21 @@ func (command stateCommands) run(ctx context.Context, root, selected string, out
 			err,
 			"read the state before retrying; the operation completed but its output failed",
 		)
+	}
+	return 0
+}
+
+func runStateInitialization(ctx context.Context, root string, output io.Writer) int {
+	if err := taskstate.Initialize(ctx, root); err != nil {
+		return fail(
+			output,
+			1,
+			err,
+			"stop state writers and installers; initialize a fresh root or migrate legacy state",
+		)
+	}
+	if _, err := fmt.Fprintln(output, "version: 2"); err != nil {
+		return fail(output, 1, err, "retry initialization to confirm its completed state")
 	}
 	return 0
 }
