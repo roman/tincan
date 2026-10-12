@@ -17,9 +17,10 @@ import (
 
 const version = "0.1.0"
 
-const cliHelp = "commands: brief [--limit N], primary claim|verify|release, backlog, worker list|show, task list|pending|send|receive|ack|reply|adopt|stop|cancel; global flags: --root, --message-root, --recipient, --help; run concierge COMMAND --help for arguments"
+const cliHelp = "commands: brief [--limit N], primary claim|verify|release, control status|interrupt|start, backlog, worker list|show, task list|pending|send|receive|ack|reply|adopt|stop|cancel; global flags: --root, --message-root, --recipient, --help; run concierge COMMAND --help for arguments"
 
 type cli struct {
+	Control     controlCommands `cmd:"" help:"Inspect and control live Herdr agents."`
 	Primary     primaryCommands `cmd:"" help:"Manage the root session owner through Linux /proc lifecycle hooks."`
 	Root        string          `help:"Absolute Concierge state root; defaults to .concierge in the current directory." env:"CONCIERGE_HOME"`
 	MessageRoot string          `help:"Absolute message root; defaults to .tincan in the current directory." env:"TINCAN_HOME"`
@@ -65,6 +66,10 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 	if err != nil {
 		return fail(stdout, 2, err, cliHelp)
+	}
+	switch selected.Command() {
+	case "control status <target>", "control interrupt <target>", "control start":
+		return command.Control.run(ctx, selected.Command(), stdout)
 	}
 	if selected.Command() == "backlog finish <task-id>" {
 		if err := validateCompletion(command.Backlog.Finish.Mode, command.Backlog.Finish.ClosedOn); err != nil {
