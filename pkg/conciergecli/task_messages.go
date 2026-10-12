@@ -19,6 +19,14 @@ type assignmentSelection struct {
 }
 
 type taskCommands struct {
+	Stop struct {
+		TaskID     string `arg:"" help:"Task ID."`
+		Generation string `required:"" help:"Worker generation to stop."`
+	} `cmd:"" help:"Close the exact confirmed pane for a worker generation."`
+	Cancel struct {
+		TaskID string `arg:"" help:"Task ID."`
+	} `cmd:"" help:"Release an unbound adoption reservation; reject confirmed or published bindings."`
+
 	Adopt adoptCommand `cmd:"" help:"Verify and bind an existing worker to a queued or running task."`
 
 	Reply replyCommands `cmd:"" help:"Send worker results or check a primary reply."`
