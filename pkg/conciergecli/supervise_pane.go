@@ -11,9 +11,12 @@ import (
 	"github.com/roman/tincan/pkg/supervise"
 )
 
-const supervisionHelp = "concierge supervise [--interval DURATION] [--restart-tolerance N] [--restart-window DURATION] [--herdr PATH] pane --pane PANE --name NAME --kind KIND [--agent-arg ARG...]"
+const supervisionHelp = "concierge supervise task TASK_ID; concierge supervise [--interval DURATION] [--restart-tolerance N] [--restart-window DURATION] [--herdr PATH] pane --pane PANE --name NAME --kind KIND [--agent-arg ARG...]"
 
 type supervisionCommands struct {
+	Task struct {
+		TaskID string `arg:"" help:"Task ID with a confirmed worker binding."`
+	} `cmd:"" help:"Supervise a task and deliver pending inbox notifications."`
 	Interval         time.Duration `help:"Time between health checks." default:"5s"`
 	RestartTolerance int           `help:"Failed checks tolerated per window before supervision stops." default:"5"`
 	RestartWindow    time.Duration `help:"Window for failed monitor checks." default:"1m"`
