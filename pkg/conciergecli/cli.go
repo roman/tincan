@@ -17,9 +17,10 @@ import (
 
 const version = "0.1.0"
 
-const cliHelp = "commands: brief [--limit N], primary claim|verify|release, control status|interrupt|start, supervise pane|task, backlog, worker list|show, task list|pending|send|receive|ack|reply|adopt|stop|cancel; global flags: --root, --message-root, --recipient, --help; run concierge COMMAND --help for arguments"
+const cliHelp = "commands: state backup|migrate|recover, brief [--limit N], primary claim|verify|release, control status|interrupt|start, supervise pane|task, backlog, worker list|show, task list|pending|send|receive|ack|reply|adopt|stop|cancel; global flags: --root, --message-root, --recipient, --help; run concierge COMMAND --help for arguments"
 
 type cli struct {
+	State       stateCommands       `cmd:"" help:"Back up and migrate task state with all writers stopped."`
 	Supervise   supervisionCommands `cmd:"" help:"Monitor workers and recover missing agents."`
 	Control     controlCommands     `cmd:"" help:"Inspect and control live Herdr agents."`
 	Primary     primaryCommands     `cmd:"" help:"Manage the root session owner through Linux /proc lifecycle hooks."`
@@ -102,6 +103,8 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return fail(stdout, 2, err, "use an absolute, clean --root path")
 	}
 	switch selected.Command() {
+	case "state backup", "state migrate", "state recover":
+		return command.State.run(ctx, root, selected.Command(), stdout)
 	case "supervise task <task-id>":
 		return command.runTaskSupervision(ctx, root, stdout)
 	case "primary claim", "primary verify", "primary release":
