@@ -1,4 +1,4 @@
-package main
+package tincancli
 
 import (
 	"context"
@@ -23,7 +23,7 @@ func TestAdapterSelection(t *testing.T) {
 		{name: "unsupported adapter", args: []string{"--adapter", "tmux"}, wantAdapter: "tmux", wantError: "unsupported adapter"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			var options cli
+			var options legacyNotifyCLI
 			parser, err := kong.New(&options)
 			if err != nil {
 				t.Fatal(err)
@@ -75,7 +75,7 @@ func TestTargetOption(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			var options cli
+			var options legacyNotifyCLI
 			parser, err := kong.New(&options)
 			if err != nil {
 				t.Fatal(err)
@@ -97,7 +97,7 @@ func TestTargetOption(t *testing.T) {
 
 func TestEmptyAmbientSessionRejected(t *testing.T) {
 	t.Setenv("HERDR_SESSION", "")
-	var options cli
+	var options legacyNotifyCLI
 	parser, err := kong.New(&options)
 	if err != nil {
 		t.Fatal(err)
@@ -123,7 +123,7 @@ func TestDoorbellUsesAmbientHerdrSession(t *testing.T) {
 	}
 	t.Setenv("HERDR_SESSION", "work")
 	t.Setenv("TINCAN_TEST_CAPTURE", capture)
-	var options cli
+	var options legacyNotifyCLI
 	parser, err := kong.New(&options)
 	if err != nil {
 		t.Fatal(err)

@@ -147,7 +147,7 @@ func TestMergedInboxHelpAndVersionAvoidRootDiscovery(t *testing.T) {
 	if _, err := os.Getwd(); err == nil {
 		t.Fatal("removed current directory remains discoverable")
 	}
-	for _, args := range [][]string{{"--help"}, {"inbox", "--help"}, {"inbox", "send", "--help"}, {"--version"}, {"-v"}, {"-V"}} {
+	for _, args := range [][]string{{"--help"}, {"notify", "--help"}, {"inbox", "--help"}, {"inbox", "send", "--help"}, {"--version"}, {"-v"}, {"-V"}} {
 		var stdout, stderr bytes.Buffer
 		if code := Run(context.Background(), args, strings.NewReader(""), &stdout, &stderr); code != 0 ||
 			stdout.Len() == 0 ||

@@ -14,8 +14,9 @@ import (
 const version = "0.1.0"
 
 type cli struct {
-	Root  string        `help:"Directory that stores mailboxes; defaults to .tincan in the current directory." env:"TINCAN_HOME"`
-	Inbox InboxCommands `cmd:"" help:"Store, read, and acknowledge durable messages."`
+	Root   string         `help:"Directory that stores mailboxes; defaults to .tincan in the current directory." env:"TINCAN_HOME"`
+	Notify NotifyCommands `cmd:"" help:"Ring a generic endpoint while its inbox has messages."`
+	Inbox  InboxCommands  `cmd:"" help:"Store, read, and acknowledge durable messages."`
 }
 
 // Run executes the merged generic transport command without exiting the process.
@@ -35,6 +36,13 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			return fail(stderr, "tincan", err)
 		}
 		root = filepath.Join(directory, ".tincan")
+	}
+	if selected == "notify" {
+		report := func(err error) { fmt.Fprintln(stderr, "tincan:", err) }
+		if err := runNotify(ctx, root, &command.Notify, report); err != nil {
+			return fail(stderr, "tincan", err)
+		}
+		return 0
 	}
 	if err := runInbox(ctx, root, &command.Inbox, strings.TrimPrefix(selected, "inbox "), stdin, stdout); err != nil {
 		return fail(stderr, "tincan", err)
