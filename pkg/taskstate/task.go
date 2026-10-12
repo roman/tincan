@@ -100,12 +100,19 @@ type Completion struct {
 	Phase      CompletionPhase `json:"phase"`
 }
 
+// Receipt preserves the latest retired generation after worker records disappear.
+type Receipt struct {
+	Generation string         `json:"generation"`
+	Mode       CompletionMode `json:"mode"`
+}
+
 type record struct {
 	Format int `json:"format"`
 	Definition
 	State      State       `json:"state"`
 	Worker     *Worker     `json:"worker,omitempty"`
 	Completion *Completion `json:"completion,omitempty"`
+	Receipt    *Receipt    `json:"receipt,omitempty"`
 }
 
 // Snapshot carries one complete task across the explicit migration boundary.
@@ -114,6 +121,7 @@ type Snapshot struct {
 	State      State
 	Worker     *Worker
 	Completion *Completion
+	Receipt    *Receipt
 }
 
 // Task keeps a validated snapshot private. Changes create a new snapshot.
@@ -134,6 +142,7 @@ func NewMigrated(input Snapshot) (Task, error) {
 		Format: formatVersion, Definition: cloneDefinition(input.Definition),
 		State: input.State, Worker: cloneWorker(input.Worker),
 		Completion: cloneCompletion(input.Completion),
+		Receipt:    cloneReceipt(input.Receipt),
 	}
 	if err := validate(selected); err != nil {
 		return Task{}, err
@@ -192,6 +201,7 @@ func (task Task) Snapshot() Snapshot {
 		Definition: cloneDefinition(task.record.Definition), State: task.record.State,
 		Worker:     cloneWorker(task.record.Worker),
 		Completion: cloneCompletion(task.record.Completion),
+		Receipt:    cloneReceipt(task.record.Receipt),
 	}
 }
 
@@ -219,6 +229,14 @@ func cloneWorker(input *Worker) *Worker {
 }
 
 func cloneCompletion(input *Completion) *Completion {
+	if input == nil {
+		return nil
+	}
+	selected := *input
+	return &selected
+}
+
+func cloneReceipt(input *Receipt) *Receipt {
 	if input == nil {
 		return nil
 	}
@@ -258,6 +276,28 @@ func validate(selected record) error {
 		}
 		if (selected.State == Done && selected.Completion.Mode != Close) ||
 			(selected.State == Queued && selected.Completion.Mode != Retain) {
+			return ErrInvalidTask
+		}
+	}
+	if selected.Receipt != nil {
+		if firstmate.ValidateSpawnGeneration(selected.Receipt.Generation) != nil ||
+			(selected.Receipt.Mode != Close && selected.Receipt.Mode != Retain) {
+			return ErrInvalidTask
+		}
+		if selected.Worker != nil &&
+			(selected.Receipt.Generation == selected.Worker.Generation ||
+				selected.Receipt.Generation == selected.Worker.PendingGeneration ||
+				selected.Receipt.Generation == selected.Worker.PendingLaunch) {
+			return ErrInvalidTask
+		}
+		if selected.Worker == nil && selected.Completion == nil &&
+			((selected.State == Done && selected.Receipt.Mode != Close) ||
+				(selected.State == Queued && selected.Receipt.Mode != Retain)) {
+			return ErrInvalidTask
+		}
+		if selected.Completion != nil &&
+			selected.Completion.Generation == selected.Receipt.Generation &&
+			selected.Completion.Mode != selected.Receipt.Mode {
 			return ErrInvalidTask
 		}
 	}

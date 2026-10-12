@@ -256,6 +256,149 @@ func TestMigratedTaskRejectsAcceptedResultWithoutWorker(t *testing.T) {
 	}
 }
 
+func TestMigratedTaskPreservesEarlierRetiredReceipt(t *testing.T) {
+	input := Snapshot{
+		Definition: Definition{ID: "task-1", Title: "Work", Repo: "exmachina", Kind: "ship"},
+		State:      InFlight,
+		Worker: &Worker{
+			Name: "worker-2", Harness: "codex", Session: "work", Workspace: "workspace-2",
+			Tab: "tab-2", Pane: "pane-2", Project: "/project", Worktree: "/worktree",
+			Generation: "gen-2", AgentArgs: []string{"resume", "thread-2"},
+		},
+		Receipt: &Receipt{Generation: "gen-1", Mode: Retain},
+	}
+	task, err := NewMigrated(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Receipt.Mode = Close
+	encoded, err := task.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Decode(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.Snapshot(); got.Receipt == nil || got.Receipt.Generation != "gen-1" ||
+		got.Receipt.Mode != Retain || got.Worker.Generation != "gen-2" {
+		t.Fatalf("loaded task = %#v", got)
+	}
+	returned := task.Snapshot()
+	returned.Receipt.Mode = Close
+	if task.Snapshot().Receipt.Mode != Retain {
+		t.Fatal("snapshot changed the stored receipt")
+	}
+}
+
+func TestMigratedTaskPreservesReceiptWithoutWorker(t *testing.T) {
+	input := Snapshot{
+		Definition: Definition{ID: "task-1", Title: "Work", Repo: "exmachina", Kind: "ship"},
+		State:      Done, Receipt: &Receipt{Generation: "gen-1", Mode: Close},
+	}
+	if _, err := NewMigrated(input); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMigratedTaskRejectsInvalidReceipt(t *testing.T) {
+	tests := []Receipt{
+		{Generation: "bad@gen", Mode: Close},
+		{Generation: "gen-1", Mode: "unknown"},
+		{Generation: "gen-1", Mode: Retain},
+	}
+	for _, receipt := range tests {
+		input := Snapshot{
+			Definition: Definition{ID: "task-1", Title: "Work", Repo: "exmachina", Kind: "ship"},
+			State:      Done, Receipt: &receipt,
+		}
+		if _, err := NewMigrated(input); !errors.Is(err, ErrInvalidTask) {
+			t.Fatalf("NewMigrated with %#v = %v, want invalid task", receipt, err)
+		}
+	}
+}
+
+func TestMigratedTaskRejectsReceiptForActiveGeneration(t *testing.T) {
+	tests := []struct {
+		name   string
+		worker Worker
+	}{
+		{name: "worker generation", worker: Worker{Generation: "gen-1"}},
+		{
+			name:   "pending generation",
+			worker: Worker{Generation: "gen-2", PendingGeneration: "gen-1"},
+		},
+		{name: "pending launch", worker: Worker{Generation: "gen-2", PendingLaunch: "gen-1"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			worker := test.worker
+			worker.Name, worker.Harness, worker.Session = "worker-1", "codex", "work"
+			worker.Workspace, worker.Tab, worker.Pane = "workspace-1", "tab-1", "pane-1"
+			worker.Project, worker.Worktree = "/project", "/worktree"
+			worker.AgentArgs = []string{"resume", "thread-1"}
+			input := Snapshot{
+				Definition: Definition{
+					ID:    "task-1",
+					Title: "Work",
+					Repo:  "exmachina",
+					Kind:  "ship",
+				},
+				State: InFlight, Worker: &worker,
+				Receipt: &Receipt{Generation: "gen-1", Mode: Retain},
+			}
+			if _, err := NewMigrated(input); !errors.Is(err, ErrInvalidTask) {
+				t.Fatalf("NewMigrated error = %v, want invalid task", err)
+			}
+		})
+	}
+}
+
+func TestMigratedTaskKeepsOldReceiptDuringNewRetirement(t *testing.T) {
+	input := Snapshot{
+		Definition: Definition{ID: "task-1", Title: "Work", Repo: "exmachina", Kind: "ship"},
+		State:      Done,
+		Completion: &Completion{Generation: "gen-2", Mode: Close, Phase: Retired},
+		Receipt:    &Receipt{Generation: "gen-1", Mode: Retain},
+	}
+	if _, err := NewMigrated(input); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMigratedTaskChecksReceiptAgainstSameGenerationCompletion(t *testing.T) {
+	tests := []struct {
+		name        string
+		receiptMode CompletionMode
+		wantInvalid bool
+	}{
+		{name: "matching retirement", receiptMode: Retain},
+		{name: "conflicting retirement", receiptMode: Close, wantInvalid: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			input := Snapshot{
+				Definition: Definition{
+					ID:    "task-1",
+					Title: "Work",
+					Repo:  "exmachina",
+					Kind:  "ship",
+				},
+				State:      Queued,
+				Completion: &Completion{Generation: "gen-1", Mode: Retain, Phase: Retired},
+				Receipt:    &Receipt{Generation: "gen-1", Mode: test.receiptMode},
+			}
+			_, err := NewMigrated(input)
+			if test.wantInvalid && !errors.Is(err, ErrInvalidTask) {
+				t.Fatalf("NewMigrated error = %v, want invalid task", err)
+			}
+			if !test.wantInvalid && err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestEncodeRejectsRecordBeyondDecodeLimit(t *testing.T) {
 	task, err := NewQueued(Definition{
 		ID: "task-1", Title: "Work", Repo: "exmachina", Kind: "ship",
