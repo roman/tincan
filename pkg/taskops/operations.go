@@ -8,25 +8,38 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/roman/tincan/pkg/inbox"
 	"github.com/roman/tincan/pkg/taskstate"
 	"github.com/roman/tincan/pkg/taskview"
 )
 
 var ErrBlockedDependency = errors.New("task has an unfinished dependency")
 
+const DefaultPrimaryRecipient = "concierge"
+
 // Service updates authoritative task records and rebuilds their human view.
 type Service struct {
-	root  string
-	store *taskstate.Store
+	root             string
+	store            *taskstate.Store
+	primaryRecipient inbox.Recipient
 }
 
 // New prepares backlog operations for the selected task root.
 func New(root string) (*Service, error) {
+	recipient, _ := inbox.ParseRecipient(DefaultPrimaryRecipient)
+	return NewWithPrimaryRecipient(root, recipient)
+}
+
+// NewWithPrimaryRecipient directs supervisor messages to one selected mailbox.
+func NewWithPrimaryRecipient(root string, recipient inbox.Recipient) (*Service, error) {
+	if _, err := inbox.ParseRecipient(recipient.String()); err != nil {
+		return nil, err
+	}
 	store, err := taskstate.NewStore(root)
 	if err != nil {
 		return nil, err
 	}
-	return &Service{root: root, store: store}, nil
+	return &Service{root: root, store: store, primaryRecipient: recipient}, nil
 }
 
 // Create adds a queued task and refreshes the backlog view.

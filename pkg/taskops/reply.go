@@ -36,7 +36,7 @@ func (service *Service) Resolve(
 	if err != nil {
 		return ReplyResult{}, err
 	}
-	concierge, _ := inbox.ParseRecipient("concierge")
+	concierge := service.primaryRecipient
 	message, err := messages.Read(concierge, id)
 	if errors.Is(err, os.ErrNotExist) {
 		if _, dispositionErr := messages.ReadDisposition(concierge, id); dispositionErr != nil {
