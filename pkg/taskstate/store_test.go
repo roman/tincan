@@ -97,6 +97,82 @@ func TestStoreCreatesReadsAndUpdatesOneTask(t *testing.T) {
 	}
 }
 
+func TestStoreListsVersionTwoTasksInIDOrder(t *testing.T) {
+	root := versionTwoRoot(t)
+	store, err := NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"task-z", "task-a"} {
+		task, err := NewQueued(Definition{ID: id, Title: id, Repo: "exmachina", Kind: "ship"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Create(context.Background(), task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "records", ".migration-owner"), []byte("tincan-taskstate-v2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "records", ".writing-abandoned"), []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := store.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 2 || tasks[0].ID() != "task-a" || tasks[1].ID() != "task-z" {
+		t.Fatalf("List = %#v, want task-a then task-z", tasks)
+	}
+}
+
+func TestStoreListRejectsVersionOne(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "records"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.List(context.Background()); !errors.Is(err, stateversion.ErrIncompatible) {
+		t.Fatalf("List error = %v, want version refusal", err)
+	}
+}
+
+func TestStoreListRejectsUnexpectedRecordEntry(t *testing.T) {
+	root := versionTwoRoot(t)
+	store, err := NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "records", "unknown"), []byte("data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.List(context.Background()); !errors.Is(err, ErrInvalidTask) {
+		t.Fatalf("List error = %v, want invalid record", err)
+	}
+}
+
+func TestStoreListRejectsMismatchedRecordID(t *testing.T) {
+	root := versionTwoRoot(t)
+	store, err := NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := queuedStoreTask(t).Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "records", "different.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.List(context.Background()); !errors.Is(err, ErrInvalidTask) {
+		t.Fatalf("List error = %v, want invalid record", err)
+	}
+}
+
 func TestStoreSerializesConcurrentUpdates(t *testing.T) {
 	root := versionTwoRoot(t)
 	store, err := NewStore(root)

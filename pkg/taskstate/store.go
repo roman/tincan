@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -73,6 +75,62 @@ func (store *Store) Read(ctx context.Context, taskID string) (Task, error) {
 		return err
 	})
 	return task, err
+}
+
+// List returns every complete task in ID order from the selected version 2 root.
+func (store *Store) List(ctx context.Context) ([]Task, error) {
+	tasks := make([]Task, 0)
+	err := store.withVersionTwo(ctx, func(root *os.Root) error {
+		records, _, err := openRecords(root)
+		if err != nil {
+			return err
+		}
+		defer records.Close()
+		listing, err := records.Open(".")
+		if err != nil {
+			return err
+		}
+		entries, readErr := listing.ReadDir(-1)
+		closeErr := listing.Close()
+		if err := errors.Join(readErr, closeErr); err != nil {
+			return err
+		}
+		ids := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			name := entry.Name()
+			if name == migrationOwnerName ||
+				(strings.HasPrefix(name, ".writing-") && !strings.HasSuffix(name, ".json")) {
+				continue
+			}
+			id, valid := strings.CutSuffix(name, ".json")
+			if !valid {
+				return fmt.Errorf("%w: unexpected task record entry %s", ErrInvalidTask, name)
+			}
+			if _, err := parseStoreTaskID(id); err != nil {
+				return fmt.Errorf("%w: invalid task record name %s", ErrInvalidTask, name)
+			}
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			task, _, err := readRecord(records, id)
+			if err != nil {
+				return err
+			}
+			tasks = append(tasks, task)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return tasks, nil
 }
 
 // Update serializes a task transition and publishes its complete record.
