@@ -213,3 +213,83 @@ func TestStartReportsSavedRecordWhenProjectionFails(t *testing.T) {
 		t.Fatalf("rebuilt view = %q, %v", view, err)
 	}
 }
+
+func TestCreateRetryRepublishesIdenticalRecord(t *testing.T) {
+	root := testRoot(t)
+	service, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := taskstate.Definition{
+		ID:    "task-1",
+		Title: "Durable intake",
+		Repo:  "tincan",
+		Kind:  "worker",
+	}
+	ctx := context.Background()
+	if _, err := service.Create(ctx, definition); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "records", "task-1.json")
+	previous, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer previous.Close()
+	selected, err := previous.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Create(ctx, definition); err != nil {
+		t.Fatal(err)
+	}
+	published, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(selected, published) {
+		t.Fatal("identical retry did not republish the record to confirm durability")
+	}
+	current, err := os.ReadFile(path)
+	if err != nil || string(current) != string(data) {
+		t.Fatalf("retry changed record: %q, %v", current, err)
+	}
+}
+
+func TestCreateRetryPreservesAdvancedTask(t *testing.T) {
+	root := testRoot(t)
+	service, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := taskstate.Definition{ID: "task-1", Title: "Work", Repo: "tincan", Kind: "worker"}
+	ctx := context.Background()
+	if _, err := service.Create(ctx, definition); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.store.Update(ctx, definition.ID, func(task taskstate.Task) (taskstate.Task, error) {
+		return task.PlaceHold(taskstate.Hold{Reason: "review"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "records", "task-1.json")
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Create(ctx, definition); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("advanced task retry = %v", err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := service.store.Read(ctx, definition.ID)
+	if err != nil || current.Definition().Hold == nil || !os.SameFile(before, after) {
+		t.Fatalf("advanced task changed: %#v, %v", current.Definition(), err)
+	}
+}

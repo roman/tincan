@@ -51,30 +51,32 @@ func (service *Service) Create(
 	if err != nil {
 		return taskstate.Task{}, err
 	}
-	if err := service.store.Create(ctx, task); err != nil {
-		if errors.Is(err, os.ErrExist) {
-			current, readErr := service.store.Read(ctx, task.ID())
-			if readErr != nil {
-				return taskstate.Task{}, readErr
-			}
-			currentData, encodeErr := current.Encode()
-			if encodeErr != nil {
-				return taskstate.Task{}, encodeErr
-			}
-			requestedData, encodeErr := task.Encode()
-			if encodeErr != nil {
-				return taskstate.Task{}, encodeErr
-			}
-			if !bytes.Equal(currentData, requestedData) {
-				return taskstate.Task{}, err
-			}
-		} else if !errors.Is(err, taskstate.ErrPublicationUnconfirmed) {
-			return taskstate.Task{}, err
-		} else {
-			return task, errors.Join(err, taskview.Rebuild(ctx, service.root))
-		}
+	publicationErr := service.store.Create(ctx, task)
+	if errors.Is(publicationErr, os.ErrExist) {
+		conflictErr := publicationErr
+		_, publicationErr = service.store.Update(
+			ctx,
+			task.ID(),
+			func(current taskstate.Task) (taskstate.Task, error) {
+				currentData, err := current.Encode()
+				if err != nil {
+					return taskstate.Task{}, err
+				}
+				requestedData, err := task.Encode()
+				if err != nil {
+					return taskstate.Task{}, err
+				}
+				if !bytes.Equal(currentData, requestedData) {
+					return taskstate.Task{}, conflictErr
+				}
+				return current, nil
+			},
+		)
 	}
-	return task, taskview.Rebuild(ctx, service.root)
+	if publicationErr != nil && !errors.Is(publicationErr, taskstate.ErrPublicationUnconfirmed) {
+		return taskstate.Task{}, publicationErr
+	}
+	return task, errors.Join(publicationErr, taskview.Rebuild(ctx, service.root))
 }
 
 // Start dispatches a bound task once its blocking dependencies are done.
