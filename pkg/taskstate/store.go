@@ -19,6 +19,7 @@ import (
 var ErrStoreLockTimeout = errors.New("task record lock timed out")
 var ErrPublicationUnconfirmed = errors.New("task record publication requires reconciliation")
 var ErrWorkerConflict = errors.New("worker is already assigned to another task")
+var ErrTaskNotFound = errors.New("task record does not exist")
 
 const storeLockTimeout = 2 * time.Second
 
@@ -354,6 +355,9 @@ func readRecord(root *os.Root, taskID string) (Task, os.FileInfo, error) {
 	name := taskID + ".json"
 	selected, err := root.Lstat(name)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Task{}, nil, errors.Join(ErrTaskNotFound, err)
+		}
 		return Task{}, nil, err
 	}
 	if !selected.Mode().IsRegular() {

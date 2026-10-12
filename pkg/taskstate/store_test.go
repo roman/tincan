@@ -42,6 +42,42 @@ func queuedStoreTask(t *testing.T) Task {
 	return task
 }
 
+func TestStoreReadDistinguishesMissingTaskFromMissingStorage(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		removeRecords   bool
+		wantMissingTask bool
+	}{
+		{name: "missing task", wantMissingTask: true},
+		{name: "missing records directory", removeRecords: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := versionTwoRoot(t)
+			if test.removeRecords {
+				if err := os.Remove(filepath.Join(root, "records")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			store, err := NewStore(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = store.Read(context.Background(), "task-1")
+			if !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("Read error = %v, want os.ErrNotExist", err)
+			}
+			if got := errors.Is(err, ErrTaskNotFound); got != test.wantMissingTask {
+				t.Fatalf(
+					"Read missing-task classification = %v, want %v (error %v)",
+					got,
+					test.wantMissingTask,
+					err,
+				)
+			}
+		})
+	}
+}
+
 func TestStoreRefusesVersionOneBeforeCreatingRecord(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "records"), 0o700); err != nil {
