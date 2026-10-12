@@ -19,6 +19,11 @@ func (worker *SupervisedWorker) Restart(ctx context.Context) error {
 		ctx,
 		worker.taskID,
 		func(task *taskstate.LockedTask) error {
+			if bound := task.Current().Snapshot().Worker; bound != nil {
+				if err := validateNativeLaunch(bound.Harness, bound.AgentArgs); err != nil {
+					return err
+				}
+			}
 			bound, err := recoverWorker(task)
 			if err != nil {
 				return err
@@ -40,6 +45,10 @@ func (worker *SupervisedWorker) Restart(ctx context.Context) error {
 				}
 				generation = "s" + hex.EncodeToString(random)
 			}
+			arguments, err := nativeLaunchArguments(bound.Harness, bound.AgentArgs, generation)
+			if err != nil {
+				return err
+			}
 			if _, err := task.Apply(func(current taskstate.Task) (taskstate.Task, error) {
 				return current.ReserveLaunch(generation)
 			}); err != nil {
@@ -55,7 +64,7 @@ func (worker *SupervisedWorker) Restart(ctx context.Context) error {
 			}); err != nil {
 				return err
 			}
-			if err := client.StartWithArgs(ctx, bound.Pane, bound.Name, bound.Harness, bound.AgentArgs); err != nil {
+			if err := client.StartWithArgs(ctx, bound.Pane, bound.Name, bound.Harness, arguments); err != nil {
 				return err
 			}
 			if _, err := task.Apply(taskstate.Task.CompleteLaunch); err != nil {

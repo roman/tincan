@@ -95,6 +95,8 @@ func TestWorkerRestartRecoversFailedBootstrapPublication(t *testing.T) {
 		"--pane",
 		"pane-1",
 		"--",
+		"-c",
+		fmt.Sprintf("shell_environment_policy.set.CONCIERGE_SPAWN_GENERATION=%q", generation),
 		"resume",
 		"thread-1",
 	}
@@ -146,9 +148,13 @@ func TestWorkerRestartRecoversAdvancedAndMigratedGenerations(t *testing.T) {
 			if err != nil || len(before) != 1 {
 				t.Fatalf("bootstrap = %#v, %v", before, err)
 			}
+			firstLaunch := append([]string(nil), runner.startArgs...)
 			runner.onStart = nil
 			if err := worker.Restart(ctx); err != nil {
 				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(firstLaunch, runner.startArgs) {
+				t.Fatalf("retry changed launch: %v -> %v", firstLaunch, runner.startArgs)
 			}
 			after, err := worker.messages.List(worker.recipient)
 			if err != nil || len(after) != 1 || after[0].ID != before[0].ID ||

@@ -161,6 +161,10 @@ access. Request a controlled relaunch; never recover the value from a transcript
 task record, or mailbox. This guards cooperating workers, not arbitrary callers.
 Keep generation overrides out of the reusable
 resume arguments; a controlled restart supplies its own reserved generation.
+Reusable Claude arguments must omit `--settings`. Reusable Codex arguments must
+omit `shell_environment_policy` overrides. Use normal user or project settings
+for other configuration. Conflicting stored options fail before a restart
+reservation or adoption binding is written.
 
 ```sh
 concierge task send task-1 --key assignment-1 --body-file brief.txt

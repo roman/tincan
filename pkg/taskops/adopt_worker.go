@@ -167,6 +167,9 @@ func verifyAdoption(
 	if err != nil {
 		return herdr.PaneDetails{}, "", err
 	}
+	if err := validateNativeLaunch(agent.Kind, input.AgentArgs); err != nil {
+		return herdr.PaneDetails{}, "", err
+	}
 	if agent.PaneID != input.Pane || agent.Kind == "" {
 		return herdr.PaneDetails{}, "", fmt.Errorf("worker identity differs from requested pane")
 	}

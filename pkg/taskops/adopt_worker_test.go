@@ -482,3 +482,23 @@ func TestAdoptWorkerRejectsRetiredGeneration(t *testing.T) {
 		t.Fatalf("retired generation changed task: %#v, %v", after.Snapshot(), err)
 	}
 }
+
+func TestAdoptWorkerRejectsNativeSettingsBeforeReservation(t *testing.T) {
+	for _, harness := range []string{"codex", "claude"} {
+		t.Run(harness, func(t *testing.T) {
+			service, input, runner := adoptionFixture(t)
+			runner.harness = harness
+			input.AgentArgs = []string{"--settings", "settings.json"}
+			if harness == "codex" {
+				input.AgentArgs = []string{"-c", "shell_environment_policy.set={}"}
+			}
+			if _, err := service.AdoptWorker(context.Background(), input, herdr.Client{SessionRunner: runner}); err == nil {
+				t.Fatal("conflicting launch settings adopted")
+			}
+			task, err := service.store.Read(context.Background(), input.TaskID)
+			if err != nil || task.Snapshot().Worker != nil {
+				t.Fatalf("conflicting settings reserved worker: %#v %v", task.Snapshot(), err)
+			}
+		})
+	}
+}

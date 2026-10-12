@@ -172,18 +172,19 @@ func TestSuperviseTaskUsesBoundDoorbellAndReleasesLease(t *testing.T) {
 				}
 			}
 			if mode == "restart" {
-				if !strings.Contains(
-					string(calls),
-					"agent start worker --kind codex --pane pane-1 -- resume thread-1",
-				) {
-					t.Fatalf("restart arguments: %s", calls)
-				}
 				store, _ := taskstate.NewStore(root)
 				task, err := store.Read(context.Background(), "task-1")
 				if err != nil || task.Snapshot().Worker.Generation == "gen-1" ||
 					task.Snapshot().Worker.PendingLaunch != "" {
 					t.Fatalf("restart incomplete: %#v %v", task.Snapshot(), err)
 				}
+				expected := "agent start worker --kind codex --pane pane-1 -- -c shell_environment_policy.set.CONCIERGE_SPAWN_GENERATION=" + strconv.Quote(
+					task.Snapshot().Worker.Generation,
+				) + " resume thread-1"
+				if !strings.Contains(string(calls), expected) {
+					t.Fatalf("restart arguments: %s", calls)
+				}
+
 			}
 			lease, err := resident.AcquireTaskLease(root, "task-1")
 			if err != nil {
