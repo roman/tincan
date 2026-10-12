@@ -170,8 +170,7 @@ func (task Task) AcceptResult(
 // RetireResult clears a departed worker and keeps its completion receipt.
 func (task Task) RetireResult(generation string) (Task, error) {
 	if task.record.Completion == nil {
-		if task.record.Receipt != nil && task.record.Receipt.Generation == generation &&
-			task.record.Worker == nil {
+		if task.HasReceipt(generation, Close) || task.HasReceipt(generation, Retain) {
 			return task, nil
 		}
 		return Task{}, ErrInvalidTransition
@@ -181,6 +180,9 @@ func (task Task) RetireResult(generation string) (Task, error) {
 		return Task{}, ErrInvalidTransition
 	}
 	snapshot := task.Snapshot()
+	if snapshot.Receipt != nil && snapshot.Receipt.Generation != generation {
+		snapshot.PriorReceipts = append(snapshot.PriorReceipts, *snapshot.Receipt)
+	}
 	snapshot.Receipt = &Receipt{Generation: generation, Mode: completion.Mode}
 	snapshot.Completion = nil
 	snapshot.Worker = nil

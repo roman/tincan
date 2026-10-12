@@ -236,3 +236,71 @@ func TestTaskRejectsCancellationAndMalformedReservation(t *testing.T) {
 		t.Fatalf("malformed hold error = %v", err)
 	}
 }
+
+func TestTaskRetirementPreservesEarlierReceipts(t *testing.T) {
+	task, err := NewMigrated(Snapshot{
+		Definition: Definition{ID: "task-1", Title: "Work", Repo: "exmachina", Kind: "ship"},
+		State:      Queued, Receipt: &Receipt{Generation: "gen-1", Mode: Retain},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := workerForTransition()
+	worker.Generation = "gen-2"
+	reserved, err := task.ReserveAdoption(worker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adopted, err := reserved.ConfirmAdoption("workspace-1", "tab-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	running, err := adopted.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, err := running.PlaceHold(Hold{Reason: "More work", Kind: "captain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := held.AcceptResult("gen-2", Retain, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	retired, err := accepted.RetireResult("gen-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !retired.HasReceipt("gen-1", Retain) || !retired.HasReceipt("gen-2", Retain) ||
+		len(retired.Snapshot().PriorReceipts) != 1 {
+		t.Fatalf("retirement lost a receipt: %#v", retired.Snapshot())
+	}
+	if _, err := retired.RetireResult("gen-1"); err != nil {
+		t.Fatalf("historical retirement retry failed: %v", err)
+	}
+	encoded, err := retired.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := Decode(encoded)
+	if err != nil || !decoded.HasReceipt("gen-1", Retain) {
+		t.Fatalf("decoded receipt history = %#v, %v", decoded.Snapshot(), err)
+	}
+}
+
+func TestTaskRetirementKeepsMatchingReceipt(t *testing.T) {
+	task, err := NewMigrated(Snapshot{
+		Definition: Definition{ID: "task-1", Title: "Work", Repo: "exmachina", Kind: "ship",
+			Hold: &Hold{Reason: "More work", Kind: "captain"}},
+		State: Queued, Receipt: &Receipt{Generation: "gen-1", Mode: Retain},
+		Completion: &Completion{Generation: "gen-1", Mode: Retain, Phase: Retired},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retired, err := task.RetireResult("gen-1")
+	if err != nil || len(retired.Snapshot().PriorReceipts) != 0 ||
+		retired.Snapshot().Receipt.Generation != "gen-1" {
+		t.Fatalf("matching retirement = %#v, %v", retired.Snapshot(), err)
+	}
+}

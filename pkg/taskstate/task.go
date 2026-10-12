@@ -109,19 +109,21 @@ type Receipt struct {
 type record struct {
 	Format int `json:"format"`
 	Definition
-	State      State       `json:"state"`
-	Worker     *Worker     `json:"worker,omitempty"`
-	Completion *Completion `json:"completion,omitempty"`
-	Receipt    *Receipt    `json:"receipt,omitempty"`
+	State         State       `json:"state"`
+	Worker        *Worker     `json:"worker,omitempty"`
+	Completion    *Completion `json:"completion,omitempty"`
+	Receipt       *Receipt    `json:"receipt,omitempty"`
+	PriorReceipts []Receipt   `json:"prior_receipts,omitempty"`
 }
 
 // Snapshot carries one complete task across the explicit migration boundary.
 type Snapshot struct {
-	Definition Definition
-	State      State
-	Worker     *Worker
-	Completion *Completion
-	Receipt    *Receipt
+	Definition    Definition
+	State         State
+	Worker        *Worker
+	Completion    *Completion
+	Receipt       *Receipt
+	PriorReceipts []Receipt
 }
 
 // Task keeps a validated snapshot private. Changes create a new snapshot.
@@ -142,7 +144,7 @@ func NewMigrated(input Snapshot) (Task, error) {
 		Format: formatVersion, Definition: cloneDefinition(input.Definition),
 		State: input.State, Worker: cloneWorker(input.Worker),
 		Completion: cloneCompletion(input.Completion),
-		Receipt:    cloneReceipt(input.Receipt),
+		Receipt:    cloneReceipt(input.Receipt), PriorReceipts: slices.Clone(input.PriorReceipts),
 	}
 	if err := validate(selected); err != nil {
 		return Task{}, err
@@ -199,10 +201,25 @@ func (task Task) Definition() Definition { return cloneDefinition(task.record.De
 func (task Task) Snapshot() Snapshot {
 	return Snapshot{
 		Definition: cloneDefinition(task.record.Definition), State: task.record.State,
-		Worker:     cloneWorker(task.record.Worker),
-		Completion: cloneCompletion(task.record.Completion),
-		Receipt:    cloneReceipt(task.record.Receipt),
+		Worker:        cloneWorker(task.record.Worker),
+		Completion:    cloneCompletion(task.record.Completion),
+		Receipt:       cloneReceipt(task.record.Receipt),
+		PriorReceipts: slices.Clone(task.record.PriorReceipts),
 	}
+}
+
+// HasReceipt reports whether a completed worker generation has durable proof.
+func (task Task) HasReceipt(generation string, mode CompletionMode) bool {
+	if task.record.Receipt != nil && task.record.Receipt.Generation == generation &&
+		task.record.Receipt.Mode == mode {
+		return true
+	}
+	for _, receipt := range task.record.PriorReceipts {
+		if receipt.Generation == generation && receipt.Mode == mode {
+			return true
+		}
+	}
+	return false
 }
 
 func cloneDefinition(input Definition) Definition {
@@ -289,6 +306,12 @@ func validate(selected record) error {
 			(selected.Receipt.Mode != Close && selected.Receipt.Mode != Retain) {
 			return ErrInvalidTask
 		}
+		if selected.Receipt.Mode == Close &&
+			(selected.State != Done ||
+				(selected.Worker != nil && selected.Worker.Generation != selected.Receipt.Generation) ||
+				(selected.Completion != nil && selected.Completion.Generation != selected.Receipt.Generation)) {
+			return ErrInvalidTask
+		}
 		if selected.Worker != nil &&
 			(selected.Receipt.Generation == selected.Worker.Generation ||
 				selected.Receipt.Generation == selected.Worker.PendingGeneration ||
@@ -303,6 +326,29 @@ func validate(selected record) error {
 		if selected.Completion != nil &&
 			selected.Completion.Generation == selected.Receipt.Generation &&
 			selected.Completion.Mode != selected.Receipt.Mode {
+			return ErrInvalidTask
+		}
+	}
+	if len(selected.PriorReceipts) > 0 && selected.Receipt == nil {
+		return ErrInvalidTask
+	}
+	seenReceipts := make(map[string]bool, len(selected.PriorReceipts))
+	for _, receipt := range selected.PriorReceipts {
+		if firstmate.ValidateSpawnGeneration(receipt.Generation) != nil ||
+			receipt.Mode != Retain || seenReceipts[receipt.Generation] {
+			return ErrInvalidTask
+		}
+		seenReceipts[receipt.Generation] = true
+		if selected.Receipt != nil && receipt.Generation == selected.Receipt.Generation {
+			return ErrInvalidTask
+		}
+		if selected.Worker != nil &&
+			(receipt.Generation == selected.Worker.Generation ||
+				receipt.Generation == selected.Worker.PendingGeneration ||
+				receipt.Generation == selected.Worker.PendingLaunch) {
+			return ErrInvalidTask
+		}
+		if selected.Completion != nil && receipt.Generation == selected.Completion.Generation {
 			return ErrInvalidTask
 		}
 	}

@@ -291,6 +291,41 @@ func TestMigratedTaskPreservesEarlierRetiredReceipt(t *testing.T) {
 	}
 }
 
+func TestMigratedTaskRejectsConflictingReceiptHistory(t *testing.T) {
+	for _, prior := range [][]Receipt{
+		{{Generation: "gen-1", Mode: Retain}, {Generation: "gen-1", Mode: Retain}},
+		{{Generation: "gen-2", Mode: Retain}},
+		{{Generation: "", Mode: Retain}},
+		{{Generation: "gen-1", Mode: Close}},
+	} {
+		_, err := NewMigrated(Snapshot{
+			Definition: Definition{ID: "task-1", Title: "Work", Repo: "exmachina", Kind: "ship"},
+			State:      Queued, Receipt: &Receipt{Generation: "gen-2", Mode: Retain},
+			PriorReceipts: prior,
+		})
+		if !errors.Is(err, ErrInvalidTask) {
+			t.Fatalf("invalid prior receipts %#v accepted: %v", prior, err)
+		}
+	}
+}
+
+func TestMigratedTaskRejectsWorkerAfterTerminalClose(t *testing.T) {
+	worker := Worker{
+		Name: "worker-2", Harness: "codex", Session: "work", Pane: "pane-2",
+		Project: "/project", Worktree: "/worktree", Generation: "gen-2",
+		Workspace: "workspace-1", Tab: "tab-2", AgentArgs: []string{"resume", "thread-2"},
+	}
+	_, err := NewMigrated(Snapshot{
+		Definition: Definition{ID: "task-1", Title: "Work", Repo: "exmachina", Kind: "ship"},
+		State:      Done, Worker: &worker,
+		Completion: &Completion{Generation: "gen-2", Mode: Close, Phase: Accepted},
+		Receipt:    &Receipt{Generation: "gen-1", Mode: Close},
+	})
+	if !errors.Is(err, ErrInvalidTask) {
+		t.Fatalf("worker after terminal close accepted: %v", err)
+	}
+}
+
 func TestMigratedTaskPreservesReceiptWithoutWorker(t *testing.T) {
 	input := Snapshot{
 		Definition: Definition{ID: "task-1", Title: "Work", Repo: "exmachina", Kind: "ship"},
