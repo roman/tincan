@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -51,7 +52,10 @@ func (message *Message) UnmarshalJSON(data []byte) error {
 }
 
 // Store manages durable mailboxes below one root directory. New creates valid stores; message operations reject nil and zero-value stores.
-type Store struct{ root rootPath }
+type Store struct {
+	root     rootPath
+	syncPath func(string) error
+}
 
 // New validates the root and creates a store without touching the filesystem.
 func New(root string) (*Store, error) {
@@ -59,7 +63,7 @@ func New(root string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{root: path}, nil
+	return &Store{root: path, syncPath: syncDirectoryPath}, nil
 }
 
 // Root returns the store’s normalized absolute directory path.
@@ -121,7 +125,11 @@ func readMessage(path filePath, recipient Recipient, id MessageID) (Message, err
 }
 
 func syncDirectory(path messageDirectoryPath) error {
-	directory, err := os.Open(path.String())
+	return syncDirectoryPath(path.String())
+}
+
+func syncDirectoryPath(path string) error {
+	directory, err := os.Open(path)
 	if err != nil {
 		return err
 	}
@@ -178,10 +186,11 @@ func persistPendingMessage(pending messageDirectoryPath, message Message) error 
 	if err := os.Link(temporary.Name(), pending.messagePath(message.ID).String()); err != nil {
 		return err
 	}
-	return syncDirectory(pending)
+	return nil
 }
 
 // Send stores a nonblank message until acknowledgement. A repeated key with the same body returns the original record.
+// Success confirms directory durability for both new sends and retries.
 func (store *Store) Send(recipient Recipient, key, body string) (Message, error) {
 	if store == nil || store.root == (rootPath{}) {
 		return Message{}, ErrInvalidRoot
@@ -204,18 +213,39 @@ func (store *Store) Send(recipient Recipient, key, body string) (Message, error)
 		}
 		if found {
 			message = existing
-			return nil
+		} else {
+			message = Message{
+				ID:        id,
+				Recipient: recipient,
+				Key:       key,
+				Body:      body,
+				CreatedAt: time.Now().UTC(),
+			}
+			if err := persistPendingMessage(mailbox.pendingPath(), message); err != nil {
+				return err
+			}
 		}
-		message = Message{
-			ID:        id,
-			Recipient: recipient,
-			Key:       key,
-			Body:      body,
-			CreatedAt: time.Now().UTC(),
-		}
-		return persistPendingMessage(mailbox.pendingPath(), message)
+		return store.syncMailbox(mailbox)
 	})
 	return message, err
+}
+
+func (store *Store) syncMailbox(mailbox mailboxPath) error {
+	for _, directory := range []string{mailbox.pendingPath().String(), mailbox.handledPath().String()} {
+		if err := store.syncPath(directory); err != nil {
+			return fmt.Errorf("sync message directory %s: %w", directory, err)
+		}
+	}
+	// A prior failed process can leave every created directory visible but unsynced.
+	// Confirm all parent entries again instead of treating existence as durability.
+	for directory := mailbox.String(); ; directory = filepath.Dir(directory) {
+		if err := store.syncPath(directory); err != nil {
+			return fmt.Errorf("sync mailbox ancestor %s: %w", directory, err)
+		}
+		if directory == filepath.Dir(directory) {
+			return nil
+		}
+	}
 }
 
 // Read returns a pending message for the recipient and ID.
