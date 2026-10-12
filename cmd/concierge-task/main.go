@@ -11,6 +11,7 @@ import (
 	"github.com/roman/tincan/pkg/crew"
 	"github.com/roman/tincan/pkg/firstmate"
 	"github.com/roman/tincan/pkg/herdr"
+	"github.com/roman/tincan/pkg/stateversion"
 )
 
 type cli struct {
@@ -63,6 +64,11 @@ func run(ctx context.Context, arguments []string, output io.Writer, client herdr
 	if err != nil {
 		return fail(output, 2, err, help())
 	}
+	versionGuard, err := stateversion.AcquireLegacy(ctx, command.Root)
+	if err != nil {
+		return fail(output, 1, err, "install a Concierge command compatible with this task state")
+	}
+	defer versionGuard.Close()
 	switch selected.Command() {
 	case "adopt <task-id>":
 		if err := adopt(ctx, command, client); err != nil {

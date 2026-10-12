@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"github.com/roman/tincan/pkg/crew"
 	"github.com/roman/tincan/pkg/firstmate"
 	"github.com/roman/tincan/pkg/inbox"
+	"github.com/roman/tincan/pkg/stateversion"
 	"github.com/roman/tincan/pkg/taskprotocol"
 )
 
@@ -218,6 +220,12 @@ func run(arguments []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "tincan-task-reply:", err)
 		return 1
 	}
+	versionGuard, err := stateversion.AcquireLegacy(context.Background(), command.TaskRoot)
+	if err != nil {
+		fmt.Fprintln(stderr, "tincan-task-reply:", err)
+		return 1
+	}
+	defer versionGuard.Close()
 	switch selected.Command() {
 	case "send <task-id>":
 		err = send(command, stdin, stdout)

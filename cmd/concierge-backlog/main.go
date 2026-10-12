@@ -14,6 +14,7 @@ import (
 	"github.com/roman/tincan/pkg/crew"
 	"github.com/roman/tincan/pkg/firstmate"
 	"github.com/roman/tincan/pkg/herdr"
+	"github.com/roman/tincan/pkg/stateversion"
 )
 
 type cli struct {
@@ -128,6 +129,11 @@ func runWithClient(
 			"create the local Concierge state root first",
 		)
 	}
+	versionGuard, err := stateversion.AcquireLegacy(ctx, root.String())
+	if err != nil {
+		return fail(output, 1, err, "install a Concierge command compatible with this task state")
+	}
+	defer versionGuard.Close()
 	backlogFile := filepath.Join(root.String(), "backlog.md")
 	if info, err := os.Lstat(backlogFile); err == nil && !info.Mode().IsRegular() {
 		return fail(

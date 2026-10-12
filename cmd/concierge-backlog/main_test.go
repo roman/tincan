@@ -138,6 +138,22 @@ func TestAddCreatesQueuedTaskInRootBacklog(t *testing.T) {
 	}
 }
 
+func TestLegacyBacklogRefusesMigratedState(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".task-state-version"), []byte("2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	code := run([]string{"--root", root, "add", "task-1", "New work",
+		"--kind", "task", "--repo", "exmachina"}, &output)
+	if code == 0 || !strings.Contains(output.String(), "task-state version") {
+		t.Fatalf("legacy command accepted migrated state: code=%d output=%s", code, output.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "backlog.md")); !os.IsNotExist(err) {
+		t.Fatalf("legacy command changed migrated state: %v", err)
+	}
+}
+
 func TestAddRejectsDuplicateWithoutChangingTask(t *testing.T) {
 	root := filepath.Join(t.TempDir(), ".tincan")
 	if err := os.Mkdir(root, 0700); err != nil {

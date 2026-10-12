@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"github.com/alecthomas/kong"
 	"github.com/roman/tincan/pkg/crew"
 	"github.com/roman/tincan/pkg/firstmate"
+	"github.com/roman/tincan/pkg/stateversion"
 )
 
 type cli struct {
@@ -69,7 +71,7 @@ func run(args []string, stdout io.Writer) int {
 	if err != nil {
 		return failure(stdout, 2, err, commandHelp(args))
 	}
-	context, err := parser.Parse(args)
+	selected, err := parser.Parse(args)
 	if err != nil {
 		return failure(stdout, 2, err, commandHelp(args))
 	}
@@ -77,7 +79,12 @@ func run(args []string, stdout io.Writer) int {
 	if err != nil {
 		return failure(stdout, 2, err, "use an absolute, clean --root path")
 	}
-	switch context.Command() {
+	versionGuard, err := stateversion.AcquireLegacy(context.Background(), command.Root)
+	if err != nil {
+		return failure(stdout, 1, err, "install a Concierge command compatible with this task state")
+	}
+	defer versionGuard.Close()
+	switch selected.Command() {
 	case "register <task-id>":
 		return register(&command, registry, stdout)
 	case "show <task-id>":
@@ -137,7 +144,7 @@ func run(args []string, stdout io.Writer) int {
 		return failure(
 			stdout,
 			2,
-			fmt.Errorf("unknown command %q", context.Command()),
+			fmt.Errorf("unknown command %q", selected.Command()),
 			commandHelp(args),
 		)
 	}

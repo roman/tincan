@@ -13,6 +13,7 @@ import (
 	"github.com/roman/tincan/pkg/herdr"
 	"github.com/roman/tincan/pkg/inbox"
 	"github.com/roman/tincan/pkg/resident"
+	"github.com/roman/tincan/pkg/stateversion"
 	"github.com/roman/tincan/pkg/supervise"
 )
 
@@ -65,6 +66,14 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "concierge-supervise:", err)
 		os.Exit(2)
+	}
+	if args.Task != "" {
+		versionGuard, err := stateversion.AcquireLegacy(ctx, args.Root)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "concierge-supervise:", err)
+			os.Exit(1)
+		}
+		defer versionGuard.Close()
 	}
 	config := supervise.Config{
 		Interval:         args.Interval,

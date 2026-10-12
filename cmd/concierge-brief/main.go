@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"github.com/roman/tincan/pkg/crew"
 	"github.com/roman/tincan/pkg/firstmate"
 	"github.com/roman/tincan/pkg/inbox"
+	"github.com/roman/tincan/pkg/stateversion"
 )
 
 type cli struct {
@@ -263,6 +265,11 @@ func run(args []string, output io.Writer) int {
 	if _, err := firstmate.ParseAbsolutePath(options.MessageRoot); err != nil {
 		return failure(output, 2, err, "use an absolute, clean --message-root path")
 	}
+	versionGuard, err := stateversion.AcquireLegacy(context.Background(), options.Root)
+	if err != nil {
+		return failure(output, 1, err, "install a Concierge command compatible with this task state")
+	}
+	defer versionGuard.Close()
 	recipient, err := inbox.ParseRecipient(options.Recipient)
 	if err != nil {
 		return failure(output, 2, err, "use a valid --recipient name")

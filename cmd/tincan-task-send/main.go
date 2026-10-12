@@ -15,6 +15,7 @@ import (
 	"github.com/roman/tincan/pkg/herdr"
 	"github.com/roman/tincan/pkg/inbox"
 	"github.com/roman/tincan/pkg/notify"
+	"github.com/roman/tincan/pkg/stateversion"
 )
 
 type cli struct {
@@ -186,6 +187,12 @@ func run(
 		fmt.Fprintln(stderr, "tincan-task-send:", err)
 		return 1
 	}
+	versionGuard, err := stateversion.AcquireLegacy(ctx, options.TaskRoot)
+	if err != nil {
+		fmt.Fprintln(stderr, "tincan-task-send:", err)
+		return 1
+	}
+	defer versionGuard.Close()
 	result, err := send(ctx, options, body, client)
 	if !result.recorded {
 		fmt.Fprintln(stderr, "tincan-task-send:", err)

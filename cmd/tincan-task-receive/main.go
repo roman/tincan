@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"github.com/roman/tincan/pkg/crew"
 	"github.com/roman/tincan/pkg/firstmate"
 	"github.com/roman/tincan/pkg/inbox"
+	"github.com/roman/tincan/pkg/stateversion"
 	"github.com/roman/tincan/pkg/taskprotocol"
 )
 
@@ -138,6 +140,12 @@ func run(arguments []string, output io.Writer) int {
 		fmt.Fprintln(output, "error: unknown command")
 		return 2
 	}
+	versionGuard, err := stateversion.AcquireLegacy(context.Background(), options.TaskRoot)
+	if err != nil {
+		fmt.Fprintf(output, "error: %q\nhelp: install a Tincan command compatible with this task state\n", err)
+		return 1
+	}
+	defer versionGuard.Close()
 	status, err := readAssignment(options, command, action)
 	if err != nil {
 		fmt.Fprintf(output, "error: %q\nhelp: inspect the task assignment and generation\n", err)
