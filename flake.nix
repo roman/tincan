@@ -93,10 +93,10 @@
             grep -q 'smoke-a1 - Packaged intake' "$TMPDIR/concierge/backlog.md"
             PATH=/usr/bin:/bin ${packages.concierge-backlog}/bin/concierge-backlog \
               --root "$TMPDIR/concierge" list \
-              | grep -q 'smoke-a1,queued,task,exmachina,Packaged intake'
+              | grep 'smoke-a1,queued,task,exmachina,Packaged intake' >/dev/null
             PATH=/usr/bin:/bin ${packages.concierge-brief}/bin/concierge-brief \
               --root "$TMPDIR/concierge" --message-root "$TMPDIR/messages" \
-              | grep -q 'smoke-a1,queued,task,exmachina,Packaged intake'
+              | grep 'smoke-a1,queued,task,exmachina,Packaged intake' >/dev/null
             ${packages.concierge-task}/bin/concierge-task --help >/dev/null
             ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''${packages.concierge-primary}/bin/concierge-primary --help >/dev/null''}
             for command in concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise; do
