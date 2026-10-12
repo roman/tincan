@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/roman/tincan/pkg/firstmate"
@@ -141,16 +140,8 @@ func (worker *SupervisedWorker) boundClient(
 	if err != nil {
 		return herdr.Client{}, err
 	}
-	recorded, err := os.Stat(bound.Worktree)
-	if err != nil {
+	if err := verifyWorktree(bound.Worktree, directory); err != nil {
 		return herdr.Client{}, err
-	}
-	live, err := os.Stat(directory)
-	if err != nil {
-		return herdr.Client{}, err
-	}
-	if !recorded.IsDir() || !live.IsDir() || !os.SameFile(recorded, live) {
-		return herdr.Client{}, fmt.Errorf("pane %s is outside task worktree", bound.Pane)
 	}
 	return client, nil
 }
