@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,14 +19,19 @@ import (
 )
 
 type workerRunner struct {
-	worktree    string
-	harness     string
-	absent      bool
-	unreadable  bool
-	promptError error
-	prompts     int
-	calls       int
-	onPrompt    func()
+	mutex             sync.Mutex
+	worktree          string
+	harness           string
+	absent            bool
+	unreadable        bool
+	promptError       error
+	prompts           int
+	calls             int
+	onPrompt          func()
+	onStart           func() error
+	starts            int
+	startArgs         []string
+	verificationError bool
 }
 
 func (runner *workerRunner) RunSession(
@@ -33,6 +39,8 @@ func (runner *workerRunner) RunSession(
 	session string,
 	args ...string,
 ) ([]byte, []byte, error) {
+	runner.mutex.Lock()
+	defer runner.mutex.Unlock()
 	runner.calls++
 	if session != "work" {
 		return nil, nil, fmt.Errorf("unexpected session %s", session)
@@ -46,6 +54,9 @@ func (runner *workerRunner) RunSession(
 			),
 		), nil, nil
 	case "agent get":
+		if runner.verificationError && runner.starts > 0 {
+			return []byte(`{"result":{}}`), nil, nil
+		}
 		if runner.absent {
 			return nil, []byte(`{"error":{"code":"agent_not_found"}}`), errors.New("exit 1")
 		}
@@ -68,6 +79,16 @@ func (runner *workerRunner) RunSession(
 			runner.onPrompt()
 		}
 		return []byte(`{"result":{}}`), nil, runner.promptError
+	case "agent start":
+		runner.starts++
+		runner.startArgs = append([]string(nil), args...)
+		if runner.onStart != nil {
+			if err := runner.onStart(); err != nil {
+				return nil, nil, err
+			}
+		}
+		runner.absent = false
+		return []byte(`{"result":{}}`), nil, nil
 	default:
 		return nil, nil, fmt.Errorf("unexpected command %v", args)
 	}
