@@ -12,9 +12,32 @@ import (
 	"github.com/roman/tincan/pkg/taskview"
 )
 
-const backlogHelp = "global flags: --root, --help; commands: backlog add ID TITLE --kind KIND --repo REPO [--body-file FILE|-] [--blocked-by ID]; backlog list [--state queued|in_flight|held|done]; backlog show ID [--full]"
+const backlogHelp = "global flags: --root, --help; commands: backlog add ID TITLE --kind KIND --repo REPO [--body-file FILE|-] [--blocked-by ID]; backlog list [--state queued|in_flight|held|done]; backlog show ID [--full]; backlog start|hold|release ID; backlog finish|cleanup ID --generation GEN; run concierge backlog COMMAND --help for arguments"
 
 type backlogCommands struct {
+	Start struct {
+		TaskID string `arg:"" help:"Task ID."`
+	} `cmd:"" help:"Start a confirmed worker after checking holds and dependencies."`
+	Finish struct {
+		TaskID     string `arg:"" help:"Task ID."`
+		Generation string `required:"" help:"Worker generation that produced the result."`
+		Mode       string `enum:"close,retain" default:"close" help:"Close the task or retain held work in the queue."`
+		ClosedOn   string `help:"Closing date YYYY-MM-DD; required for close, forbidden for retain."`
+	} `cmd:"" help:"Accept a worker result without closing its pane."`
+	Cleanup struct {
+		TaskID     string `arg:"" help:"Task ID."`
+		Generation string `required:"" help:"Accepted worker generation to retire."`
+	} `cmd:"" help:"Retire an accepted result after its exact pane departs."`
+	Hold struct {
+		TaskID string `arg:"" help:"Task ID."`
+		Reason string `required:"" help:"Reason for the hold."`
+		Kind   string `help:"Optional hold kind: captain, external, load, parked, or future."`
+		Until  string `help:"Optional date YYYY-MM-DD; records a date without scheduling release."`
+	} `cmd:"" help:"Replace the task hold to block dispatch or close."`
+	Release struct {
+		TaskID string `arg:"" help:"Task ID."`
+	} `cmd:"" help:"Remove a hold after any accepted completion is retired."`
+
 	Add struct {
 		TaskID   string   `arg:"" help:"Stable task ID."`
 		Title    string   `arg:"" help:"Task title."`
@@ -132,6 +155,6 @@ func (command *backlogCommands) run(
 		}
 		return 0
 	default:
-		return fail(output, 2, fmt.Errorf("unknown command %q", selected), backlogHelp)
+		return command.runLifecycle(ctx, root, selected, output)
 	}
 }

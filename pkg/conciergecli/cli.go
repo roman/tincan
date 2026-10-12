@@ -67,6 +67,16 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	if err != nil {
 		return fail(stdout, 2, err, cliHelp)
 	}
+	if selected.Command() == "backlog finish <task-id>" {
+		if err := validateCompletion(command.Backlog.Finish.Mode, command.Backlog.Finish.ClosedOn); err != nil {
+			return fail(
+				stdout,
+				2,
+				err,
+				"close requires --closed-on YYYY-MM-DD; retain forbids --closed-on",
+			)
+		}
+	}
 	root := command.Root
 	if root == "" {
 		directory, err := os.Getwd()
