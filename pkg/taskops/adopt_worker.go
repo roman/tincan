@@ -2,8 +2,6 @@ package taskops
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -17,13 +15,14 @@ import (
 
 // AdoptionInput identifies an existing worker and its recoverable launch command.
 type AdoptionInput struct {
-	TaskID    string
-	Name      string
-	Session   string
-	Pane      string
-	Project   string
-	Worktree  string
-	AgentArgs []string
+	TaskID     string
+	Generation string
+	Name       string
+	Session    string
+	Pane       string
+	Project    string
+	Worktree   string
+	AgentArgs  []string
 }
 
 // AdoptWorker reserves and confirms a live worker without changing task dispatch.
@@ -41,6 +40,9 @@ func (service *Service) adoptWorker(
 	client herdr.Client,
 	reserve func(context.Context, string, taskstate.Worker) (taskstate.Task, error),
 ) (taskstate.Task, error) {
+	if err := firstmate.ValidateSpawnGeneration(input.Generation); err != nil {
+		return taskstate.Task{}, fmt.Errorf("invalid adoption generation: %w", err)
+	}
 	for _, path := range []string{input.Project, input.Worktree} {
 		if _, err := firstmate.ParseAbsolutePath(path); err != nil {
 			return taskstate.Task{}, err
@@ -66,10 +68,6 @@ func (service *Service) adoptWorker(
 		if err != nil {
 			return taskstate.Task{}, err
 		}
-		random := make([]byte, 16)
-		if _, err := rand.Read(random); err != nil {
-			return taskstate.Task{}, err
-		}
 		worker := taskstate.Worker{
 			Name:       input.Name,
 			Harness:    harness,
@@ -77,7 +75,7 @@ func (service *Service) adoptWorker(
 			Pane:       input.Pane,
 			Project:    input.Project,
 			Worktree:   input.Worktree,
-			Generation: "gen-" + hex.EncodeToString(random),
+			Generation: input.Generation,
 			AgentArgs:  input.AgentArgs,
 		}
 		reserved, err := reserve(ctx, input.TaskID, worker)
@@ -145,7 +143,8 @@ func matchesAdoptionReservation(captured taskstate.Worker, current *taskstate.Wo
 }
 
 func matchesAdoptionInput(worker taskstate.Worker, input AdoptionInput) bool {
-	return worker.Name == input.Name && worker.Session == input.Session &&
+	return worker.Generation == input.Generation &&
+		worker.Name == input.Name && worker.Session == input.Session &&
 		worker.Pane == input.Pane &&
 		worker.Project == input.Project &&
 		worker.Worktree == input.Worktree &&

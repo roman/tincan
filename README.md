@@ -138,21 +138,24 @@ request for the same task ID returns a conflict. Repeat `--blocked-by ID` to
 record dependencies. Use `backlog hold task-1 --reason TEXT` and
 `backlog release task-1` to control dispatch.
 
-Start a live worker in its intended worktree. Adopt its verified pane with the
-exact Herdr session, name, project, worktree, and resume arguments:
+Choose a fresh random generation before starting the idle worker. Supply it as
+`CONCIERGE_SPAWN_GENERATION` through the harness launch settings. Adopt its verified
+pane with that same generation and the exact Herdr session, name, project,
+worktree, and reusable resume arguments:
 
 ```sh
-concierge task adopt task-1 --name worker-1 --session work --pane PANE_ID \
+concierge task adopt task-1 --generation GEN --name worker-1 --session work --pane PANE_ID \
   --project /absolute/project --worktree /absolute/worktree \
   --agent-arg resume --agent-arg THREAD_ID
 concierge worker show task-1
 concierge backlog start task-1
 ```
 
-Adoption verifies the live endpoint and records its launch identity. It does not
-start task dispatch. The start command checks holds and dependencies. Pass the generation printed by adoption to the already running worker before
-it receives, acknowledges, or replies to an assignment. The worker uses that
-supplied generation for its assignment and reply commands.
+Adoption verifies the live endpoint and records the supplied generation. It does
+not inspect the worker environment or start task dispatch. The start command
+checks holds and dependencies. The worker uses its launch generation for its
+assignment and reply commands. Keep generation overrides out of the reusable
+resume arguments; a controlled restart supplies its own reserved generation.
 
 ```sh
 concierge task send task-1 --key assignment-1 --body-file brief.txt

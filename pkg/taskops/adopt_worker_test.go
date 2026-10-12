@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/roman/tincan/pkg/herdr"
@@ -55,13 +56,14 @@ func adoptionFixture(t *testing.T) (*Service, AdoptionInput, *adoptionRunner) {
 		t.Fatal(err)
 	}
 	input := AdoptionInput{
-		TaskID:    "task-1",
-		Name:      "worker-1",
-		Session:   "work",
-		Pane:      "pane-1",
-		Project:   service.root,
-		Worktree:  t.TempDir(),
-		AgentArgs: []string{"resume", "thread-1"},
+		TaskID:     "task-1",
+		Generation: "gen-existing",
+		Name:       "worker-1",
+		Session:    "work",
+		Pane:       "pane-1",
+		Project:    service.root,
+		Worktree:   t.TempDir(),
+		AgentArgs:  []string{"resume", "thread-1"},
 	}
 	return service, input, &adoptionRunner{
 		workerRunner: workerRunner{worktree: input.Worktree, harness: "codex"},
@@ -131,7 +133,7 @@ func TestAdoptWorkerVerifiesAndRetriesCurrentBinding(t *testing.T) {
 				Pane:       input.Pane,
 				Project:    input.Project,
 				Worktree:   input.Worktree,
-				Generation: bound.Generation,
+				Generation: input.Generation,
 				AgentArgs:  input.AgentArgs,
 				Workspace:  runner.workspace,
 				Tab:        runner.tab,
@@ -202,7 +204,7 @@ func TestAdoptWorkerRecoversFailedFinalVerification(t *testing.T) {
 }
 
 func TestAdoptWorkerRejectsChangedBindingAndIneligibleTask(t *testing.T) {
-	for _, state := range []string{"name", "arguments", "project", "worktree", "session", "pane", "harness", "workspace", "tab", "partial workspace", "completion", "pending generation", "pending launch"} {
+	for _, state := range []string{"generation", "pending generation conflict", "in flight generation conflict", "name", "arguments", "project", "worktree", "session", "pane", "harness", "workspace", "tab", "partial workspace", "completion", "pending generation", "pending launch"} {
 		t.Run(state, func(t *testing.T) {
 			ctx := context.Background()
 			service, input, runner := adoptionFixture(t)
@@ -228,12 +230,19 @@ func TestAdoptWorkerRejectsChangedBindingAndIneligibleTask(t *testing.T) {
 				}); err != nil {
 					t.Fatal(err)
 				}
-			} else {
+			} else if state != "pending generation conflict" {
 				if _, err := service.ConfirmAdoption(ctx, input.TaskID, runner.workspace, runner.tab); err != nil {
 					t.Fatal(err)
 				}
 			}
 			switch state {
+			case "generation", "pending generation conflict", "in flight generation conflict":
+				if state == "in flight generation conflict" {
+					if _, err := service.Start(ctx, input.TaskID); err != nil {
+						t.Fatal(err)
+					}
+				}
+				input.Generation = "gen-other"
 			case "name":
 				input.Name = "other-worker"
 			case "arguments":
@@ -427,5 +436,49 @@ func TestAdoptWorkerAcceptsConcurrentConfirmationOfSameReservation(t *testing.T)
 				t.Fatalf("adoption changed concurrent binding: %#v", bound)
 			}
 		})
+	}
+}
+
+func TestAdoptWorkerRejectsInvalidGenerationBeforeDependencies(t *testing.T) {
+	for _, generation := range []string{"", "bad generation", "../generation", "gen\nnext"} {
+		t.Run(fmt.Sprintf("%q", generation), func(t *testing.T) {
+			service := &Service{}
+			_, err := service.AdoptWorker(
+				context.Background(),
+				AdoptionInput{Generation: generation},
+				herdr.Client{},
+			)
+			if err == nil || !strings.Contains(err.Error(), "generation") {
+				t.Fatalf("invalid generation: %v", err)
+			}
+		})
+	}
+}
+
+func TestAdoptWorkerRejectsRetiredGeneration(t *testing.T) {
+	service, input, runner := adoptionFixture(t)
+	ctx := context.Background()
+	before, err := service.store.Update(
+		ctx,
+		input.TaskID,
+		func(task taskstate.Task) (taskstate.Task, error) {
+			snapshot := task.Snapshot()
+			snapshot.Receipt = &taskstate.Receipt{
+				Generation: input.Generation,
+				Mode:       taskstate.Retain,
+			}
+			return taskstate.NewMigrated(snapshot)
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.AdoptWorker(ctx, input, herdr.Client{SessionRunner: runner})
+	if !errors.Is(err, taskstate.ErrInvalidTransition) {
+		t.Fatalf("retired generation: %v", err)
+	}
+	after, err := service.store.Read(ctx, input.TaskID)
+	if err != nil || !reflect.DeepEqual(before.Snapshot(), after.Snapshot()) {
+		t.Fatalf("retired generation changed task: %#v, %v", after.Snapshot(), err)
 	}
 }

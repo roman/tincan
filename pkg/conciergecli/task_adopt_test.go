@@ -61,6 +61,8 @@ esac
 		"--agent-arg",
 		"thread,one",
 		"--agent-arg=--flag",
+		"--generation",
+		"gen-launch",
 	}
 }
 
@@ -78,6 +80,7 @@ func TestTaskAdoptForwardsBindingAndPreservesGeneration(t *testing.T) {
 		worker.Name != "worker" ||
 		worker.Session != "work" ||
 		worker.Harness != "codex" ||
+		worker.Generation != "gen-launch" ||
 		worker.Pane != "pane-1" ||
 		worker.Project != os.Getenv("TEST_PROJECT") ||
 		worker.Worktree != os.Getenv("TEST_WORKTREE") ||
@@ -149,5 +152,30 @@ func TestTaskAdoptReportsProjectionAndWriterFailures(t *testing.T) {
 	if code := Run(context.Background(), []string{"task", "adopt", "--help"}, strings.NewReader(""), &help, io.Discard); code != 0 ||
 		!strings.Contains(help.String(), "--agent-arg") {
 		t.Fatalf("help: %d %s", code, &help)
+	}
+}
+
+func TestTaskAdoptRequiresLaunchGeneration(t *testing.T) {
+	root, args := adoptionCLIFixture(t)
+	for _, test := range []struct {
+		name string
+		args []string
+		code int
+	}{
+		{"missing", args[:len(args)-2], 2},
+		{"empty", append(append([]string{}, args[:len(args)-1]...), ""), 1},
+		{"malformed", append(append([]string{}, args[:len(args)-1]...), "bad generation"), 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := expectLifecycleError(t, root, test.code, test.args...)
+			if !strings.Contains(got, "generation") {
+				t.Fatalf("missing generation error: %s", got)
+			}
+			store, _ := taskstate.NewStore(root)
+			task, err := store.Read(context.Background(), "task-1")
+			if err != nil || task.Snapshot().Worker != nil {
+				t.Fatalf("invalid adoption changed task: %#v, %v", task.Snapshot(), err)
+			}
+		})
 	}
 }

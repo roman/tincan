@@ -9,16 +9,17 @@ import (
 	"github.com/roman/tincan/pkg/taskops"
 )
 
-const adoptUsage = "concierge task adopt TASK_ID --name NAME --session SESSION --pane PANE --project ABS --worktree ABS --agent-arg ARG [--agent-arg ARG...]"
+const adoptUsage = "concierge task adopt TASK_ID --generation GEN --name NAME --session SESSION --pane PANE --project ABS --worktree ABS --agent-arg ARG [--agent-arg ARG...]"
 
 type adoptCommand struct {
-	TaskID    string   `arg:"" help:"Task ID."`
-	Name      string   `required:"" help:"Verified Herdr worker name."`
-	Session   string   `required:"" help:"Herdr session containing the worker."`
-	Pane      string   `required:"" help:"Exact worker pane."`
-	Project   string   `required:"" help:"Absolute project directory."`
-	Worktree  string   `required:"" help:"Absolute worker worktree directory."`
-	AgentArgs []string `name:"agent-arg" required:"" sep:"none" help:"Exact launch argument; repeat in launch order."`
+	TaskID     string   `arg:"" help:"Task ID."`
+	Generation string   `required:"" help:"Generation supplied through the worker launch settings."`
+	Name       string   `required:"" help:"Verified Herdr worker name."`
+	Session    string   `required:"" help:"Herdr session containing the worker."`
+	Pane       string   `required:"" help:"Exact worker pane."`
+	Project    string   `required:"" help:"Absolute project directory."`
+	Worktree   string   `required:"" help:"Absolute worker worktree directory."`
+	AgentArgs  []string `name:"agent-arg" required:"" sep:"none" help:"Exact launch argument; repeat in launch order."`
 }
 
 func (command *adoptCommand) run(ctx context.Context, root string, output io.Writer) int {
@@ -27,7 +28,7 @@ func (command *adoptCommand) run(ctx context.Context, root string, output io.Wri
 		return fail(output, 2, err, adoptUsage)
 	}
 	task, err := service.AdoptWorker(ctx, taskops.AdoptionInput{
-		TaskID: command.TaskID, Name: command.Name, Session: command.Session, Pane: command.Pane,
+		TaskID: command.TaskID, Generation: command.Generation, Name: command.Name, Session: command.Session, Pane: command.Pane,
 		Project: command.Project, Worktree: command.Worktree, AgentArgs: command.AgentArgs,
 	}, herdr.NewClient("herdr"))
 	if err != nil {
