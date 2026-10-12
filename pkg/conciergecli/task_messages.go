@@ -19,6 +19,8 @@ type assignmentSelection struct {
 }
 
 type taskCommands struct {
+	Adopt adoptCommand `cmd:"" help:"Verify and bind an existing worker to a queued or running task."`
+
 	Reply replyCommands `cmd:"" help:"Send worker results or check a primary reply."`
 
 	Send struct {
