@@ -18,6 +18,7 @@ in this repository.
 | `concierge-worker` | Record and inspect local worker launch identities. |
 | `concierge-backlog` | Queue, list, start, resolve replies, and clean up tasks in the supervisor backlog. |
 | `concierge-task` | Adopt a live local worker, cancel an incomplete adoption, or list task records. |
+| `concierge-migrate` | Back up and migrate a guarded task-state root to version 2, or recover an interrupted switch. |
 | `tincan-notify` | Ring an agent while its inbox has pending messages. |
 | `concierge-control` | Inspect, start, or interrupt an agent. |
 | `concierge-supervise` | Check an agent and restart it after confirmed absence. |
@@ -90,6 +91,7 @@ nix build .#concierge-brief
 nix build .#concierge-worker
 nix build .#concierge-backlog
 nix build .#concierge-task
+nix build .#concierge-migrate
 nix build .#tincan-notify
 nix build .#concierge-control
 nix build .#concierge-supervise
@@ -98,10 +100,30 @@ nix build .#concierge-supervise
 Each individual command build places one command in `result/bin/`. To install one command
 in a user profile, use `nix profile install .#tincan-inbox` (or another output
 name). `.#tincan` provides the message commands. `.#concierge` provides the
-six supervisor commands.
+six portable supervisor commands, plus `concierge-primary` on Linux.
+`concierge-migrate` is a separate output until those commands support version 2.
 `nix fmt` formats Go files with golines at 100 columns. The flake check
 verifies formatting, builds every separate output, and runs the complete Go
 test suite once in a dedicated check.
+
+## Task-state migration
+
+`concierge-migrate` takes absolute paths for the task-state root and a new
+sibling backup directory. `backup` copies version 1 state without switching
+the version. `migrate` creates or verifies the backup, converts task records,
+and publishes version 2. `recover` verifies an interrupted switch before it
+confirms version 2. Keep older task writers stopped during migration because
+they do not hold the version gate.
+
+```sh
+concierge-migrate --root /absolute/concierge-state --backup /absolute/concierge-state-backup backup
+concierge-migrate --root /absolute/concierge-state --backup /absolute/concierge-state-backup migrate
+concierge-migrate --root /absolute/concierge-state --backup /absolute/concierge-state-backup recover
+```
+
+The current Concierge task commands still require version 1. Use this command
+only on isolated copies until the version 2 task commands are installed. The
+live Exmachina root has not been migrated.
 
 ## Example
 

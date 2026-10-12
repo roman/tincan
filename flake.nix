@@ -48,6 +48,7 @@
           concierge-worker = mkProgram { name = "concierge-worker"; };
           concierge-backlog = mkProgram { name = "concierge-backlog"; runtime = tasksAxi; };
           concierge-task = mkProgram { name = "concierge-task"; runtime = herdrPackage; };
+          concierge-migrate = mkProgram { name = "concierge-migrate"; };
           concierge-control = mkProgram { name = "concierge-control"; runtime = herdrPackage; };
           concierge-supervise = mkProgram { name = "concierge-supervise"; runtime = herdrPackage; };
           tincan = pkgs.symlinkJoin {
@@ -62,7 +63,7 @@
         in
         {
           default = tincan;
-          inherit tincan concierge tincan-inbox tincan-notify tincan-task-send tincan-task-reply tincan-task-receive concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise;
+          inherit tincan concierge tincan-inbox tincan-notify tincan-task-send tincan-task-reply tincan-task-receive concierge-brief concierge-worker concierge-backlog concierge-task concierge-migrate concierge-control concierge-supervise;
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux { inherit concierge-primary; });
 
       formatter = forEachSystem (pkgs: pkgs.writeShellApplication {
@@ -82,7 +83,7 @@
           tasksAxi = pkgs.callPackage ./nix/tasks-axi.nix { };
         in
         {
-          inherit (packages) tincan-inbox tincan-notify tincan-task-send tincan-task-reply tincan-task-receive concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise;
+          inherit (packages) tincan-inbox tincan-notify tincan-task-send tincan-task-reply tincan-task-receive concierge-brief concierge-worker concierge-backlog concierge-task concierge-migrate concierge-control concierge-supervise;
           concierge-smoke = pkgs.runCommand "concierge-smoke" { } ''
             ${packages.concierge-worker}/bin/concierge-worker --help >/dev/null
             ${packages.concierge-backlog}/bin/concierge-backlog --help >/dev/null
@@ -98,10 +99,12 @@
               --root "$TMPDIR/concierge" --message-root "$TMPDIR/messages" \
               | grep 'smoke-a1,queued,task,exmachina,Packaged intake' >/dev/null
             ${packages.concierge-task}/bin/concierge-task --help >/dev/null
+            ${packages.concierge-migrate}/bin/concierge-migrate --help >/dev/null
             ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''${packages.concierge-primary}/bin/concierge-primary --help >/dev/null''}
             for command in concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise; do
               test -x "${packages.concierge}/bin/$command"
             done
+            test ! -e ${packages.concierge}/bin/concierge-migrate
             ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''test -x "${packages.concierge}/bin/concierge-primary"''}
             for command in tincan-inbox tincan-notify tincan-task-send tincan-task-reply tincan-task-receive; do
               test -x "${packages.tincan}/bin/$command"
