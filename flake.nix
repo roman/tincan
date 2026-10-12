@@ -33,6 +33,16 @@
           checkPhase = ''
             runHook preCheck
             export PATH=${tasksAxi}/bin:$PATH
+            go list -deps ./cmd/tincan > tincan-dependencies
+            while IFS= read -r dependency; do
+              case "$dependency" in
+                github.com/roman/tincan/cmd/tincan|github.com/roman/tincan/pkg/tincancli|github.com/roman/tincan/pkg/inbox|github.com/roman/tincan/pkg/notify|github.com/roman/tincan/pkg/herdr) ;;
+                github.com/roman/tincan/*)
+                  printf 'Forbidden Tincan dependency: %s\n' "$dependency" >&2
+                  exit 1
+                  ;;
+              esac
+            done < tincan-dependencies
             go test ./...
             runHook postCheck
           '';
@@ -54,6 +64,7 @@
               wrapProgram "$out/bin/${name}" --prefix PATH : ${runtime}/bin
             ''}
           '';
+          tincan-command = mkProgram { name = "tincan"; runtime = herdrPackage; };
           tincan-inbox = mkProgram { name = "tincan-inbox"; };
           tincan-notify = mkProgram { name = "tincan-notify"; runtime = herdrPackage; };
           tincan-task-send = mkProgram { name = "tincan-task-send"; runtime = herdrPackage; };
@@ -69,7 +80,7 @@
           concierge-supervise = mkProgram { name = "concierge-supervise"; runtime = herdrPackage; };
           tincan = pkgs.symlinkJoin {
             name = "tincan-0.1.0";
-            paths = [ tincan-inbox tincan-notify tincan-task-send tincan-task-reply tincan-task-receive ];
+            paths = [ tincan-command tincan-inbox tincan-notify tincan-task-send tincan-task-reply tincan-task-receive ];
           };
           concierge = pkgs.symlinkJoin {
             name = "concierge-0.1.0";
@@ -79,7 +90,7 @@
         in
         {
           default = tincan;
-          inherit tincan concierge tincan-inbox tincan-notify tincan-task-send tincan-task-reply tincan-task-receive concierge-brief concierge-worker concierge-backlog concierge-task concierge-migrate concierge-control concierge-supervise;
+          inherit tincan concierge tincan-command tincan-inbox tincan-notify tincan-task-send tincan-task-reply tincan-task-receive concierge-brief concierge-worker concierge-backlog concierge-task concierge-migrate concierge-control concierge-supervise;
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux { inherit concierge-primary; });
 
       formatter = forEachSystem (pkgs: pkgs.writeShellApplication {
@@ -98,7 +109,19 @@
           packages = self.packages.${pkgs.stdenv.hostPlatform.system};
         in
         {
-          inherit (packages) tincan-inbox tincan-notify tincan-task-send tincan-task-reply tincan-task-receive concierge-brief concierge-worker concierge-backlog concierge-task concierge-migrate concierge-control concierge-supervise;
+          inherit (packages) tincan-command tincan-inbox tincan-notify tincan-task-send tincan-task-reply tincan-task-receive concierge-brief concierge-worker concierge-backlog concierge-task concierge-migrate concierge-control concierge-supervise;
+          tincan-smoke = pkgs.runCommand "tincan-smoke" { } ''
+            unset TINCAN_HOME HERDR_SESSION HERDR_SOCKET_PATH HERDR_WORKSPACE_ID HERDR_TAB_ID HERDR_PANE_ID
+            export PATH=
+            test -x ${packages.tincan-command}/bin/tincan
+            test "$(${packages.tincan}/bin/tincan --version)" = 0.1.0
+            ${packages.tincan}/bin/tincan --root "$TMPDIR/messages" inbox send smoke --body 'Packaged message' > sent
+            ${pkgs.gnugrep}/bin/grep -q '^id: ' sent
+            ${packages.tincan}/bin/tincan --root "$TMPDIR/messages" inbox list smoke > pending
+            ${pkgs.gnugrep}/bin/grep -q '^count: 1$' pending
+            ${packages.tincan}/bin/tincan notify --help >/dev/null
+            : > "$out"
+          '';
           go-source = pkgs.runCommand "tincan-go-source" { src = (goModule pkgs).src; } ''
             test -e "$src/go.mod"
             test -e "$src/cmd"
