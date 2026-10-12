@@ -246,32 +246,10 @@ func checkWorkerIdentity(tasks []Task, candidate Task) error {
 func (store *Store) updatePinned(
 	ctx context.Context, root *os.Root, id firstmate.TaskID, transition func(Task) (Task, error),
 ) (Task, error) {
-	var updated Task
-	err := withTaskLock(ctx, root, id, func() error {
-		records, selectedDirectory, err := openRecords(root)
-		if err != nil {
-			return err
-		}
-		defer records.Close()
-		current, selectedRecord, err := readRecord(records, id.String())
-		if err != nil {
-			return err
-		}
-		updated, err = transition(current)
-		if err != nil {
-			return err
-		}
-		if updated.ID() != id.String() {
-			return ErrInvalidTask
-		}
-		data, err := updated.Encode()
-		if err != nil {
-			return err
-		}
-		return writeRecord(root, records, selectedDirectory, id.String(), data,
-			selectedRecord, store.syncDirectory)
+	return store.withTaskPinned(ctx, root, id, func(task *LockedTask) error {
+		_, err := task.apply(transition)
+		return err
 	})
-	return updated, err
 }
 
 func parseStoreTaskID(value string) (firstmate.TaskID, error) {
