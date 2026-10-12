@@ -101,3 +101,73 @@ func TestRunCountsSuccessfulExternalRestarts(t *testing.T) {
 		t.Fatalf("restarts = %d, want 3", worker.restarts)
 	}
 }
+
+type cancellationWorker struct {
+	entered       chan struct{}
+	healthyChecks int
+}
+
+func (worker *cancellationWorker) Observe(ctx context.Context) error {
+	if worker.healthyChecks > 0 {
+		worker.healthyChecks--
+		return nil
+	}
+	close(worker.entered)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (worker *cancellationWorker) Restart(context.Context) error {
+	return errors.New("canceled probe must not restart a worker")
+}
+
+func TestRunCancellationDuringProbe(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		healthyChecks int
+	}{{"initial", 0}, {"periodic", 1}} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			worker := &cancellationWorker{
+				entered:       make(chan struct{}),
+				healthyChecks: test.healthyChecks,
+			}
+			result := make(chan error, 1)
+			go func() {
+				result <- Run(ctx, worker, Config{Interval: time.Millisecond, RestartTolerance: 0, RestartWindow: time.Second})
+			}()
+			select {
+			case <-worker.entered:
+			case <-time.After(time.Second):
+				t.Fatal("probe did not start")
+			}
+			cancel()
+			select {
+			case err := <-result:
+				if err != nil {
+					t.Fatalf("canceled probe returned %v", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("canceled probe did not stop")
+			}
+		})
+	}
+}
+
+func TestRunAlreadyCanceledSkipsProbe(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	worker := &cancellationWorker{entered: make(chan struct{})}
+	if err := Run(ctx, worker, Config{Interval: time.Second, RestartWindow: time.Second}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-worker.entered:
+		t.Fatal("already canceled run started a probe")
+	default:
+	}
+	if err := Run(ctx, worker, Config{}); err == nil {
+		t.Fatal("cancellation bypassed invalid configuration")
+	}
+}

@@ -51,10 +51,16 @@ func Run(ctx context.Context, worker Worker, config Config) error {
 		config.RestartWindow <= 0 {
 		return errors.New("invalid restart tolerance")
 	}
+	if ctx.Err() != nil {
+		return nil
+	}
 	monitor := cap.NewWorker("worker-health", func(workerCtx context.Context) error {
 		ticker := time.NewTicker(config.Interval)
 		defer ticker.Stop()
 		if err := Check(workerCtx, worker); err != nil {
+			if workerCtx.Err() != nil {
+				return nil
+			}
 			return err
 		}
 		for {
@@ -63,6 +69,9 @@ func Run(ctx context.Context, worker Worker, config Config) error {
 				return nil
 			case <-ticker.C:
 				if err := Check(workerCtx, worker); err != nil {
+					if workerCtx.Err() != nil {
+						return nil
+					}
 					return err
 				}
 			}
