@@ -236,17 +236,24 @@ func validate(selected record) error {
 	if selected.Worker != nil && !validWorker(*selected.Worker) {
 		return ErrInvalidTask
 	}
-	if selected.State == InFlight && selected.Worker == nil {
+	if selected.State == InFlight && selected.Worker == nil &&
+		(selected.Completion == nil || selected.Completion.Phase != Retired) {
 		return ErrInvalidTask
 	}
 	if selected.Worker != nil && selected.Worker.PendingAdoption && selected.State != Queued {
 		return ErrInvalidTask
 	}
 	if selected.Completion != nil {
-		if selected.Worker == nil || !validCompletion(*selected.Completion) ||
-			selected.Completion.Generation != selected.Worker.Generation ||
-			selected.Worker.PendingAdoption || selected.Worker.PendingGeneration != "" ||
-			selected.Worker.PendingLaunch != "" {
+		if !validCompletion(*selected.Completion) {
+			return ErrInvalidTask
+		}
+		if selected.Worker == nil && selected.Completion.Phase != Retired {
+			return ErrInvalidTask
+		}
+		if selected.Worker != nil &&
+			(selected.Completion.Generation != selected.Worker.Generation ||
+				selected.Worker.PendingAdoption || selected.Worker.PendingGeneration != "" ||
+				selected.Worker.PendingLaunch != "") {
 			return ErrInvalidTask
 		}
 		if (selected.State == Done && selected.Completion.Mode != Close) ||

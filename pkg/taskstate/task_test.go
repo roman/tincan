@@ -215,6 +215,18 @@ func TestMigratedTaskRepresentsCompletionStages(t *testing.T) {
 			Definition: definition, State: InFlight, Worker: worker,
 			Completion: &Completion{Generation: "gen-1", Mode: Close, Phase: Retired},
 		}},
+		{"retired receipt after close", Snapshot{
+			Definition: definition, State: Done,
+			Completion: &Completion{Generation: "gen-1", Mode: Close, Phase: Retired},
+		}},
+		{"retired receipt after retain", Snapshot{
+			Definition: definition, State: Queued,
+			Completion: &Completion{Generation: "gen-1", Mode: Retain, Phase: Retired},
+		}},
+		{"retired receipt before queue update", Snapshot{
+			Definition: definition, State: InFlight,
+			Completion: &Completion{Generation: "gen-1", Mode: Close, Phase: Retired},
+		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -230,6 +242,17 @@ func TestMigratedTaskRepresentsCompletionStages(t *testing.T) {
 				t.Fatalf("stored task could not be loaded: %v", err)
 			}
 		})
+	}
+}
+
+func TestMigratedTaskRejectsAcceptedResultWithoutWorker(t *testing.T) {
+	input := Snapshot{
+		Definition: Definition{ID: "task-1", Title: "Work", Repo: "exmachina", Kind: "ship"},
+		State:      Done,
+		Completion: &Completion{Generation: "gen-1", Mode: Close, Phase: Accepted},
+	}
+	if _, err := NewMigrated(input); !errors.Is(err, ErrInvalidTask) {
+		t.Fatalf("NewMigrated error = %v, want invalid task", err)
 	}
 }
 
