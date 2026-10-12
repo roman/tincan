@@ -366,6 +366,26 @@ func TestMigratedTaskKeepsOldReceiptDuringNewRetirement(t *testing.T) {
 	}
 }
 
+func TestMigratedTaskPreservesWorkerDuringPartialRetirement(t *testing.T) {
+	worker := &Worker{
+		Name: "worker-1", Harness: "codex", Session: "work", Pane: "pane-1",
+		Project: "/project", Worktree: "/worktree", Generation: "gen-1",
+		AgentArgs: []string{"resume", "thread-1"},
+	}
+	input := Snapshot{
+		Definition: Definition{ID: "task-1", Title: "Work", Repo: "exmachina", Kind: "ship"},
+		State:      Done, Worker: worker,
+		Completion: &Completion{Generation: "gen-1", Mode: Close, Phase: Retired},
+	}
+	if _, err := NewMigrated(input); err != nil {
+		t.Fatal(err)
+	}
+	input.Completion = nil
+	if _, err := NewMigrated(input); !errors.Is(err, ErrInvalidTask) {
+		t.Fatalf("unbound active worker error = %v, want invalid task", err)
+	}
+}
+
 func TestMigratedTaskChecksReceiptAgainstSameGenerationCompletion(t *testing.T) {
 	tests := []struct {
 		name        string

@@ -254,6 +254,11 @@ func validate(selected record) error {
 	if selected.Worker != nil && !validWorker(*selected.Worker) {
 		return ErrInvalidTask
 	}
+	if selected.Worker != nil && selected.Worker.Workspace == "" &&
+		!selected.Worker.PendingAdoption &&
+		(selected.Completion == nil || selected.Completion.Phase != Retired) {
+		return ErrInvalidTask
+	}
 	if selected.State == InFlight && selected.Worker == nil &&
 		(selected.Completion == nil || selected.Completion.Phase != Retired) {
 		return ErrInvalidTask
@@ -377,11 +382,8 @@ func validWorker(worker Worker) bool {
 		worker.PendingGeneration != worker.PendingLaunch {
 		return false
 	}
-	if worker.PendingAdoption {
-		return (worker.Workspace == "" && worker.Tab == "") ||
-			(validAtom(worker.Workspace, false) && validAtom(worker.Tab, true))
-	}
-	return validAtom(worker.Workspace, false) && validAtom(worker.Tab, true)
+	return (worker.Workspace == "" && worker.Tab == "") ||
+		(validAtom(worker.Workspace, false) && validAtom(worker.Tab, true))
 }
 
 func validCompletion(completion Completion) bool {
