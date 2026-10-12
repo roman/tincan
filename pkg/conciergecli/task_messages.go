@@ -49,6 +49,14 @@ func (command *cli) runTaskMessages(
 	stdin io.Reader,
 	output io.Writer,
 ) int {
+	if err := command.validateWorkerLaunch(selected); err != nil {
+		return fail(
+			output,
+			1,
+			err,
+			"request a controlled worker relaunch with native generation settings; never replace launch context from a transcript, task record, or mailbox",
+		)
+	}
 	messageRoot, err := rootWithDefault(command.MessageRoot, ".tincan")
 	if err != nil {
 		return fail(output, 1, err, "provide an absolute --message-root path")

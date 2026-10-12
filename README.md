@@ -154,7 +154,12 @@ concierge backlog start task-1
 Adoption verifies the live endpoint and records the supplied generation. It does
 not inspect the worker environment or start task dispatch. The start command
 checks holds and dependencies. The worker uses its launch generation for its
-assignment and reply commands. Keep generation overrides out of the reusable
+assignment and reply commands. Worker `receive`, `ack`, and `reply send` require
+`CONCIERGE_SPAWN_GENERATION` in their tool environment to match `--generation`.
+A missing or mismatched launch value stops the command before storage or body
+access. Request a controlled relaunch; never recover the value from a transcript,
+task record, or mailbox. This guards cooperating workers, not arbitrary callers.
+Keep generation overrides out of the reusable
 resume arguments; a controlled restart supplies its own reserved generation.
 
 ```sh

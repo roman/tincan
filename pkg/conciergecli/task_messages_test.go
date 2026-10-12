@@ -48,6 +48,7 @@ func TestAssignmentReceiveAndAckRespectCallerGeneration(t *testing.T) {
 	stale := assignmentMessage(t, root, messageRoot, "old-generation", "Hidden stale work")
 	globals := []string{"--message-root", messageRoot, "--recipient", "../unused"}
 	receive := func(id, generation string) string {
+		t.Setenv(workerLaunchGeneration, generation)
 		return invoke(
 			t,
 			root,
@@ -63,6 +64,7 @@ func TestAssignmentReceiveAndAckRespectCallerGeneration(t *testing.T) {
 			)...)
 	}
 	ack := func(id, generation string) string {
+		t.Setenv(workerLaunchGeneration, generation)
 		return invoke(
 			t,
 			root,
@@ -111,6 +113,7 @@ func TestAssignmentReceiveAndAckRespectCallerGeneration(t *testing.T) {
 }
 
 func TestAssignmentUsageAndOutputFailures(t *testing.T) {
+	t.Setenv(workerLaunchGeneration, "gen-1")
 	root := lifecycleRoot(t)
 	invoke(t, root, "", "backlog", "start", "task-1")
 	messageRoot := t.TempDir()

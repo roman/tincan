@@ -14,6 +14,7 @@ import (
 )
 
 func TestTaskReplySendCheckAndRetiredRetry(t *testing.T) {
+	t.Setenv(workerLaunchGeneration, "gen-1")
 	for _, binding := range []string{"bound", "unbound"} {
 		t.Run(binding, func(t *testing.T) {
 			root := lifecycleRoot(t)
@@ -77,9 +78,15 @@ func TestTaskReplySendCheckAndRetiredRetry(t *testing.T) {
 				expected += "assignment_id: \"" + assignment.ID.String() + "\"\n"
 			}
 			expected += "body: \"Complete result\\n\\\"quoted\\\" ✓\\n\"\n"
+			launch := ""
+			if binding == "unbound" {
+				launch = "invalid worker context"
+			}
+			t.Setenv(workerLaunchGeneration, launch)
 			if got := invoke(t, root, "", check...); got != expected {
 				t.Fatalf("check: %s", got)
 			}
+			t.Setenv(workerLaunchGeneration, "gen-1")
 			invoke(
 				t,
 				root,
@@ -112,6 +119,7 @@ func TestTaskReplySendCheckAndRetiredRetry(t *testing.T) {
 }
 
 func TestTaskReplyPreservesDeliveryWhenAcknowledgementFails(t *testing.T) {
+	t.Setenv(workerLaunchGeneration, "gen-1")
 	root := lifecycleRoot(t)
 	invoke(t, root, "", "backlog", "start", "task-1")
 	messageRoot := t.TempDir()
@@ -167,6 +175,7 @@ func TestTaskReplyPreservesDeliveryWhenAcknowledgementFails(t *testing.T) {
 }
 
 func TestTaskReplyUsagePublicationAndWriterFailures(t *testing.T) {
+	t.Setenv(workerLaunchGeneration, "gen-1")
 	root := lifecycleRoot(t)
 	invoke(t, root, "", "backlog", "start", "task-1")
 	messageRoot := t.TempDir()

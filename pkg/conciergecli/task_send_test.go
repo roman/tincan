@@ -56,6 +56,7 @@ esac
 }
 
 func TestTaskSendPreservesDeliveryOnNotificationFailureAndRetry(t *testing.T) {
+	t.Setenv(workerLaunchGeneration, "gen-1")
 	root, messageRoot, record := assignmentSendFixture(t)
 	body := "Complete assignment\n\"quoted\" ✓\n"
 	path := filepath.Join(t.TempDir(), "body")
