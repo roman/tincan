@@ -10,6 +10,7 @@ import (
 
 	"github.com/roman/tincan/pkg/crew"
 	"github.com/roman/tincan/pkg/inbox"
+	"github.com/roman/tincan/pkg/taskprotocol"
 )
 
 func replyFixture(t *testing.T) (string, string) {
@@ -144,7 +145,7 @@ func TestReplyRetryAfterPublicationAcknowledgesAssignment(t *testing.T) {
 		t.Fatal(err)
 	}
 	primary, _ := inbox.ParseRecipient("firstmate")
-	replyBody, _ := json.Marshal(replyEnvelope{
+	replyBody, _ := json.Marshal(taskprotocol.Reply{
 		Kind: "task-reply", State: filepath.Join(root, "tasks"),
 		Task: "task-1", SpawnGeneration: "gen-1",
 		AssignmentID: assignment.ID.String(), ReplyKey: "answer-1", Body: "Done",
@@ -236,7 +237,7 @@ func TestAssignmentIdentifiesOneReplyAcrossKeys(t *testing.T) {
 		if err != nil || len(replies) != index+1 {
 			t.Fatalf("replies=%+v err=%v", replies, err)
 		}
-		var reply replyEnvelope
+		var reply taskprotocol.Reply
 		if err := json.Unmarshal([]byte(replies[index].Body), &reply); err != nil ||
 			reply.AssignmentID != assignment.ID.String() {
 			t.Fatalf("reply=%+v err=%v", reply, err)
@@ -325,7 +326,7 @@ func TestReplyCheckRejectsMissingBoundAssignment(t *testing.T) {
 	store, _ := inbox.New(messages)
 	primary, _ := inbox.ParseRecipient("firstmate")
 	missing, _ := inbox.ParseMessageID("k-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	body, _ := json.Marshal(replyEnvelope{
+	body, _ := json.Marshal(taskprotocol.Reply{
 		Kind: "task-reply", State: filepath.Join(root, "tasks"), Task: "task-1",
 		SpawnGeneration: "gen-1", AssignmentID: missing.String(), ReplyKey: "answer-1",
 		Body: "Done",
@@ -358,7 +359,7 @@ func TestReplyCheckRejectsMalformedBoundReply(t *testing.T) {
 		{name: "wrong inbox key", replyKey: "answer-1", key: "unrelated"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			body, _ := json.Marshal(replyEnvelope{
+			body, _ := json.Marshal(taskprotocol.Reply{
 				Kind: "task-reply", State: filepath.Join(root, "tasks"), Task: "task-1",
 				SpawnGeneration: "gen-1", AssignmentID: assignmentID,
 				ReplyKey: test.replyKey, Body: "Done",
@@ -381,7 +382,7 @@ func TestLegacyReplyRetryKeepsItsEnvelope(t *testing.T) {
 	root, messages := replyFixture(t)
 	store, _ := inbox.New(messages)
 	primary, _ := inbox.ParseRecipient("firstmate")
-	body, _ := json.Marshal(replyEnvelope{
+	body, _ := json.Marshal(taskprotocol.Reply{
 		Kind: "task-reply", State: filepath.Join(root, "tasks"),
 		Task: "task-1", SpawnGeneration: "gen-1", Body: "Done",
 	})

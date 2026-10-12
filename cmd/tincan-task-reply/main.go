@@ -35,16 +35,6 @@ type checkCommand struct {
 	ID string `arg:"" help:"Pending Tincan message ID."`
 }
 
-type replyEnvelope struct {
-	Kind            string `json:"kind"`
-	State           string `json:"state"`
-	Task            string `json:"task"`
-	SpawnGeneration string `json:"spawn_generation"`
-	AssignmentID    string `json:"assignment_id,omitempty"`
-	ReplyKey        string `json:"reply_key,omitempty"`
-	Body            string `json:"body"`
-}
-
 var errOldGeneration = errors.New("worker generation is no longer current")
 
 func replyBody(path string, stdin io.Reader) (string, error) {
@@ -131,7 +121,7 @@ func send(command cli, stdin io.Reader, stdout io.Writer) error {
 		if input.AssignmentID != "" {
 			replyKey = input.Key
 		}
-		envelope, err := json.Marshal(replyEnvelope{
+		envelope, err := json.Marshal(taskprotocol.Reply{
 			Kind: "task-reply", State: filepath.Join(command.TaskRoot, "tasks"),
 			Task: input.TaskID, SpawnGeneration: input.Generation,
 			AssignmentID: input.AssignmentID, ReplyKey: replyKey, Body: body,
@@ -185,30 +175,9 @@ func check(command cli, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	var envelope replyEnvelope
-	if err := json.Unmarshal([]byte(message.Body), &envelope); err != nil {
-		return fmt.Errorf("invalid task reply: %w", err)
-	}
-	if envelope.Kind != "task-reply" ||
-		envelope.State != filepath.Join(command.TaskRoot, "tasks") ||
-		strings.TrimSpace(envelope.Body) == "" {
-		return errors.New("message is not a task reply for this state root")
-	}
-	if _, err := firstmate.ParseTaskID(envelope.Task); err != nil {
+	envelope, err := taskprotocol.DecodeReply(message.Body, message.Key, command.TaskRoot)
+	if err != nil {
 		return err
-	}
-	if err := firstmate.ValidateSpawnGeneration(envelope.SpawnGeneration); err != nil {
-		return err
-	}
-	if envelope.AssignmentID != "" {
-		if _, err := inbox.ParseMessageID(envelope.AssignmentID); err != nil {
-			return err
-		}
-		expectedKey := fmt.Sprintf("task-reply:%s:%s:%s:%s",
-			command.TaskRoot, envelope.Task, envelope.SpawnGeneration, envelope.AssignmentID)
-		if strings.TrimSpace(envelope.ReplyKey) == "" || message.Key != expectedKey {
-			return errors.New("bound reply has an invalid key")
-		}
 	}
 	registry, err := crew.New(command.TaskRoot)
 	if err != nil {
