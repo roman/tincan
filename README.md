@@ -1,265 +1,237 @@
 # Tincan and Concierge
 
-> [!NOTE]
-> Herdr is currently the only terminal adapter supported by `tincan-notify`.
-> `concierge-control` and `concierge-supervise` use Herdr directly.
+Tincan provides durable messages and notifications between agents. Concierge
+provides local task intake, worker bindings, result handling, and supervision.
+Install both commands to run a supervisor from a project root. Repository
+skills and lifecycle hooks supply the session instructions.
 
-Tincan provides small Go programs for agent messaging. Concierge provides
-local task and worker supervision. Each program can run on its own. The
-programs share reusable packages under `pkg/` while the two command sets live
-in this repository.
-
-| Program | Responsibility |
+| Command | Responsibility |
 | --- | --- |
-| `tincan-inbox` | Store, list, read, and acknowledge messages for a recipient. |
-| `tincan-task-reply` | Send and check worker replies against a task generation. |
-| `tincan-task-receive` | Read and acknowledge assignments for the current worker generation. |
-| `concierge-brief` | Show pending primary wakes, queued backlog work, local tasks, and registered workers at session start. |
-| `concierge-worker` | Record and inspect local worker launch identities. |
-| `concierge-backlog` | Queue, list, start, resolve replies, and clean up tasks in the supervisor backlog. |
-| `concierge-task` | Adopt a live local worker, cancel an incomplete adoption, or list task records. |
-| `concierge-migrate` | Back up and migrate a guarded task-state root to version 2, or recover an interrupted switch. |
-| `tincan-notify` | Ring an agent while its inbox has pending messages. |
-| `concierge-control` | Inspect, start, or interrupt an agent. |
-| `concierge-supervise` | Check an agent and restart it after confirmed absence. |
+| `tincan inbox` | Send, list, wait for, read, and acknowledge messages. |
+| `tincan notify` | Prompt a Herdr endpoint while its inbox has pending messages. |
+| `concierge state` | Initialize fresh task state, back up legacy state, migrate, and recover. |
+| `concierge backlog` | Queue work, manage holds, dispatch, accept results, and retire worker bindings. |
+| `concierge task` | Adopt workers, exchange bound assignments and replies, stop panes, and inspect tasks. |
+| `concierge worker` | Inspect recorded worker identities and recovery markers. |
+| `concierge primary` | Claim, verify, and release root ownership from Linux lifecycle hooks. |
+| `concierge control` | Inspect, start, and interrupt live Herdr agents. |
+| `concierge supervise` | Monitor a manual pane or supervise a task with inbox delivery and worker recovery. |
+| `concierge brief` | Show pending primary messages, queued work, workers, and unfinished completions. |
 
-The inbox is the durable handoff. A sender stores a message with
-`tincan-inbox send`. The notifier rings the recipient at intervals until the
-recipient reads and acknowledges the message. A ring is a prompt to check the
-inbox; it is not a delivery receipt. A sender can supply a stable `--key` to
-retry a send without creating another message. Reusing a key with a different
-body returns an error.
-
-```mermaid
-sequenceDiagram
-    participant Sender
-    participant Inbox
-    participant Notifier
-    participant Adapter
-    participant Agent
-    Sender->>Inbox: Send message for recipient
-    Notifier->>Inbox: List pending messages
-    Inbox-->>Notifier: Pending messages
-    Notifier->>Adapter: Ring recipient
-    Adapter->>Agent: Check inbox prompt
-    Note over Notifier,Agent: Ring repeats on each interval while messages remain pending
-    Agent->>Inbox: List and read message
-    Inbox-->>Agent: Message body
-    Agent->>Inbox: Acknowledge after handling
-    Notifier->>Inbox: List on next interval
-    Inbox-->>Notifier: No pending messages
-```
-
-The inbox works independently of a terminal adapter. The notifier selects an
-adapter with `--adapter` and an agent name or pane ID with `--target`. The
-`--session` value selects the Herdr session that owns the target; it can also
-come from `HERDR_SESSION`. The notifier refuses to start without a valid
-session. The `--recipient` value selects the mailbox. The notifier, control, and supervisor
-programs accept a `--herdr` path if the Herdr command is not on `PATH`. The supervisor
-uses `go-capataz` to run the health monitor and tolerate repeated restarts and
-monitor failures. Herdr's `unknown` agent status does not trigger
-a restart. The supervisor starts an agent only
-when Herdr reports that the agent is absent and the pane is ready. Repeat
-`--agent-arg` to pass agent launch arguments through Herdr's `--` separator.
-Configure the agent's resume identity, model, and effort there when needed. A
-restart alone launches an agent; it does not restore its prior work. The
-durable inbox keeps pending messages available after a restart.
-
-Concierge control does not yet exit or relaunch agents. Safe exit requires proof
-that the agent input line is empty. Herdr 0.9.3 does not expose that state.
-
-## Build and test
-
-The flake pins Nixpkgs, Herdr, and the Go module dependencies. The
-development shell provides Go 1.25, golines, and Herdr.
-Each command has its own package output, so an inbox installation does not bring
-Herdr into its runtime path.
-The notifier, task sender, task manager, control, and supervisor packages include
-the pinned Herdr command.
+## Install and verify
 
 ```sh
+nix profile install .#tincan .#concierge
+tincan --version
+concierge --version
+concierge --help
+```
+
+The primary package outputs each expose one public executable: `tincan` and
+`concierge`. Both include pinned Herdr 0.9.3. Concierge also supplies process
+inspection through Linux `procps` or native `/bin/ps` on macOS. Primary ownership
+requires Linux `/proc`. Herdr is the supported terminal adapter. The commands
+can use existing panes; they do not create terminal layouts.
+
+```sh
+nix build .#tincan .#concierge
 nix develop
 nix fmt
 go test ./...
-nix flake check --no-write-lock-file
-nix build .#tincan
-nix build .#concierge
-nix build .#tincan-inbox
-nix build .#tincan-task-reply
-nix build .#tincan-task-receive
-nix build .#concierge-brief
-nix build .#concierge-worker
-nix build .#concierge-backlog
-nix build .#concierge-task
-nix build .#concierge-migrate
-nix build .#tincan-notify
-nix build .#concierge-control
-nix build .#concierge-supervise
+nix flake check --system x86_64-linux
 ```
 
-Each individual command build places one command in `result/bin/`. To install one command
-in a user profile, use `nix profile install .#tincan-inbox` (or another output
-name). `.#tincan` provides the message commands. `.#concierge` provides the
-six portable supervisor commands, plus `concierge-primary` on Linux.
-`concierge-migrate` is a separate output until those commands support version 2.
-`nix fmt` formats Go files with golines at 100 columns. The flake check
-verifies formatting, builds every separate output, and runs the complete Go
-test suite once in a dedicated check.
+The development shell provides Go 1.25, golines, and Herdr. `nix fmt` formats Go
+at 100 columns. The Linux flake gate builds command packages, checks formatting,
+runs the Go suite, and tests installed commands with an empty caller `PATH`.
+A dependency check keeps Concierge task packages out of the generic Tincan
+binary. Individual standalone package outputs remain available while consumers
+complete their command migration.
 
-## Task-state migration
+## State roots
 
-`concierge-migrate` takes absolute paths for the task-state root and a new
-sibling backup directory. `backup` copies version 1 state without switching
-the version. `migrate` creates or verifies the backup, converts task records,
-and publishes version 2. `recover` verifies an interrupted switch before it
-confirms version 2. Keep older task writers stopped during migration because
-they do not hold the version gate.
+From the project root, set absolute paths once:
 
 ```sh
-concierge-migrate --root /absolute/concierge-state --backup /absolute/concierge-state-backup backup
-concierge-migrate --root /absolute/concierge-state --backup /absolute/concierge-state-backup migrate
-concierge-migrate --root /absolute/concierge-state --backup /absolute/concierge-state-backup recover
+export CONCIERGE_HOME="$PWD/.concierge"
+export TINCAN_HOME="$PWD/.tincan"
+concierge state init
+concierge
 ```
 
-The current Concierge task commands still require version 1. Use this command
-only on isolated copies until the version 2 task commands are installed. The
-live Exmachina root has not been migrated.
+`--root` overrides `CONCIERGE_HOME` for Concierge and `TINCAN_HOME` for Tincan.
+Concierge's `--message-root` overrides `TINCAN_HOME`. Without these settings,
+the commands use `.concierge` and `.tincan` under the current directory.
+Concierge requires clean absolute state paths. Its primary inbox recipient is
+`concierge`; use `--recipient NAME` consistently when selecting another primary.
 
-## Example
+`state init` requires an existing parent directory. It initializes a fresh root
+or confirms an existing version 2 root. It preserves primary ownership files,
+the installed `profile` symlink, and existing version 2 task records. It rejects legacy
+backlogs, unknown fresh-root entries, pending migrations, and unsafe file types.
+Stop state writers and installers during fresh initialization.
 
-Use one state directory for the sender, recipient, and notifier:
+Task records under `.concierge/records/` are authoritative. `backlog.md` is a
+readable projection rebuilt by task operations. Edit tasks through the command.
+A failed projection can leave a committed task change; inspect the task and
+retry the same request after correcting the storage error.
+
+### Migrate existing task state
+
+Stop all legacy task writers and controllers first. Keep them stopped until
+all task callers use the version 2 commands. Choose an absolute backup path
+beside the state root:
 
 ```sh
-tincan-inbox --root ./tincan-state send worker-1 --key task-42 --body 'Please check the task.'
-tincan-notify --root ./tincan-state --recipient worker-1 --target w1:p2 --session work --adapter herdr
+concierge state backup --backup /absolute/concierge-state-backup
+concierge state migrate --backup /absolute/concierge-state-backup
 ```
 
-The notifier keeps running until it receives an interrupt or termination signal.
-
-At session start, show pending primary wakes, queued backlog work, local tasks, and registered workers. With no
-flags, the brief reads supervisor state from `.concierge` and messages from
-`.tincan` in the current directory. `--root` or `CONCIERGE_HOME` selects the
-supervisor root. `--message-root` or `TINCAN_HOME` selects the message root.
-The brief limits each list to ten rows by default and reports the full count.
-Use `--limit` for up to 100 rows. Queued rows come from `backlog.md` under the
-supervisor root. Use `concierge-backlog list` to read all queued rows. The brief
-reads state without creating it.
+`backup` refuses an existing destination. `migrate` creates a backup or verifies
+and reuses an existing one. It converts the legacy records and publishes
+version 2 after validation. An interrupted migration blocks task operations
+until recovery verifies the backup and converted records:
 
 ```sh
-concierge-brief --root /absolute/concierge-state --message-root /absolute/tincan-state
-concierge-task --root /absolute/concierge-state list
+concierge state recover --backup /absolute/concierge-state-backup
 ```
 
-Queue a task in the root backlog with pinned `tasks-axi` 0.2.6 installed on
-`PATH`. The command creates `backlog.md` under the selected supervisor root
-when the file is absent. A repeated task ID returns an error and leaves the
-existing task unchanged. After adopting a live local worker with `concierge-task`,
-start the queued backlog row. The start command requires matching task metadata
-and a current worker record. It rejects blocked or held work and can be retried
-after an interrupted transition. The start command requires version 0.2.6
-because it uses that version's backlog lock protocol. The `finish` command
-accepts a result and updates the backlog while the worker pane can still be
-open. Run `concierge-task stop` after accepting the result. Then run
-`concierge-backlog cleanup` to confirm the pane is gone and retire the task
-records. An interrupted finish keeps its accepted result for retry. Cleanup
-refuses a task whose backlog row has not reached the accepted state.
+Recovery completes a pending switch. It does not restore an arbitrary backup.
+
+## Independent messages
 
 ```sh
-concierge-backlog --root /absolute/concierge-state add task-1 'Fix startup' --kind task --repo exmachina
-concierge-backlog --root /absolute/concierge-state list
-concierge-backlog --root /absolute/concierge-state show task-1 --full
-concierge-backlog --root /absolute/concierge-state start task-1
-concierge-backlog --root /absolute/concierge-state finish task-1 --mode close
-concierge-task --root /absolute/concierge-state stop task-1
-concierge-backlog --root /absolute/concierge-state cleanup task-1
+tincan inbox send worker-1 --key request-1 --body 'Please check the task.'
+tincan inbox list worker-1
+tincan inbox read worker-1 MESSAGE_ID
+tincan inbox ack worker-1 MESSAGE_ID
+tincan inbox wait concierge --timeout 30s
 ```
 
-Use `show ID --full` to read the complete title and body for a listed task.
-
-The worker reads the pending message and acknowledges it after handling it:
+A stable key makes an identical send retry return the same message. Reusing the
+key with another body returns an error. Use `--body-file FILE` or
+`--body-file -` to read a body from a file or stdin. Acknowledge a message after
+handling it. A wait returns pending messages or a bounded checkpoint.
 
 ```sh
-tincan-inbox --root ./tincan-state list task-1
-tincan-inbox --root ./tincan-state read task-1 MESSAGE_ID
-tincan-inbox --root ./tincan-state ack task-1 MESSAGE_ID
+tincan notify --recipient concierge --target PRIMARY_PANE --session work
 ```
 
-For a supervised task, `tincan-task-send` stores a JSON assignment with the task
-ID, state path, spawn generation, and body. The worker uses `tincan-task-receive`
-to read and acknowledge the assignment against its launch generation. A stale
-assignment reports `status: stale` without its body. The worker sends a reply through
-`tincan-task-reply send` with the generation from the assignment. The reply
-command checks the current task binding before it stores a
-structured message for `firstmate`. Pass `--assignment-id` to acknowledge the
-assignment after the reply is durable. Reusing the reply key after a crash
-returns the same reply and completes the acknowledgement. A changed reply key
-for the same assignment is rejected. An assignment retry with the same key and
-body returns the same message ID within one worker generation. A new generation
-gets a new assignment ID. The primary uses `check` to read the reply and decide
-whether to close or retain the task. It reports `stale` without the reply body
-if the task has ended or its worker generation changed. For a reply bound to an
-assignment, use `concierge-backlog resolve` to record that decision. The command
-verifies the assignment and worker generation, finishes the backlog row, records
-a durable disposition, then acknowledges the reply. Retry the same reply ID and
-mode after an interrupted resolution. A separate `tincan-notify` process can
-ring the primary while its inbox has pending messages.
+The notifier prompts the selected Herdr endpoint while messages remain pending.
+A prompt directs the agent to its inbox. Acknowledgement records that the
+recipient handled the message. Notification runs until interruption. Its
+interval defaults to five seconds. Use `--herdr PATH` to select another Herdr
+executable.
+
+## Local task lifecycle
+
+Queue a task and read its full contents:
 
 ```sh
-tincan-task-receive --task-root /absolute/concierge-state --message-root /absolute/tincan-state read task-1 MESSAGE_ID --generation GEN
-tincan-task-receive --task-root /absolute/concierge-state --message-root /absolute/tincan-state ack task-1 MESSAGE_ID --generation GEN
-tincan-task-reply --task-root /absolute/concierge-state --message-root /absolute/tincan-state send task-1 --generation GEN --key answer-1 --assignment-id MESSAGE_ID --body-file reply.txt
-tincan-inbox --root /absolute/tincan-state list firstmate
-tincan-task-reply --task-root /absolute/concierge-state --message-root /absolute/tincan-state check MESSAGE_ID
-concierge-backlog --root /absolute/concierge-state resolve MESSAGE_ID --message-root /absolute/tincan-state --mode close
+concierge backlog add task-1 'Fix startup' --kind task --repo exmachina --body-file brief.txt
+concierge backlog list
+concierge backlog show task-1 --full
 ```
 
-Herdr agent control and supervision use a live agent name or pane ID:
+An identical intake retry can repair a failed backlog projection. A changed
+request for the same task ID returns a conflict. Repeat `--blocked-by ID` to
+record dependencies. Use `backlog hold task-1 --reason TEXT` and
+`backlog release task-1` to control dispatch.
+
+Start a live worker in its intended worktree. Adopt its verified pane with the
+exact Herdr session, name, project, worktree, and resume arguments:
 
 ```sh
-concierge-control status worker-1
-concierge-control interrupt worker-1
-concierge-supervise --pane PANE_ID --name worker-1 --kind codex
+concierge task adopt task-1 --name worker-1 --session work --pane PANE_ID \
+  --project /absolute/project --worktree /absolute/worktree \
+  --agent-arg resume --agent-arg THREAD_ID
+concierge worker show task-1
+concierge backlog start task-1
 ```
 
-The supervisor runs until it receives an interrupt or termination signal.
-Its default health interval is five seconds. Use `--interval`,
-`--restart-tolerance`, and `--restart-window` to adjust the check and failure
-policy. A tolerance of two permits two failures; the third stops
-supervision. The supervisor does not create panes.
-
-
-The worker registry records the launch details for an existing local task. It
-copies the pane, project, worktree, harness, and spawn generation from the task
-metadata. Supply the Herdr name and the exact agent launch arguments used for
-resumption. Repeated registration with identical details succeeds; changed
-details require an explicit future transition and produce a conflict now.
+Adoption verifies the live endpoint and records its launch identity. It does not
+start task dispatch. The start command checks holds and dependencies. Pass the generation printed by adoption to the already running worker before
+it receives, acknowledges, or replies to an assignment. The worker uses that
+supplied generation for its assignment and reply commands.
 
 ```sh
-concierge-worker --root /absolute/concierge-state register task-1 --name worker-1 --agent-arg resume --agent-arg THREAD_ID
-concierge-worker --root /absolute/concierge-state list
-concierge-worker --root /absolute/concierge-state show task-1
+concierge task send task-1 --key assignment-1 --body-file brief.txt
+concierge task receive task-1 MESSAGE_ID --generation GEN
+concierge task reply send task-1 --generation GEN --key answer-1 \
+  --assignment-id MESSAGE_ID --body-file reply.txt
 ```
 
-Run task-bound supervision after registration:
+`task send` stores a generation-bound assignment before notifying the worker.
+A failed notification leaves the assignment durable. Retry the same keyed
+request after correcting the worker or notification error. The worker acts on
+an assignment only when `receive` reports `status: current`. Stale assignments
+have no actionable body. For work that needs no reply, use
+`task ack task-1 MESSAGE_ID --generation GEN` after handling the assignment.
+
+The reply command publishes the result before acknowledging its assignment.
+An identical keyed retry completes interrupted acknowledgement. The primary
+checks a result without accepting it, then resolves a bound reply:
 
 ```sh
-concierge-supervise --root /absolute/concierge-state --message-root /absolute/tincan-state --task task-1
+tincan inbox list concierge
+concierge task reply check REPLY_ID
+concierge backlog resolve REPLY_ID --mode close --closed-on YYYY-MM-DD
+concierge task stop task-1 --generation GEN
+concierge backlog cleanup task-1 --generation GEN
 ```
 
-Task mode holds one controller lease per task. It watches the task inbox,
-prompts the registered pane when a message arrives, and retries prompts while
-messages remain pending. Restarting the supervisor scans pending messages.
+Act on a reply only when `check` reports `status: current`. Resolution verifies
+its assignment and worker generation, records acceptance, and acknowledges the
+reply. Close requires an explicit valid closing date. Retry the same reply ID,
+mode, and date after interruption. For a held task that must return to the
+queue, use `--mode retain` without a closing date. Finish the retained worker's
+cleanup before releasing its hold:
 
-Task mode checks the current task metadata, the registered worker, the named
-Herdr session, and the pane's live foreground directory before restart. It
-stores a generation-bound bootstrap message before it records the new spawn
-generation and launches the replacement. It then prompts the worker to read
-its inbox. A pending generation is recovered after an interrupted transition.
-`concierge-worker show`
-reports that pending value until recovery completes. The manual pane flags
-remain available for a worker without task metadata.
+```sh
+concierge backlog resolve REPLY_ID --mode retain
+concierge task stop task-1 --generation GEN
+concierge backlog cleanup task-1 --generation GEN
+concierge backlog release task-1
+```
 
-Herdr can retain an agent registration after the process exits. Task mode
-refuses that pane without changing its spawn generation. The pinned Herdr
-release command does not clear built-in agent registrations, so stale-pane
-recovery needs a server-side Herdr operation.
+For a result without a bound reply, use `backlog finish task-1 --generation GEN
+--mode close --closed-on YYYY-MM-DD`. The equivalent Retain request uses
+`--mode retain` without a date, followed by stop, cleanup, and release.
+
+For an active accepted generation, stop closes its exact recorded pane. A retry
+for a retired generation can succeed from its receipt and leaves a newer worker
+unchanged. Cleanup verifies pane departure and retires the accepted worker
+binding. Preserve the accepted generation through these
+steps. `task pending` lists unfinished completion work. `task cancel` releases
+an unbound adoption reservation; it rejects confirmed bindings.
+
+## Supervision and root hooks
+
+```sh
+concierge control --session work status worker-1
+concierge control --session work interrupt worker-1
+concierge control --session work start --pane PANE_ID --name worker-1 --kind codex
+concierge supervise task task-1
+concierge supervise pane --pane PANE_ID --name worker-1 --kind codex \
+  --agent-arg resume --agent-arg THREAD_ID
+```
+
+Task supervision holds one controller lease per task. It checks the recorded
+session, pane, and live worktree. It delivers pending inbox prompts and recovers
+confirmed missing workers with their exact launch arguments. Recovery records
+a new generation and a durable bootstrap message. A registered agent with no
+live process can require Herdr-side repair before a restart succeeds.
+
+Manual pane supervision uses ambient Herdr routing and the supplied launch
+arguments. Task supervision uses the recorded session. Neither supervisor
+creates a pane. Use `--interval`, `--restart-tolerance`, and `--restart-window`
+on the `supervise` group to configure checks. Both modes run until interrupted.
+Restart arguments must include the agent's resume identity when work needs to
+continue after a restart.
+
+Lifecycle hooks can call `primary claim`, `primary verify`, and `primary release`
+with hook JSON on stdin. These require SessionStart, Stop, and SessionEnd events,
+respectively. The hook's working directory must equal the parent of the
+Concierge state root. One live session owns the primary role. Repository skills
+instruct secondary sessions to leave shared task supervision to that owner.
+The default `concierge` command renders the root brief after state setup.
