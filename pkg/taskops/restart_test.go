@@ -77,7 +77,7 @@ func TestWorkerRestartRecoversFailedBootstrapPublication(t *testing.T) {
 	}
 	current, err := service.store.Read(ctx, "task-1")
 	if err != nil || current.Snapshot().Worker.PendingLaunch != "" || runner.starts != 1 ||
-		runner.prompts != 1 {
+		runner.prompts != 0 {
 		t.Fatalf(
 			"restarted = %#v, %v; starts=%d prompts=%d",
 			current.Snapshot(),
@@ -258,7 +258,7 @@ func TestWorkerObservationRecoversUnconfirmedLiveLaunch(t *testing.T) {
 	}
 	current, err := service.store.Read(ctx, "task-1")
 	if err != nil || current.Snapshot().Worker.PendingLaunch != "" || runner.starts != 1 ||
-		runner.prompts != 1 {
+		runner.prompts != 0 {
 		t.Fatalf(
 			"recovered launch = %#v, %v; starts=%d prompts=%d",
 			current.Snapshot(),

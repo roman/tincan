@@ -10,7 +10,6 @@ import (
 	"github.com/roman/tincan/pkg/firstmate"
 	"github.com/roman/tincan/pkg/herdr"
 	"github.com/roman/tincan/pkg/inbox"
-	"github.com/roman/tincan/pkg/notify"
 	"github.com/roman/tincan/pkg/supervise"
 	"github.com/roman/tincan/pkg/taskstate"
 )
@@ -98,7 +97,7 @@ func (worker *SupervisedWorker) Observe(ctx context.Context) error {
 						return err
 					}
 				}
-				return worker.reconcileBootstrap(ctx, client, bound)
+				return worker.discardStaleBootstraps(bound)
 			case herdr.Dead, herdr.Missing:
 				return supervise.ErrMissing
 			default:
@@ -146,16 +145,11 @@ func (worker *SupervisedWorker) boundClient(
 	return client, nil
 }
 
-func (worker *SupervisedWorker) reconcileBootstrap(
-	ctx context.Context,
-	client herdr.Client,
-	bound taskstate.Worker,
-) error {
+func (worker *SupervisedWorker) discardStaleBootstraps(bound taskstate.Worker) error {
 	messages, err := worker.messages.List(worker.recipient)
 	if err != nil {
 		return err
 	}
-	pending := false
 	for _, message := range messages {
 		var bootstrap taskBootstrap
 		if json.Unmarshal([]byte(message.Body), &bootstrap) != nil ||
@@ -164,15 +158,11 @@ func (worker *SupervisedWorker) reconcileBootstrap(
 			continue
 		}
 		if bootstrap.SpawnGeneration == bound.Generation {
-			pending = true
 			continue
 		}
 		if err := worker.messages.Acknowledge(worker.recipient, message.ID); err != nil {
 			return err
 		}
-	}
-	if pending {
-		return client.Prompt(ctx, bound.Pane, notify.DoorbellText)
 	}
 	return nil
 }

@@ -109,23 +109,9 @@ func (worker *SupervisedWorker) promptBoundWorker(
 	ctx context.Context,
 	task *taskstate.LockedTask,
 ) error {
-	bound, err := assignmentWorker(task.Current())
+	client, agent, err := worker.notificationEndpoint(ctx, task)
 	if err != nil {
 		return err
 	}
-	client, err := worker.boundClient(ctx, bound)
-	if err != nil {
-		return err
-	}
-	agent, err := client.Get(ctx, bound.Name)
-	if err != nil {
-		return err
-	}
-	if agent.PaneID != bound.Pane || agent.Kind != bound.Harness {
-		return fmt.Errorf("unexpected agent for task %s", worker.taskID)
-	}
-	if err := task.CheckCurrent(); err != nil {
-		return err
-	}
-	return client.Prompt(ctx, bound.Pane, notify.DoorbellText)
+	return client.Prompt(ctx, agent.PaneID, notify.DoorbellText)
 }

@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/roman/tincan/pkg/herdr"
 	"github.com/roman/tincan/pkg/inbox"
@@ -22,6 +21,8 @@ type workerRunner struct {
 	mutex             sync.Mutex
 	worktree          string
 	harness           string
+	agentStatus       herdr.AgentState
+	interactiveReady  bool
 	pane              string
 	promptTargets     []string
 	onAgentRead       func()
@@ -70,10 +71,17 @@ func (runner *workerRunner) RunSession(
 		if runner.absent {
 			return nil, []byte(`{"error":{"code":"agent_not_found"}}`), errors.New("exit 1")
 		}
+		status := runner.agentStatus
+		if status == "" {
+			status = herdr.Working
+		}
 		return []byte(
 			fmt.Sprintf(
-				`{"result":{"agent":{"pane_id":%q,"agent_status":"working","agent":%q}}}`,
-				pane, runner.harness,
+				`{"result":{"agent":{"pane_id":%q,"agent_status":%q,"agent":%q,"interactive_ready":%t}}}`,
+				pane,
+				status,
+				runner.harness,
+				runner.interactiveReady,
 			),
 		), nil, nil
 	case "pane process-info":
@@ -169,7 +177,7 @@ func TestWorkerObservationRejectsInvalidBindingAndCompletedTask(t *testing.T) {
 	}
 }
 
-func TestWorkerObservationRecoversGenerationAndBootstrapPrompt(t *testing.T) {
+func TestWorkerObservationRecoversGenerationAndDiscardsStaleBootstrap(t *testing.T) {
 	service, runner, messageRoot := runningWorkerService(t)
 	ctx := context.Background()
 	if _, err := service.store.Update(ctx, "task-1", func(task taskstate.Task) (taskstate.Task, error) {
@@ -212,11 +220,10 @@ func TestWorkerObservationRecoversGenerationAndBootstrapPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner.promptError = errors.New("prompt failed")
-	if err := worker.Observe(ctx); err == nil {
-		t.Fatal("prompt failure was lost")
+	runner.promptError = errors.New("observation must not prompt")
+	if err := worker.Observe(ctx); err != nil {
+		t.Fatal(err)
 	}
-	runner.promptError = nil
 	if err := worker.Observe(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +236,7 @@ func TestWorkerObservationRecoversGenerationAndBootstrapPrompt(t *testing.T) {
 		t.Fatalf("worker = %#v", bound)
 	}
 	pending, err := store.List(recipient)
-	if err != nil || len(pending) != 2 || runner.prompts != 2 {
+	if err != nil || len(pending) != 2 || runner.prompts != 0 {
 		t.Fatalf("pending = %#v, %v; prompts = %d", pending, err, runner.prompts)
 	}
 	for _, id := range []inbox.MessageID{ids["gen-2"], unrelated.ID} {
@@ -245,7 +252,7 @@ func TestWorkerObservationRecoversGenerationAndBootstrapPrompt(t *testing.T) {
 	}
 }
 
-func TestWorkerObservationHoldsTaskLockThroughPrompt(t *testing.T) {
+func TestWorkerObservationClearsInterruptedLaunchBeforeCompletion(t *testing.T) {
 	service, runner, messageRoot := runningWorkerService(t)
 	ctx := context.Background()
 	if _, err := service.store.Update(ctx, "task-1", func(task taskstate.Task) (taskstate.Task, error) {
@@ -268,25 +275,12 @@ func TestWorkerObservationHoldsTaskLockThroughPrompt(t *testing.T) {
 	if _, err := worker.messages.Send(worker.recipient, "current", string(body)); err != nil {
 		t.Fatal(err)
 	}
-	runner.onPrompt = func() {
-		ctx, cancel := context.WithTimeout(ctx, 30*time.Millisecond)
-		defer cancel()
-		_, err := service.store.Update(
-			ctx,
-			"task-1",
-			func(task taskstate.Task) (taskstate.Task, error) {
-				return task.AcceptResult("gen-1", taskstate.Close, "2026-10-11")
-			},
-		)
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Errorf("completion during prompt = %v", err)
-		}
-	}
+	runner.onPrompt = func() { t.Error("observation prompted the worker") }
 	if err := worker.Observe(ctx); err != nil {
 		t.Fatal(err)
 	}
 	current, err := service.store.Read(ctx, "task-1")
-	if err != nil || current.Snapshot().Worker.PendingLaunch != "" || runner.prompts != 1 {
+	if err != nil || current.Snapshot().Worker.PendingLaunch != "" || runner.prompts != 0 {
 		t.Fatalf("reconciled task = %#v, %v; prompts = %d", current.Snapshot(), err, runner.prompts)
 	}
 	if _, err := service.Finish(ctx, "task-1", "gen-1", taskstate.Close, "2026-10-11"); err != nil {

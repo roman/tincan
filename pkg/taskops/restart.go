@@ -70,7 +70,7 @@ func (worker *SupervisedWorker) Restart(ctx context.Context) error {
 			if _, err := task.Apply(taskstate.Task.CompleteLaunch); err != nil {
 				return err
 			}
-			return worker.reconcileBootstrap(ctx, client, *task.Current().Snapshot().Worker)
+			return worker.discardStaleBootstraps(*task.Current().Snapshot().Worker)
 		},
 	)
 	return err

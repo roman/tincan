@@ -13,6 +13,7 @@ import (
 	"github.com/roman/tincan/pkg/herdr"
 	"github.com/roman/tincan/pkg/inbox"
 	"github.com/roman/tincan/pkg/notify"
+	"github.com/roman/tincan/pkg/resident"
 	"github.com/roman/tincan/pkg/taskstate"
 )
 
@@ -20,6 +21,7 @@ func TestTaskDoorbellPreservesRecordsAndPendingMessages(t *testing.T) {
 	for _, outcome := range []string{"success", "prompt failure"} {
 		t.Run(outcome, func(t *testing.T) {
 			service, runner, root := runningWorkerService(t)
+			runner.agentStatus = herdr.Idle
 			ctx := context.Background()
 			client := herdr.Client{SessionRunner: runner}
 			worker, err := service.SupervisedWorker("task-1", root, client)
@@ -74,6 +76,7 @@ func TestTaskDoorbellRejectsWrongInputAndIneligibleTask(t *testing.T) {
 	for _, state := range []string{"wrong target", "wrong text", "queued", "completed", "no worker", "pending adoption", "pending generation", "pending launch"} {
 		t.Run(state, func(t *testing.T) {
 			service, runner, root := runningWorkerService(t)
+			runner.agentStatus = herdr.Idle
 			ctx := context.Background()
 			worker, err := service.SupervisedWorker(
 				"task-1",
@@ -129,6 +132,7 @@ func TestTaskDoorbellRejectsWrongInputAndIneligibleTask(t *testing.T) {
 
 func TestTaskDoorbellUsesReplacementWorkersCurrentEndpoint(t *testing.T) {
 	service, runner, root := runningWorkerService(t)
+	runner.agentStatus = herdr.Idle
 	ctx := context.Background()
 	client := herdr.Client{SessionRunner: runner}
 	worker, err := service.SupervisedWorker("task-1", root, client)
@@ -204,6 +208,7 @@ func TestTaskDoorbellRejectsEndpointOrRecordChanges(t *testing.T) {
 	for _, change := range []string{"worktree", "harness", "record"} {
 		t.Run(change, func(t *testing.T) {
 			service, runner, root := runningWorkerService(t)
+			runner.agentStatus = herdr.Idle
 			worker, err := service.SupervisedWorker(
 				"task-1",
 				root,
@@ -243,6 +248,7 @@ func TestTaskDoorbellRejectsEndpointOrRecordChanges(t *testing.T) {
 
 func TestTaskDoorbellHoldsTaskLockThroughPrompt(t *testing.T) {
 	service, runner, root := runningWorkerService(t)
+	runner.agentStatus = herdr.Idle
 	worker, err := service.SupervisedWorker("task-1", root, herdr.Client{SessionRunner: runner})
 	if err != nil {
 		t.Fatal(err)
@@ -264,6 +270,7 @@ func TestTaskDoorbellHoldsTaskLockThroughPrompt(t *testing.T) {
 
 func TestSendAssignmentPreservesMessageWhenFinalBindingCheckFails(t *testing.T) {
 	service, runner, root := runningWorkerService(t)
+	runner.agentStatus = herdr.Idle
 	runner.onAgentRead = func() {
 		record := filepath.Join(service.root, "records", "task-1.json")
 		data, err := os.ReadFile(record)
@@ -296,5 +303,127 @@ func TestSendAssignmentPreservesMessageWhenFinalBindingCheckFails(t *testing.T) 
 	pending, err := store.Read(result.Message.Recipient, result.Message.ID)
 	if err != nil || !reflect.DeepEqual(pending, result.Message) {
 		t.Fatalf("durable assignment = %#v, %v", pending, err)
+	}
+}
+
+func TestTaskDoorbellDefersUntilWorkerCanAcceptInput(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		kind    string
+		status  herdr.AgentState
+		ready   bool
+		prompts int
+	}{
+		{"working", "codex", herdr.Working, false, 0},
+		{"working with interactive flag", "codex", herdr.Working, true, 0},
+		{"blocked", "codex", herdr.Blocked, true, 0},
+		{"unknown", "codex", herdr.Unknown, false, 0},
+		{"interactive Codex startup", "codex", herdr.Unknown, true, 1},
+		{"unknown Claude", "claude", herdr.Unknown, true, 0},
+		{"idle", "codex", herdr.Idle, false, 1},
+		{"done", "claude", herdr.Done, false, 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service, runner, root := runningWorkerService(t)
+			runner.agentStatus, runner.interactiveReady, runner.harness = test.status, test.ready, test.kind
+			if _, err := service.store.Update(context.Background(), "task-1", func(task taskstate.Task) (taskstate.Task, error) {
+				snapshot := task.Snapshot()
+				snapshot.Worker.Harness = test.kind
+				return taskstate.NewMigrated(snapshot)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			worker, err := service.SupervisedWorker(
+				"task-1",
+				root,
+				herdr.Client{SessionRunner: runner},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			message, err := worker.messages.Send(worker.recipient, "pending", "Durable work")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := worker.Prompt(context.Background(), "task-1", notify.DoorbellText); err != nil {
+				t.Fatal(err)
+			}
+			if runner.prompts != test.prompts {
+				t.Fatalf("prompts=%d, want %d", runner.prompts, test.prompts)
+			}
+			if _, err := worker.messages.Read(worker.recipient, message.ID); err != nil {
+				t.Fatalf("pending message changed: %v", err)
+			}
+		})
+	}
+}
+
+func TestRestartBootstrapWatcherDefersUntilIdleAndStopsAfterAcknowledgement(t *testing.T) {
+	service, runner, root := runningWorkerService(t)
+	runner.absent = true
+	worker, err := service.SupervisedWorker("task-1", root, herdr.Client{SessionRunner: runner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := worker.Restart(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := worker.messages.List(worker.recipient)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("bootstrap=%v, %v", pending, err)
+	}
+	if runner.prompts != 0 {
+		t.Fatalf("restart submitted %d prompts", runner.prompts)
+	}
+	notified := make(chan struct{}, 1)
+	runner.onPrompt = func() { runner.agentStatus = herdr.Working; notified <- struct{}{} }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ready := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- (resident.Watcher{Store: worker.messages, Recipient: worker.recipient, Target: "task-1", Doorbell: worker, RetryDelay: 5 * time.Millisecond}).Run(ctx, ready)
+	}()
+	select {
+	case <-ready:
+	case <-time.After(time.Second):
+		t.Fatal("watcher did not start")
+	}
+	runner.mutex.Lock()
+	prompts := runner.prompts
+	runner.mutex.Unlock()
+	if prompts != 0 {
+		t.Fatalf("busy worker received %d prompts", prompts)
+	}
+	if _, err := worker.messages.Read(worker.recipient, pending[0].ID); err != nil {
+		t.Fatalf("bootstrap lost while busy: %v", err)
+	}
+	runner.mutex.Lock()
+	runner.agentStatus = herdr.Idle
+	runner.mutex.Unlock()
+	select {
+	case <-notified:
+	case <-time.After(time.Second):
+		t.Fatal("idle worker was not notified")
+	}
+	if err := worker.messages.Acknowledge(worker.recipient, pending[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	runner.mutex.Lock()
+	runner.agentStatus = herdr.Idle
+	runner.mutex.Unlock()
+	select {
+	case <-notified:
+		t.Fatal("acknowledged bootstrap was notified again")
+	case <-time.After(25 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("watcher did not stop")
 	}
 }

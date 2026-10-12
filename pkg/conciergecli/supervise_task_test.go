@@ -32,7 +32,7 @@ case "$1 $2" in
   printf '{"result":{"pane":{"pane_id":"pane-1","foreground_cwd":"%s","workspace_id":"workspace-1","tab_id":"tab-1"}}}\n' "$TEST_WORKTREE" ;;
  'agent get')
   if [ "$TEST_RESIDENT_MISSING" = 1 ] && [ ! -f "$TEST_RESIDENT_STARTED" ]; then printf '%s\n' '{"error":{"code":"agent_not_found"}}'; exit 1; fi
-  printf '%s\n' '{"result":{"agent":{"pane_id":"pane-1","agent_status":"working","agent":"codex"}}}' ;;
+  printf '%s\n' '{"result":{"agent":{"pane_id":"pane-1","agent_status":"idle","agent":"codex"}}}' ;;
  'pane process-info') printf '%s\n' '{"result":{"type":"pane_process_info","process_info":{"pane_id":"pane-1","shell_pid":100,"foreground_processes":[{"pid":101,"name":"codex","argv0":"codex"}]}}}' ;;
  'agent start') printf started > "$TEST_RESIDENT_STARTED"; printf '%s\n' '{"result":{}}' ;;
  'agent prompt') [ "$TEST_RESIDENT_NOTIFYFAIL" = 1 ] && exit 73; printf '%s\n' '{"result":{}}' ;;
