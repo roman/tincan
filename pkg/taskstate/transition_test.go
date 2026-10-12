@@ -304,3 +304,75 @@ func TestTaskRetirementKeepsMatchingReceipt(t *testing.T) {
 		t.Fatalf("matching retirement = %#v, %v", retired.Snapshot(), err)
 	}
 }
+
+func TestResultRetriesValidateClosingDate(t *testing.T) {
+	for _, stage := range []string{"accepted", "retired", "receipt", "released_receipt"} {
+		for _, mode := range []CompletionMode{Close, Retain} {
+			if stage == "released_receipt" && mode == Close {
+				continue
+			}
+			t.Run(stage+"/"+string(mode), func(t *testing.T) {
+				snapshot := Snapshot{Definition: taskForTransition(t).Definition(), State: Queued}
+				validDate := ""
+				if mode == Close {
+					snapshot.State = Done
+					snapshot.Definition.Closed = "2026-10-11"
+					validDate = snapshot.Definition.Closed
+				} else if stage != "released_receipt" {
+					snapshot.Definition.Hold = &Hold{Reason: "Waiting", Kind: "captain"}
+				}
+				switch stage {
+				case "accepted":
+					worker := workerForTransition()
+					worker.Workspace, worker.Tab = "workspace-1", "tab-1"
+					snapshot.Worker = &worker
+					snapshot.Completion = &Completion{
+						Generation: "gen-1",
+						Mode:       mode,
+						Phase:      Accepted,
+					}
+				case "retired":
+					snapshot.Completion = &Completion{
+						Generation: "gen-1",
+						Mode:       mode,
+						Phase:      Retired,
+					}
+				default:
+					snapshot.Receipt = &Receipt{Generation: "gen-1", Mode: mode}
+				}
+				task, err := NewMigrated(snapshot)
+				if err != nil {
+					t.Fatal(err)
+				}
+				before, err := task.Encode()
+				if err != nil {
+					t.Fatal(err)
+				}
+				retried, err := task.AcceptResult("gen-1", mode, validDate)
+				if err != nil {
+					t.Fatalf("identical retry: %v", err)
+				}
+				after, err := retried.Encode()
+				if err != nil || string(after) != string(before) {
+					t.Fatalf("retry changed task: %s %v", after, err)
+				}
+				invalidDates := []string{"2026-10-12"}
+				if mode == Close {
+					invalidDates = append(invalidDates, "", "invalid")
+				}
+				for _, closedOn := range invalidDates {
+					if _, err := task.AcceptResult("gen-1", mode, closedOn); !errors.Is(
+						err,
+						ErrInvalidTransition,
+					) {
+						t.Errorf("accepted conflicting date %q: %v", closedOn, err)
+					}
+					after, err := task.Encode()
+					if err != nil || string(after) != string(before) {
+						t.Fatalf("rejected retry changed task: %s %v", after, err)
+					}
+				}
+			})
+		}
+	}
+}

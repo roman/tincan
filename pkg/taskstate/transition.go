@@ -116,6 +116,11 @@ func (task Task) AcceptResult(
 	mode CompletionMode,
 	closedOn string,
 ) (Task, error) {
+	if (mode == Retain && closedOn != "") ||
+		(mode == Close && (closedOn == "" ||
+			(task.State() == Done && task.record.Closed != closedOn))) {
+		return Task{}, ErrInvalidTransition
+	}
 	if task.record.Completion == nil && task.record.Worker == nil && task.record.Receipt != nil {
 		receipt := task.record.Receipt
 		if receipt.Generation == generation && receipt.Mode == mode &&
@@ -148,13 +153,13 @@ func (task Task) AcceptResult(
 	snapshot := task.Snapshot()
 	switch mode {
 	case Close:
-		if task.record.Hold != nil || closedOn == "" {
+		if task.record.Hold != nil {
 			return Task{}, ErrInvalidTransition
 		}
 		snapshot.State = Done
 		snapshot.Definition.Closed = closedOn
 	case Retain:
-		if task.record.Hold == nil || closedOn != "" {
+		if task.record.Hold == nil {
 			return Task{}, ErrInvalidTransition
 		}
 		snapshot.State = Queued
