@@ -127,6 +127,35 @@ func TestStoreListsVersionTwoTasksInIDOrder(t *testing.T) {
 	}
 }
 
+func TestListPinnedReadsOriginalRootAfterPathMoves(t *testing.T) {
+	root := versionTwoRoot(t)
+	store, err := NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Create(context.Background(), queuedStoreTask(t)); err != nil {
+		t.Fatal(err)
+	}
+	guard, err := stateversion.AcquireVersionTwo(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer guard.Close()
+	if err := os.Rename(root, root+"-moved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "records"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := ListPinned(context.Background(), guard.StateRoot())
+	if err != nil || len(tasks) != 1 || tasks[0].ID() != "task-1" {
+		t.Fatalf("ListPinned read replacement path: %#v, %v", tasks, err)
+	}
+}
+
 func TestStoreListRejectsVersionOne(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "records"), 0o700); err != nil {

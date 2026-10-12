@@ -79,56 +79,68 @@ func (store *Store) Read(ctx context.Context, taskID string) (Task, error) {
 
 // List returns every complete task in ID order from the selected version 2 root.
 func (store *Store) List(ctx context.Context) ([]Task, error) {
-	tasks := make([]Task, 0)
+	var tasks []Task
 	err := store.withVersionTwo(ctx, func(root *os.Root) error {
-		records, _, err := openRecords(root)
-		if err != nil {
-			return err
-		}
-		defer records.Close()
-		listing, err := records.Open(".")
-		if err != nil {
-			return err
-		}
-		entries, readErr := listing.ReadDir(-1)
-		closeErr := listing.Close()
-		if err := errors.Join(readErr, closeErr); err != nil {
-			return err
-		}
-		ids := make([]string, 0, len(entries))
-		for _, entry := range entries {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			name := entry.Name()
-			if name == migrationOwnerName ||
-				(strings.HasPrefix(name, ".writing-") && !strings.HasSuffix(name, ".json")) {
-				continue
-			}
-			id, valid := strings.CutSuffix(name, ".json")
-			if !valid {
-				return fmt.Errorf("%w: unexpected task record entry %s", ErrInvalidTask, name)
-			}
-			if _, err := parseStoreTaskID(id); err != nil {
-				return fmt.Errorf("%w: invalid task record name %s", ErrInvalidTask, name)
-			}
-			ids = append(ids, id)
-		}
-		sort.Strings(ids)
-		for _, id := range ids {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			task, _, err := readRecord(records, id)
-			if err != nil {
-				return err
-			}
-			tasks = append(tasks, task)
-		}
-		return nil
+		var err error
+		tasks, err = ListPinned(ctx, root)
+		return err
 	})
 	if err != nil {
 		return nil, err
+	}
+	return tasks, nil
+}
+
+// ListPinned reads a root already protected by a version 2 guard.
+// The caller must keep the guard open for the entire read.
+func ListPinned(ctx context.Context, root *os.Root) ([]Task, error) {
+	if root == nil {
+		return nil, ErrInvalidTask
+	}
+	records, _, err := openRecords(root)
+	if err != nil {
+		return nil, err
+	}
+	defer records.Close()
+	listing, err := records.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	entries, readErr := listing.ReadDir(-1)
+	closeErr := listing.Close()
+	if err := errors.Join(readErr, closeErr); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		name := entry.Name()
+		if name == migrationOwnerName ||
+			(strings.HasPrefix(name, ".writing-") && !strings.HasSuffix(name, ".json")) {
+			continue
+		}
+		id, valid := strings.CutSuffix(name, ".json")
+		if !valid {
+			return nil, fmt.Errorf("%w: unexpected task record entry %s", ErrInvalidTask, name)
+		}
+		if _, err := parseStoreTaskID(id); err != nil {
+			return nil, fmt.Errorf("%w: invalid task record name %s", ErrInvalidTask, name)
+		}
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	tasks := make([]Task, 0, len(ids))
+	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		task, _, err := readRecord(records, id)
+		if err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, task)
 	}
 	return tasks, nil
 }
