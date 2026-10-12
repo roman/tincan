@@ -165,19 +165,17 @@ func TestAuthorizeCallerProcess(t *testing.T) {
 				go func() { result <- AuthorizeCaller(root, caller) }()
 				select {
 				case err := <-result:
-					t.Fatalf("authorization ignored held claim lock: %v", err)
-				case <-time.After(50 * time.Millisecond):
+					if !errors.Is(err, ErrClaimBusy) {
+						t.Fatalf("contended admission = %v, want busy", err)
+					}
+				case <-time.After(time.Second):
+					t.Fatal("admission blocked on held claim lock")
 				}
 				if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); err != nil {
 					t.Fatal(err)
 				}
-				select {
-				case err := <-result:
-					if err != nil {
-						t.Fatal(err)
-					}
-				case <-time.After(5 * time.Second):
-					t.Fatal("authorization did not resume after claim unlock")
+				if err := AuthorizeCaller(root, caller); err != nil {
+					t.Fatalf("admission after unlock: %v", err)
 				}
 				return
 			}

@@ -11,6 +11,8 @@ import (
 
 type Status string
 
+var ErrClaimBusy = errors.New("primary claim is busy; retry the same request")
+
 const (
 	Owner  Status = "owner"
 	Held   Status = "held_by_other"
@@ -26,6 +28,10 @@ func validateRoot(root string) error {
 }
 
 func withLock(root string, action func() (Status, error)) (Status, error) {
+	return withClaimLock(root, syscall.LOCK_EX, action)
+}
+
+func withClaimLock(root string, mode int, action func() (Status, error)) (Status, error) {
 	if err := validateRoot(root); err != nil {
 		return "", err
 	}
@@ -37,7 +43,10 @@ func withLock(root string, action func() (Status, error)) (Status, error) {
 		return "", err
 	}
 	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+	if err := syscall.Flock(int(lock.Fd()), mode); err != nil {
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return "", ErrClaimBusy
+		}
 		return "", err
 	}
 	return action()

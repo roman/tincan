@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"syscall"
 )
 
 var ErrUnauthorizedCaller = errors.New("caller does not own the primary session")
@@ -17,6 +18,7 @@ type Caller struct {
 
 // AuthorizeCaller admits one operation against the current primary claim.
 // Admission completes under the claim lock; external operations run afterward.
+// Contention returns ErrClaimBusy immediately instead of queueing operations.
 func AuthorizeCaller(root string, caller Caller) error {
 	if caller.UID != uint32(os.Geteuid()) || caller.PID < 1 {
 		return ErrUnauthorizedCaller
@@ -29,7 +31,7 @@ func AuthorizeCaller(root string, caller Caller) error {
 	if err != nil {
 		return err
 	}
-	_, err = withLock(root, func() (Status, error) {
+	_, err = withClaimLock(root, syscall.LOCK_EX|syscall.LOCK_NB, func() (Status, error) {
 		owner, err := readOwner(root)
 		if err != nil {
 			return Held, fmt.Errorf("%w: read primary claim: %v", ErrUnauthorizedCaller, err)
