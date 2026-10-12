@@ -9,7 +9,7 @@ import (
 	"github.com/roman/tincan/pkg/taskops"
 )
 
-const taskMessageHelp = "concierge task receive|ack TASK_ID MESSAGE_ID --generation GENERATION; global flags: --root, --message-root, --help"
+const taskMessageHelp = "concierge task send TASK_ID [--key KEY] --body-file FILE|-; concierge task receive|ack TASK_ID MESSAGE_ID --generation GENERATION; global flags: --root, --message-root, --help"
 
 type assignmentSelection struct {
 	TaskID     string `arg:"" help:"Task ID."`
@@ -18,6 +18,12 @@ type assignmentSelection struct {
 }
 
 type taskCommands struct {
+	Send struct {
+		TaskID   string `arg:"" help:"Task ID."`
+		Key      string `help:"Stable logical assignment key for safe retries; omit for an independent message."`
+		BodyFile string `required:"" help:"Assignment body file; use - for stdin."`
+	} `cmd:"" help:"Publish a generation-bound assignment and notify its worker."`
+
 	List    struct{}            `cmd:"" help:"List tasks with confirmed worker bindings."`
 	Pending struct{}            `cmd:"" help:"List accepted results awaiting completion recovery."`
 	Receive assignmentSelection `cmd:"" help:"Read an assignment for the caller's generation."`
@@ -27,6 +33,7 @@ type taskCommands struct {
 func (command *cli) runTaskMessages(
 	ctx context.Context,
 	root, selected string,
+	stdin io.Reader,
 	output io.Writer,
 ) int {
 	messageRoot, err := rootWithDefault(command.MessageRoot, ".tincan")
@@ -42,6 +49,8 @@ func (command *cli) runTaskMessages(
 	}
 	var result taskops.AssignmentStatus
 	switch selected {
+	case "task send <task-id>":
+		return command.Task.sendAssignment(ctx, service, messageRoot, stdin, output)
 	case "task receive <task-id> <message-id>":
 		input := command.Task.Receive
 		result, err = service.ReadAssignment(
