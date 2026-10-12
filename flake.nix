@@ -78,15 +78,16 @@
           concierge-migrate = mkProgram { name = "concierge-migrate"; };
           concierge-control = mkProgram { name = "concierge-control"; runtime = herdrPackage; };
           concierge-supervise = mkProgram { name = "concierge-supervise"; runtime = herdrPackage; };
-          tincan = pkgs.symlinkJoin {
-            name = "tincan-0.1.0";
-            paths = [ tincan-command tincan-inbox tincan-notify tincan-task-send tincan-task-reply tincan-task-receive ];
+          tincan = tincan-command;
+          processTools = if pkgs.stdenv.isLinux then pkgs.procps else
+            pkgs.writeShellScriptBin "ps" ''
+              exec /bin/ps "$@"
+            '';
+          conciergeRuntime = pkgs.symlinkJoin {
+            name = "concierge-runtime";
+            paths = [ herdrPackage processTools ];
           };
-          concierge = pkgs.symlinkJoin {
-            name = "concierge-0.1.0";
-            paths = [ concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise ]
-              ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ concierge-primary ];
-          };
+          concierge = mkProgram { name = "concierge"; runtime = conciergeRuntime; };
         in
         {
           default = tincan;
@@ -107,6 +108,15 @@
       checks = forEachSystem (pkgs:
         let
           packages = self.packages.${pkgs.stdenv.hostPlatform.system};
+          healthHerdr = pkgs.writeShellScript "concierge-health-herdr" ''
+            case "$1 $2" in
+              'pane get') printf '{"result":{"pane":{"pane_id":"p1","foreground_cwd":"%s","workspace_id":"w1","tab_id":"t1"}}}\n' "$SMOKE_WORKTREE" ;;
+              'agent get') printf '%s\n' '{"result":{"agent":{"pane_id":"p1","agent_status":"working","agent":"codex"}}}' ;;
+              'pane process-info') printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"p1","shell_pid":%s,"foreground_processes":[]}}}\n' "$SMOKE_SHELL_PID" ;;
+              'status --json') printf '%s\n' '{"server":{"running":true}}' ;;
+              *) exit 71 ;;
+            esac
+          '';
         in
         {
           inherit (packages) tincan-command tincan-inbox tincan-notify tincan-task-send tincan-task-reply tincan-task-receive concierge-brief concierge-worker concierge-backlog concierge-task concierge-migrate concierge-control concierge-supervise;
@@ -130,36 +140,53 @@
             touch "$out"
           '';
           concierge-smoke = pkgs.runCommand "concierge-smoke" { } ''
-            ${packages.concierge-worker}/bin/concierge-worker --help >/dev/null
-            ${packages.concierge-backlog}/bin/concierge-backlog --help >/dev/null
-            mkdir "$TMPDIR/concierge"
-            PATH=/usr/bin:/bin ${packages.concierge-backlog}/bin/concierge-backlog \
-              --root "$TMPDIR/concierge" add smoke-a1 'Packaged intake' \
+            unset CONCIERGE_HOME TINCAN_HOME TINCAN_HERDR HERDR_SESSION HERDR_SOCKET_PATH HERDR_WORKSPACE_ID HERDR_TAB_ID HERDR_PANE_ID
+            export PATH=
+            test -x ${packages.concierge}/bin/concierge
+            test "$(${packages.concierge}/bin/concierge --version)" = 0.1.0
+            set -- ${packages.concierge}/bin/*
+            test "$#" -eq 1
+            test "$1" = ${packages.concierge}/bin/concierge
+            set -- ${packages.tincan}/bin/*
+            test "$#" -eq 1
+            test "$1" = ${packages.tincan}/bin/tincan
+            ${packages.concierge}/bin/concierge --root "$TMPDIR/state" state init > initialized
+            ${pkgs.gnugrep}/bin/grep -qx 'version: 2' initialized
+            ${packages.concierge}/bin/concierge --root "$TMPDIR/state" backlog add smoke-a1 'Packaged intake' \
               --kind task --repo exmachina >/dev/null
-            grep -q 'smoke-a1 - Packaged intake' "$TMPDIR/concierge/backlog.md"
-            PATH=/usr/bin:/bin ${packages.concierge-backlog}/bin/concierge-backlog \
-              --root "$TMPDIR/concierge" list \
-              | grep 'smoke-a1,queued,task,exmachina,Packaged intake' >/dev/null
-            PATH=/usr/bin:/bin ${packages.concierge-brief}/bin/concierge-brief \
-              --root "$TMPDIR/concierge" --message-root "$TMPDIR/messages" \
-              | grep 'smoke-a1,queued,task,exmachina,Packaged intake' >/dev/null
-            ${packages.concierge-task}/bin/concierge-task --help >/dev/null
-            ${packages.concierge-migrate}/bin/concierge-migrate --help >/dev/null
-            ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''${packages.concierge-primary}/bin/concierge-primary --help >/dev/null''}
-            for command in concierge-brief concierge-worker concierge-backlog concierge-task concierge-control concierge-supervise; do
-              test -x "${packages.concierge}/bin/$command"
-            done
-            test ! -e ${packages.concierge}/bin/concierge-migrate
-            ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''test -x "${packages.concierge}/bin/concierge-primary"''}
-            for command in tincan-inbox tincan-notify tincan-task-send tincan-task-reply tincan-task-receive; do
-              test -x "${packages.tincan}/bin/$command"
-            done
-            test ! -e ${packages.tincan}/bin/concierge-brief
-            test ! -e ${packages.concierge}/bin/tincan-inbox
-            ${packages.tincan-task-send}/bin/tincan-task-send --help >/dev/null
-            ${packages.tincan-task-reply}/bin/tincan-task-reply --help >/dev/null
-            ${packages.tincan-task-receive}/bin/tincan-task-receive --help >/dev/null
-            touch "$out"
+            ${packages.concierge}/bin/concierge --root "$TMPDIR/state" backlog list > backlog
+            ${pkgs.gnugrep}/bin/grep -Fx '  "smoke-a1",queued,"task","exmachina","Packaged intake"' backlog
+            ${packages.concierge}/bin/concierge --root "$TMPDIR/state" backlog show smoke-a1 --full > detail
+            ${pkgs.gnugrep}/bin/grep -Fx '  title: "Packaged intake"' detail
+            ${packages.tincan}/bin/tincan --root "$TMPDIR/messages" inbox send concierge --key wake --body 'Packaged wake' >/dev/null
+            ${packages.concierge}/bin/concierge --root "$TMPDIR/state" --message-root "$TMPDIR/messages" > brief
+            ${pkgs.gnugrep}/bin/grep -Fx 'wakes: 1 pending for concierge' brief
+            ${pkgs.gnugrep}/bin/grep -Fx 'backlog: 1 queued' brief
+            ${packages.concierge}/bin/concierge task reply --help >/dev/null
+            ${packages.concierge}/bin/concierge primary --help >/dev/null
+            ${packages.concierge}/bin/concierge control --help >/dev/null
+            ${packages.concierge}/bin/concierge supervise --help >/dev/null
+
+            export SMOKE_WORKTREE="$TMPDIR"
+            # Health checks exclude PID 1, which Nix uses for the builder shell.
+            ${pkgs.bash}/bin/bash -e <<'HEALTH'
+            export SMOKE_SHELL_PID=$$
+            (exec -a codex ${pkgs.coreutils}/bin/coreutils --coreutils-prog=sleep 60) &
+            agent_pid=$!
+            trap 'kill "$agent_pid" 2>/dev/null || true; wait "$agent_pid" 2>/dev/null || true' EXIT
+            ${pkgs.jq}/bin/jq --arg worktree "$TMPDIR" \
+              '.state = "in_flight" | .worker = {name:"smoke",harness:"codex",session:"smoke",workspace:"w1",tab:"t1",pane:"p1",project:$worktree,worktree:$worktree,generation:"gen-smoke",agent_args:["resume","smoke"]}' \
+              "$TMPDIR/state/records/smoke-a1.json" > record
+            ${pkgs.coreutils}/bin/mv record "$TMPDIR/state/records/smoke-a1.json"
+            ${pkgs.coreutils}/bin/timeout --preserve-status --signal=TERM --kill-after=2s 2s \
+              ${packages.concierge}/bin/concierge --root "$TMPDIR/state" --message-root "$TMPDIR/messages" \
+              supervise --herdr ${healthHerdr} task smoke-a1 > supervision || {
+                ${pkgs.coreutils}/bin/cat supervision >&2
+                exit 1
+              }
+            test ! -s supervision
+            HEALTH
+            : > "$out"
           '';
           go-format = pkgs.runCommand "tincan-go-format" {
             nativeBuildInputs = [ pkgs.golines pkgs.go_1_25 ];
