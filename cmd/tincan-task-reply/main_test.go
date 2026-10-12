@@ -325,7 +325,9 @@ func TestReplyCheckRejectsMissingBoundAssignment(t *testing.T) {
 	root, messages := replyFixture(t)
 	store, _ := inbox.New(messages)
 	primary, _ := inbox.ParseRecipient("firstmate")
-	missing, _ := inbox.ParseMessageID("k-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	missing, _ := inbox.ParseMessageID(
+		"k-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	)
 	body, _ := json.Marshal(taskprotocol.Reply{
 		Kind: "task-reply", State: filepath.Join(root, "tasks"), Task: "task-1",
 		SpawnGeneration: "gen-1", AssignmentID: missing.String(), ReplyKey: "answer-1",

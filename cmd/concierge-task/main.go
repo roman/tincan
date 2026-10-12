@@ -104,9 +104,12 @@ func run(ctx context.Context, arguments []string, output io.Writer, client herdr
 		if err != nil {
 			return fail(output, 2, err, help())
 		}
-		stopErr := registry.WithCompletion(command.Stop.TaskID, func(completion *crew.Completion) error {
-			return completion.StopPane(ctx, client)
-		})
+		stopErr := registry.WithCompletion(
+			command.Stop.TaskID,
+			func(completion *crew.Completion) error {
+				return completion.StopPane(ctx, client)
+			},
+		)
 		if stopErr != nil {
 			return fail(
 				output,

@@ -294,8 +294,19 @@ func TestResolveReplyCanRetainAfterRejectedClose(t *testing.T) {
 func TestResolveReplyRequiresAbsoluteMessageRoot(t *testing.T) {
 	root := backlogRoot(t)
 	var output bytes.Buffer
-	code := run([]string{"--root", root, "resolve", "k-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-		"--message-root", "relative", "--mode", "close"}, &output)
+	code := run(
+		[]string{
+			"--root",
+			root,
+			"resolve",
+			"k-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+			"--message-root",
+			"relative",
+			"--mode",
+			"close",
+		},
+		&output,
+	)
 	if code != 2 || !strings.Contains(output.String(), "absolute") {
 		t.Fatalf("relative message root: code=%d output=%s", code, output.String())
 	}

@@ -32,7 +32,10 @@ func TestDecodeReplyChecksStateAndBoundKey(t *testing.T) {
 		{"changed root", key, t.TempDir()},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := DecodeReply(string(body), test.key, test.root); !errors.Is(err, ErrInvalidReply) {
+			if _, err := DecodeReply(string(body), test.key, test.root); !errors.Is(
+				err,
+				ErrInvalidReply,
+			) {
 				t.Fatalf("accepted invalid reply: %v", err)
 			}
 		})

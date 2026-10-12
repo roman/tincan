@@ -60,7 +60,11 @@ func TestWaitExitCodeContract(t *testing.T) {
 			if test.wantLine != "" {
 				captured := strings.TrimRight(string(output), "\n")
 				if !strings.HasPrefix(captured, test.wantLine+"\n") {
-					t.Fatalf("hook-visible output = %q; want prefix %q", captured, test.wantLine+"\n")
+					t.Fatalf(
+						"hook-visible output = %q; want prefix %q",
+						captured,
+						test.wantLine+"\n",
+					)
 				}
 			}
 		})

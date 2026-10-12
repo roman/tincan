@@ -79,10 +79,16 @@ func TestDispositionSurvivesInterruptedHandling(t *testing.T) {
 	if _, _, err := reopened.BeginDisposition(recipient, message.ID, "finish:task-1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := reopened.BeginDisposition(recipient, message.ID, "reopen:task-1"); !errors.Is(err, ErrDispositionConflict) {
+	if _, _, err := reopened.BeginDisposition(recipient, message.ID, "reopen:task-1"); !errors.Is(
+		err,
+		ErrDispositionConflict,
+	) {
 		t.Fatalf("changed action = %v", err)
 	}
-	if _, err := reopened.CompleteDisposition(recipient, message.ID, "queued"); !errors.Is(err, ErrDispositionConflict) {
+	if _, err := reopened.CompleteDisposition(recipient, message.ID, "queued"); !errors.Is(
+		err,
+		ErrDispositionConflict,
+	) {
 		t.Fatalf("changed outcome = %v", err)
 	}
 }

@@ -81,7 +81,12 @@ func run(args []string, stdout io.Writer) int {
 	}
 	versionGuard, err := stateversion.AcquireLegacy(context.Background(), command.Root)
 	if err != nil {
-		return failure(stdout, 1, err, "install a Concierge command compatible with this task state")
+		return failure(
+			stdout,
+			1,
+			err,
+			"install a Concierge command compatible with this task state",
+		)
 	}
 	defer versionGuard.Close()
 	switch selected.Command() {

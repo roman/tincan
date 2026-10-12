@@ -38,7 +38,9 @@ func workerFromCLI(args cli, client herdr.Client) (supervise.Worker, error) {
 		if args.Root == "" || args.MessageRoot == "" || args.Pane != "" ||
 			args.Name != "" || args.Kind != "" ||
 			len(args.AgentArgs) != 0 {
-			return nil, errors.New("task mode requires --root and --message-root and excludes manual launch flags")
+			return nil, errors.New(
+				"task mode requires --root and --message-root and excludes manual launch flags",
+			)
 		}
 		if _, err := firstmate.ParseTaskID(args.Task); err != nil {
 			return nil, err
@@ -100,7 +102,12 @@ func (worker registeredWorker) Observe(ctx context.Context) error {
 			if err := worker.clearStaleBootstraps(task.Record().SpawnGeneration); err != nil {
 				return err
 			}
-			return worker.promptPendingBootstrap(ctx, client, record.PaneID, task.Record().SpawnGeneration)
+			return worker.promptPendingBootstrap(
+				ctx,
+				client,
+				record.PaneID,
+				task.Record().SpawnGeneration,
+			)
 		case herdr.Dead, herdr.Missing:
 			return supervise.ErrMissing
 		default:

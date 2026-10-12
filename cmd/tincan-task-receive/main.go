@@ -79,7 +79,11 @@ func readAssignment(options cli, input messageCommand, action operation) (assign
 		if err != nil {
 			return err
 		}
-		assignment, err := taskprotocol.DecodeAssignment(message.Body, options.TaskRoot, input.TaskID)
+		assignment, err := taskprotocol.DecodeAssignment(
+			message.Body,
+			options.TaskRoot,
+			input.TaskID,
+		)
 		if err != nil {
 			return err
 		}
@@ -120,7 +124,9 @@ func run(arguments []string, output io.Writer) int {
 		return 2
 	}
 	if !filepath.IsAbs(options.TaskRoot) || filepath.Clean(options.TaskRoot) != options.TaskRoot ||
-		!filepath.IsAbs(options.MessageRoot) || filepath.Clean(options.MessageRoot) != options.MessageRoot {
+		!filepath.IsAbs(
+			options.MessageRoot,
+		) || filepath.Clean(options.MessageRoot) != options.MessageRoot {
 		fmt.Fprintln(output, "error: state roots must be clean absolute paths")
 		return 2
 	}
@@ -142,7 +148,11 @@ func run(arguments []string, output io.Writer) int {
 	}
 	versionGuard, err := stateversion.AcquireLegacy(context.Background(), options.TaskRoot)
 	if err != nil {
-		fmt.Fprintf(output, "error: %q\nhelp: install a Tincan command compatible with this task state\n", err)
+		fmt.Fprintf(
+			output,
+			"error: %q\nhelp: install a Tincan command compatible with this task state\n",
+			err,
+		)
 		return 1
 	}
 	defer versionGuard.Close()

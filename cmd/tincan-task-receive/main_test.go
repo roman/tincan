@@ -103,7 +103,12 @@ func TestAcknowledgeAssignmentChecksGeneration(t *testing.T) {
 		}
 		wantPending := generation == "gen-old"
 		if (len(pending) != 0) != wantPending {
-			t.Fatalf("generation %q: pending=%d output=%q", generation, len(pending), output.String())
+			t.Fatalf(
+				"generation %q: pending=%d output=%q",
+				generation,
+				len(pending),
+				output.String(),
+			)
 		}
 	}
 }

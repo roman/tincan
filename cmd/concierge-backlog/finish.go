@@ -47,94 +47,98 @@ func finishTask(
 	if mode == crew.RetainTask {
 		result.State = "queued"
 	}
-	err = registry.WithCompletion(request.TaskID, func(completion *crew.Completion) (transitionErr error) {
-		if request.SpawnGeneration != "" && completion.SpawnGeneration() != request.SpawnGeneration {
-			return fmt.Errorf("%w: worker generation changed", crew.ErrStaleRecord)
-		}
-		unlock, err := lockBacklog(backlogFile)
-		if err != nil {
-			return err
-		}
-		lockHeld := true
-		defer func() {
-			if lockHeld {
-				transitionErr = errors.Join(transitionErr, unlock())
+	err = registry.WithCompletion(
+		request.TaskID,
+		func(completion *crew.Completion) (transitionErr error) {
+			if request.SpawnGeneration != "" &&
+				completion.SpawnGeneration() != request.SpawnGeneration {
+				return fmt.Errorf("%w: worker generation changed", crew.ErrStaleRecord)
 			}
-		}()
-		release := func() error {
-			lockHeld = false
-			return unlock()
-		}
-		row, err := showBacklogRow(backlogFile, request.TaskID)
-		if err != nil {
-			return err
-		}
-		if completion.Pending() && completion.Mode() != mode {
-			return fmt.Errorf("pending completion mode is %s", completion.Mode())
-		}
-		if completion.Pending() && row.State == result.State {
+			unlock, err := lockBacklog(backlogFile)
+			if err != nil {
+				return err
+			}
+			lockHeld := true
+			defer func() {
+				if lockHeld {
+					transitionErr = errors.Join(transitionErr, unlock())
+				}
+			}()
+			release := func() error {
+				lockHeld = false
+				return unlock()
+			}
+			row, err := showBacklogRow(backlogFile, request.TaskID)
+			if err != nil {
+				return err
+			}
+			if completion.Pending() && completion.Mode() != mode {
+				return fmt.Errorf("pending completion mode is %s", completion.Mode())
+			}
+			if completion.Pending() && row.State == result.State {
+				if err := release(); err != nil {
+					return err
+				}
+				result.Already = true
+				return nil
+			}
+			if row.State != "in_flight" {
+				return fmt.Errorf("task is %s; expected in_flight", row.State)
+			}
+			if mode == crew.CloseTask && row.Held == "yes" {
+				return fmt.Errorf("task is held; retain it or release the hold before closing")
+			}
+			if mode == crew.RetainTask && row.Held != "yes" && !completion.Pending() {
+				return fmt.Errorf("retention requires a held task")
+			}
+			if err := completion.Accept(mode); err != nil {
+				return err
+			}
+			staged, selected, err := stageBacklog(backlogFile)
+			if err != nil {
+				return err
+			}
+			defer os.RemoveAll(filepath.Dir(staged))
+			args := []string{"done", request.TaskID, "--no-prune", "--file", staged, "--json"}
+			if mode == crew.RetainTask {
+				args = []string{"reopen", request.TaskID, "--file", staged, "--json"}
+			}
+			output, err := exec.Command("tasks-axi", args...).CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("tasks-axi %s failed: %w: %s", args[0], err, output)
+			}
+			confirmed, err := showBacklogRow(staged, request.TaskID)
+			if err != nil {
+				return err
+			}
+			if confirmed.State != result.State {
+				return fmt.Errorf("task remains %s after tasks-axi %s", confirmed.State, args[0])
+			}
+			if err := syncStagedBacklog(staged, selected.Mode().Perm()); err != nil {
+				return err
+			}
+			current, err := os.Lstat(backlogFile)
+			if err != nil {
+				return fmt.Errorf("backlog changed during finish: %w", err)
+			}
+			if !os.SameFile(selected, current) {
+				return fmt.Errorf("backlog changed during finish")
+			}
+			if err := completion.CheckCurrent(); err != nil {
+				return err
+			}
+			if err := os.Rename(staged, backlogFile); err != nil {
+				return err
+			}
+			if err := syncBacklogDirectory(backlogFile); err != nil {
+				return err
+			}
 			if err := release(); err != nil {
 				return err
 			}
-			result.Already = true
 			return nil
-		}
-		if row.State != "in_flight" {
-			return fmt.Errorf("task is %s; expected in_flight", row.State)
-		}
-		if mode == crew.CloseTask && row.Held == "yes" {
-			return fmt.Errorf("task is held; retain it or release the hold before closing")
-		}
-		if mode == crew.RetainTask && row.Held != "yes" && !completion.Pending() {
-			return fmt.Errorf("retention requires a held task")
-		}
-		if err := completion.Accept(mode); err != nil {
-			return err
-		}
-		staged, selected, err := stageBacklog(backlogFile)
-		if err != nil {
-			return err
-		}
-		defer os.RemoveAll(filepath.Dir(staged))
-		args := []string{"done", request.TaskID, "--no-prune", "--file", staged, "--json"}
-		if mode == crew.RetainTask {
-			args = []string{"reopen", request.TaskID, "--file", staged, "--json"}
-		}
-		output, err := exec.Command("tasks-axi", args...).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("tasks-axi %s failed: %w: %s", args[0], err, output)
-		}
-		confirmed, err := showBacklogRow(staged, request.TaskID)
-		if err != nil {
-			return err
-		}
-		if confirmed.State != result.State {
-			return fmt.Errorf("task remains %s after tasks-axi %s", confirmed.State, args[0])
-		}
-		if err := syncStagedBacklog(staged, selected.Mode().Perm()); err != nil {
-			return err
-		}
-		current, err := os.Lstat(backlogFile)
-		if err != nil {
-			return fmt.Errorf("backlog changed during finish: %w", err)
-		}
-		if !os.SameFile(selected, current) {
-			return fmt.Errorf("backlog changed during finish")
-		}
-		if err := completion.CheckCurrent(); err != nil {
-			return err
-		}
-		if err := os.Rename(staged, backlogFile); err != nil {
-			return err
-		}
-		if err := syncBacklogDirectory(backlogFile); err != nil {
-			return err
-		}
-		if err := release(); err != nil {
-			return err
-		}
-		return nil
-	})
+		},
+	)
 	if err != nil {
 		return finishResult{}, fmt.Errorf("task completion or backlog transition: %w", err)
 	}

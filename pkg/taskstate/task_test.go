@@ -60,7 +60,10 @@ func TestQueuedTaskRejectsInvalidDefinitions(t *testing.T) {
 			input.Dependencies = []Dependency{{Type: "blocked-by", ID: "task-1"}}
 		}},
 		{"duplicate dependency", func(input *Definition) {
-			input.Dependencies = []Dependency{{Type: "blocked-by", ID: "task-0"}, {Type: "blocked-by", ID: "task-0"}}
+			input.Dependencies = []Dependency{
+				{Type: "blocked-by", ID: "task-0"},
+				{Type: "blocked-by", ID: "task-0"},
+			}
 		}},
 		{"invalid hold", func(input *Definition) { input.Hold = &Hold{Kind: "captain"} }},
 		{"invalid date", func(input *Definition) { input.Created = "tomorrow" }},
@@ -79,13 +82,26 @@ func TestQueuedTaskRejectsInvalidDefinitions(t *testing.T) {
 }
 
 func TestDecodeRejectsUnknownAndImpossibleFields(t *testing.T) {
-	base := []byte(`{"format":2,"id":"task-1","title":"Work","repo":"exmachina","kind":"ship","state":"queued"}`)
+	base := []byte(
+		`{"format":2,"id":"task-1","title":"Work","repo":"exmachina","kind":"ship","state":"queued"}`,
+	)
 	tests := []struct {
 		name string
 		data []byte
 	}{
-		{"unknown field", bytes.Replace(base, []byte(`"state":"queued"`), []byte(`"state":"queued","mystery":true`), 1)},
-		{"in flight without worker", bytes.Replace(base, []byte(`"state":"queued"`), []byte(`"state":"in_flight"`), 1)},
+		{
+			"unknown field",
+			bytes.Replace(
+				base,
+				[]byte(`"state":"queued"`),
+				[]byte(`"state":"queued","mystery":true`),
+				1,
+			),
+		},
+		{
+			"in flight without worker",
+			bytes.Replace(base, []byte(`"state":"queued"`), []byte(`"state":"in_flight"`), 1),
+		},
 		{"wrong format", bytes.Replace(base, []byte(`"format":2`), []byte(`"format":3`), 1)},
 	}
 	for _, test := range tests {
@@ -162,7 +178,11 @@ func TestMigratedTaskRejectsConflictingResultState(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			input := Snapshot{Definition: base.Definition, State: base.State, Worker: cloneWorker(base.Worker)}
+			input := Snapshot{
+				Definition: base.Definition,
+				State:      base.State,
+				Worker:     cloneWorker(base.Worker),
+			}
 			test.edit(&input)
 			if _, err := NewMigrated(input); !errors.Is(err, ErrInvalidTask) {
 				t.Fatalf("NewMigrated error = %v, want ErrInvalidTask", err)
@@ -290,7 +310,10 @@ func TestMigratedCompletionIsDetachedFromCaller(t *testing.T) {
 }
 
 func TestDecodeRejectsOversizedRecord(t *testing.T) {
-	data := append([]byte(`{"format":2,"id":"task-1","title":"Work","repo":"exmachina","kind":"ship","state":"queued","body":"`),
+	data := append(
+		[]byte(
+			`{"format":2,"id":"task-1","title":"Work","repo":"exmachina","kind":"ship","state":"queued","body":"`,
+		),
 		[]byte(strings.Repeat("x", maximumTaskBytes))...)
 	data = append(data, []byte(`"}`)...)
 	if _, err := Decode(data); !errors.Is(err, ErrInvalidTask) {

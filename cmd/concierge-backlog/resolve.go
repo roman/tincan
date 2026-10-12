@@ -16,7 +16,9 @@ type resolveResult struct {
 	Already bool
 }
 
-func resolveTask(root, backlogFile, messageRoot, replyID, requestedMode string) (resolveResult, error) {
+func resolveTask(
+	root, backlogFile, messageRoot, replyID, requestedMode string,
+) (resolveResult, error) {
 	mode := crew.CompletionMode(requestedMode)
 	if mode != crew.CloseTask && mode != crew.RetainTask {
 		return resolveResult{}, fmt.Errorf("invalid completion mode %q", requestedMode)
@@ -33,7 +35,10 @@ func resolveTask(root, backlogFile, messageRoot, replyID, requestedMode string) 
 	message, err := store.Read(primary, id)
 	if errors.Is(err, os.ErrNotExist) {
 		if _, dispositionErr := store.ReadDisposition(primary, id); dispositionErr != nil {
-			return resolveResult{}, fmt.Errorf("handled reply has no resolution: %w", dispositionErr)
+			return resolveResult{}, fmt.Errorf(
+				"handled reply has no resolution: %w",
+				dispositionErr,
+			)
 		}
 		message, err = store.ReadHandled(primary, id)
 	}

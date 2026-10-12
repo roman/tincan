@@ -64,7 +64,12 @@ func TestHookStatusOutputContract(t *testing.T) {
 			code := run([]string{"--root", root, test.command}, input, &output,
 				func(primary.Hook) (primary.Identity, error) { return identity, nil })
 			if code != test.wantCode {
-				t.Fatalf("exit code = %d, output = %q; want %d", code, output.String(), test.wantCode)
+				t.Fatalf(
+					"exit code = %d, output = %q; want %d",
+					code,
+					output.String(),
+					test.wantCode,
+				)
 			}
 			captured := strings.TrimRight(output.String(), "\n")
 			if want := "status: " + test.wantStatus + "\n"; !strings.HasPrefix(captured, want) {

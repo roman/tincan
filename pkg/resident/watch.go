@@ -82,7 +82,8 @@ func (watcher Watcher) Run(ctx context.Context, ready chan<- struct{}) error {
 			retryEvents = nil
 			return
 		}
-		if err := watcher.Doorbell.Prompt(ctx, watcher.Target, notify.DoorbellText); err != nil && ctx.Err() == nil {
+		if err := watcher.Doorbell.Prompt(ctx, watcher.Target, notify.DoorbellText); err != nil &&
+			ctx.Err() == nil {
 			if watcher.Report != nil {
 				watcher.Report(err)
 			}
@@ -106,7 +107,8 @@ func (watcher Watcher) Run(ctx context.Context, ready chan<- struct{}) error {
 			if !ok {
 				return errors.New("mailbox watcher event stream closed")
 			}
-			if event.Has(fsnotify.Create|fsnotify.Rename) && strings.HasSuffix(event.Name, ".json") {
+			if event.Has(fsnotify.Create|fsnotify.Rename) &&
+				strings.HasSuffix(event.Name, ".json") {
 				check()
 			}
 		case err, ok := <-files.Errors:

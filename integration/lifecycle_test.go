@@ -149,7 +149,9 @@ exec "$TINCAN_REAL_TASKS_AXI" "$@"
 	// The first resolver then exits with a durable intent and backlog result.
 	resolveArguments := []string{"--root", root, "resolve", replyID,
 		"--message-root", messages, "--mode", "close"}
-	firstResolve := exec.Command(filepath.Join(commandDirectory, "concierge-backlog"), resolveArguments...)
+	firstResolve := exec.Command(
+		filepath.Join(commandDirectory, "concierge-backlog"),
+		resolveArguments...)
 	firstResolve.Env = append(commandEnvironment, "TINCAN_FAIL_DISPOSITION=1")
 	if output, err := firstResolve.CombinedOutput(); err == nil {
 		t.Fatalf("first resolve unexpectedly succeeded: %s", output)
@@ -202,10 +204,16 @@ exec "$TINCAN_REAL_TASKS_AXI" "$@"
 	if !strings.Contains(cleaned, "state: cleaned") {
 		t.Fatalf("worker was not retired: %s", cleaned)
 	}
-	if workers := run("concierge-worker", "--root", root, "list"); !strings.Contains(workers, "count: 0") {
+	if workers := run("concierge-worker", "--root", root, "list"); !strings.Contains(
+		workers,
+		"count: 0",
+	) {
 		t.Fatalf("worker remains registered: %s", workers)
 	}
-	if pending := run("concierge-task", "--root", root, "pending"); !strings.Contains(pending, "pending_completions: 0") {
+	if pending := run("concierge-task", "--root", root, "pending"); !strings.Contains(
+		pending,
+		"pending_completions: 0",
+	) {
 		t.Fatalf("completion remains pending: %s", pending)
 	}
 }
@@ -238,9 +246,14 @@ func TestFakeHerdr(t *testing.T) {
 	}
 	switch commandName {
 	case "session list":
-		fmt.Printf(`{"sessions":[{"name":"work","running":true,"socket_path":%q}]}`+"\n", filepath.Join(worktree, "herdr.sock"))
+		fmt.Printf(
+			`{"sessions":[{"name":"work","running":true,"socket_path":%q}]}`+"\n",
+			filepath.Join(worktree, "herdr.sock"),
+		)
 	case "workspace list":
-		fmt.Println(`{"result":{"workspaces":[{"workspace_id":"other-workspace","focused":true,"active_tab_id":"other-tab"}]}}`)
+		fmt.Println(
+			`{"result":{"workspaces":[{"workspace_id":"other-workspace","focused":true,"active_tab_id":"other-tab"}]}}`,
+		)
 	case "tab list":
 		fmt.Println(`{"result":{"tabs":[{"tab_id":"other-tab","focused":true}]}}`)
 	case "pane get":
@@ -248,16 +261,23 @@ func TestFakeHerdr(t *testing.T) {
 			fmt.Fprintln(os.Stderr, `{"error":{"code":"pane_not_found"}}`)
 			os.Exit(1)
 		}
-		fmt.Printf(`{"result":{"pane":{"pane_id":"pane-1","foreground_cwd":%q,"workspace_id":"workspace-1","tab_id":"tab-1"}}}`+"\n", worktree)
+		fmt.Printf(
+			`{"result":{"pane":{"pane_id":"pane-1","foreground_cwd":%q,"workspace_id":"workspace-1","tab_id":"tab-1"}}}`+"\n",
+			worktree,
+		)
 	case "pane close":
 		if err := os.WriteFile(paneGone, nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
 		fmt.Println(`{"result":{}}`)
 	case "agent get":
-		fmt.Println(`{"result":{"agent":{"pane_id":"pane-1","agent_status":"idle","agent":"codex"}}}`)
+		fmt.Println(
+			`{"result":{"agent":{"pane_id":"pane-1","agent_status":"idle","agent":"codex"}}}`,
+		)
 	case "pane process-info":
-		fmt.Println(`{"result":{"type":"pane_process_info","process_info":{"pane_id":"pane-1","shell_pid":100,"foreground_processes":[{"pid":101,"name":"codex","argv0":"codex"}]}}}`)
+		fmt.Println(
+			`{"result":{"type":"pane_process_info","process_info":{"pane_id":"pane-1","shell_pid":100,"foreground_processes":[{"pid":101,"name":"codex","argv0":"codex"}]}}}`,
+		)
 	case "agent prompt":
 		fmt.Println(`{"result":{}}`)
 	default:

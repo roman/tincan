@@ -35,10 +35,14 @@ func (runner healthyTaskRunner) RunSession(
 		)), nil, nil
 	}
 	if len(args) >= 2 && args[0] == "agent" && args[1] == "get" {
-		return []byte(`{"result":{"agent":{"pane_id":"pane-1","agent_status":"working","agent":"codex"}}}`), nil, nil
+		return []byte(
+			`{"result":{"agent":{"pane_id":"pane-1","agent_status":"working","agent":"codex"}}}`,
+		), nil, nil
 	}
 	if len(args) >= 2 && args[0] == "pane" && args[1] == "process-info" {
-		return []byte(`{"result":{"type":"pane_process_info","process_info":{"pane_id":"pane-1","shell_pid":100,"foreground_processes":[{"pid":101,"name":"codex","argv0":"codex"}]}}}`), nil, nil
+		return []byte(
+			`{"result":{"type":"pane_process_info","process_info":{"pane_id":"pane-1","shell_pid":100,"foreground_processes":[{"pid":101,"name":"codex","argv0":"codex"}]}}}`,
+		), nil, nil
 	}
 	if len(args) >= 2 && args[0] == "agent" && args[1] == "prompt" {
 		select {
@@ -294,7 +298,8 @@ func TestRegisteredWorkerRestartsMissingTaskWorker(t *testing.T) {
 		t.Fatalf("check error = %v", err)
 	}
 	record, err := registry.Get("task-1")
-	if err != nil || record.SpawnGeneration != bootstrapGeneration || record.PendingGeneration != "" {
+	if err != nil || record.SpawnGeneration != bootstrapGeneration ||
+		record.PendingGeneration != "" {
 		t.Fatalf("record after restart = %+v, error %v", record, err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "tasks", "task-1.meta"))
@@ -491,7 +496,8 @@ func TestRestartDoesNotRotateWhenBootstrapCannotPublish(t *testing.T) {
 		t.Fatal("restart succeeded without a durable bootstrap")
 	}
 	record, err := registry.Get("task-1")
-	if err != nil || record.SpawnGeneration != "gen-1" || record.PendingLaunch == "" || len(runner.calls) != 2 {
+	if err != nil || record.SpawnGeneration != "gen-1" || record.PendingLaunch == "" ||
+		len(runner.calls) != 2 {
 		t.Fatalf("record=%+v err=%v calls=%+v", record, err, runner.calls)
 	}
 	if err := os.Remove(messageRoot); err != nil {
@@ -567,7 +573,9 @@ func TestObserveRetriesBootstrapPromptAfterLaunch(t *testing.T) {
 	runner.replies = []sessionReply{
 		paneReply(worktree), registeredAgentReply(),
 		paneReply(worktree), registeredAgentReply(),
-		{stdout: `{"result":{"type":"pane_process_info","process_info":{"pane_id":"pane-1","shell_pid":100,"foreground_processes":[{"pid":200,"name":"codex","argv0":"codex"}]}}}`},
+		{
+			stdout: `{"result":{"type":"pane_process_info","process_info":{"pane_id":"pane-1","shell_pid":100,"foreground_processes":[{"pid":200,"name":"codex","argv0":"codex"}]}}}`,
+		},
 		{stdout: `{"result":{}}`},
 	}
 	if err := worker.Observe(context.Background()); err != nil {
@@ -607,7 +615,9 @@ func TestObserveRecoversLaunchAfterStartCrash(t *testing.T) {
 	runner := &scriptedSessionRunner{replies: []sessionReply{
 		paneReply(worktree), registeredAgentReply(),
 		paneReply(worktree), registeredAgentReply(),
-		{stdout: `{"result":{"type":"pane_process_info","process_info":{"pane_id":"pane-1","shell_pid":100,"foreground_processes":[{"pid":200,"name":"codex","argv0":"codex"}]}}}`},
+		{
+			stdout: `{"result":{"type":"pane_process_info","process_info":{"pane_id":"pane-1","shell_pid":100,"foreground_processes":[{"pid":200,"name":"codex","argv0":"codex"}]}}}`,
+		},
 		{stdout: `{"result":{}}`},
 	}}
 	worker := registeredWorker{
@@ -650,7 +660,9 @@ func TestObserveCancelsFutureLaunchWhenOldWorkerLives(t *testing.T) {
 	runner := &scriptedSessionRunner{replies: []sessionReply{
 		paneReply(worktree), registeredAgentReply(),
 		paneReply(worktree), registeredAgentReply(),
-		{stdout: `{"result":{"type":"pane_process_info","process_info":{"pane_id":"pane-1","shell_pid":100,"foreground_processes":[{"pid":200,"name":"codex","argv0":"codex"}]}}}`},
+		{
+			stdout: `{"result":{"type":"pane_process_info","process_info":{"pane_id":"pane-1","shell_pid":100,"foreground_processes":[{"pid":200,"name":"codex","argv0":"codex"}]}}}`,
+		},
 	}}
 	worker := registeredWorker{
 		registry: registry, taskRoot: root, messageRoot: messageRoot,

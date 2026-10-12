@@ -28,9 +28,13 @@ func TestControllerSupervisesAndWakesTask(t *testing.T) {
 	bell := recordingDoorbell{calls: make(chan string, 2)}
 	worker := &observedWorker{}
 	controller := Controller{
-		Watcher:     Watcher{Store: store, Recipient: recipient, Target: "pane-1", Doorbell: bell},
-		Worker:      worker,
-		Supervision: supervise.Config{Interval: 20 * time.Millisecond, RestartTolerance: 5, RestartWindow: time.Second},
+		Watcher: Watcher{Store: store, Recipient: recipient, Target: "pane-1", Doorbell: bell},
+		Worker:  worker,
+		Supervision: supervise.Config{
+			Interval:         20 * time.Millisecond,
+			RestartTolerance: 5,
+			RestartWindow:    time.Second,
+		},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	ready := make(chan struct{})

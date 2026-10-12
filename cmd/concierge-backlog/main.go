@@ -198,7 +198,12 @@ func runWithClient(
 	}
 	if selected.Command() == "cleanup <task-id>" {
 		if err := cleanupTask(ctx, root.String(), command.Cleanup.TaskID, backlogFile, client); err != nil {
-			return fail(output, 1, err, "verify the accepted result and close the recorded pane before cleanup")
+			return fail(
+				output,
+				1,
+				err,
+				"verify the accepted result and close the recorded pane before cleanup",
+			)
 		}
 		fmt.Fprintf(output, "task: %q\nstate: cleaned\n", command.Cleanup.TaskID)
 		return 0
@@ -211,7 +216,12 @@ func runWithClient(
 		result, err := resolveTask(root.String(), backlogFile, messageRoot.String(),
 			command.Resolve.ReplyID, command.Resolve.Mode)
 		if err != nil {
-			return fail(output, 1, err, "inspect the reply, assignment, task binding, and backlog row before retrying")
+			return fail(
+				output,
+				1,
+				err,
+				"inspect the reply, assignment, task binding, and backlog row before retrying",
+			)
 		}
 		fmt.Fprintf(output, "task: %q\nstate: %s\nalready: %t\nreply: acknowledged\n",
 			result.TaskID, result.State, result.Already)
