@@ -19,15 +19,21 @@ type finishResult struct {
 	Already bool
 }
 
+type finishRequest struct {
+	TaskID          string
+	Mode            crew.CompletionMode
+	SpawnGeneration string
+}
+
 func finishTask(
-	root, taskID, backlogFile, requestedMode string,
+	root, backlogFile string, request finishRequest,
 ) (finishResult, error) {
-	if _, err := firstmate.ParseTaskID(taskID); err != nil {
+	if _, err := firstmate.ParseTaskID(request.TaskID); err != nil {
 		return finishResult{}, err
 	}
-	mode := crew.CompletionMode(requestedMode)
+	mode := request.Mode
 	if mode != crew.CloseTask && mode != crew.RetainTask {
-		return finishResult{}, fmt.Errorf("invalid completion mode %q", requestedMode)
+		return finishResult{}, fmt.Errorf("invalid completion mode %q", mode)
 	}
 	version, err := exec.Command("tasks-axi", "--version").CombinedOutput()
 	if err != nil || strings.TrimSpace(string(version)) != "0.2.6" {
@@ -41,7 +47,10 @@ func finishTask(
 	if mode == crew.RetainTask {
 		result.State = "queued"
 	}
-	err = registry.WithCompletion(taskID, func(completion *crew.Completion) (transitionErr error) {
+	err = registry.WithCompletion(request.TaskID, func(completion *crew.Completion) (transitionErr error) {
+		if request.SpawnGeneration != "" && completion.SpawnGeneration() != request.SpawnGeneration {
+			return fmt.Errorf("%w: worker generation changed", crew.ErrStaleRecord)
+		}
 		unlock, err := lockBacklog(backlogFile)
 		if err != nil {
 			return err
@@ -56,7 +65,7 @@ func finishTask(
 			lockHeld = false
 			return unlock()
 		}
-		row, err := showBacklogRow(backlogFile, taskID)
+		row, err := showBacklogRow(backlogFile, request.TaskID)
 		if err != nil {
 			return err
 		}
@@ -87,15 +96,15 @@ func finishTask(
 			return err
 		}
 		defer os.RemoveAll(filepath.Dir(staged))
-		args := []string{"done", taskID, "--no-prune", "--file", staged, "--json"}
+		args := []string{"done", request.TaskID, "--no-prune", "--file", staged, "--json"}
 		if mode == crew.RetainTask {
-			args = []string{"reopen", taskID, "--file", staged, "--json"}
+			args = []string{"reopen", request.TaskID, "--file", staged, "--json"}
 		}
 		output, err := exec.Command("tasks-axi", args...).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("tasks-axi %s failed: %w: %s", args[0], err, output)
 		}
-		confirmed, err := showBacklogRow(staged, taskID)
+		confirmed, err := showBacklogRow(staged, request.TaskID)
 		if err != nil {
 			return err
 		}
@@ -163,6 +172,9 @@ func cleanupTask(
 			return fmt.Errorf("task is %s; expected %s before cleanup", row.State, expected)
 		}
 		if err := completion.Retire(ctx, client, completion.Mode()); err != nil {
+			return err
+		}
+		if err := completion.RecordReceipt(); err != nil {
 			return err
 		}
 		return completion.Clear()

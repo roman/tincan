@@ -218,6 +218,18 @@ func TestFinishClosesOrRetainsBoundTask(t *testing.T) {
 					t.Fatalf("cleanup left %s: %v", path, err)
 				}
 			}
+			registry, err := crew.New(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := registry.WithRetiredReceipt("task-1", func(receipt crew.CompletionReceipt) error {
+				if receipt.SpawnGeneration != "gen-1" || receipt.Mode != crew.CompletionMode(test.mode) {
+					t.Fatalf("wrong cleanup receipt: %+v", receipt)
+				}
+				return nil
+			}); err != nil {
+				t.Fatalf("cleanup receipt: %v", err)
+			}
 		})
 	}
 }

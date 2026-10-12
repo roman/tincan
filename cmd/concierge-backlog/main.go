@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/alecthomas/kong"
+	"github.com/roman/tincan/pkg/crew"
 	"github.com/roman/tincan/pkg/firstmate"
 	"github.com/roman/tincan/pkg/herdr"
 )
@@ -23,6 +24,7 @@ type cli struct {
 	Start   startCommand   `cmd:"" help:"Start a queued task with a current worker binding."`
 	Finish  finishCommand  `cmd:"" help:"Accept a local task result and update its backlog row."`
 	Cleanup cleanupCommand `cmd:"" help:"Retire task records after the accepted result and pane departure."`
+	Resolve resolveCommand `cmd:"" help:"Accept a bound worker reply and finish its task."`
 }
 
 type listCommand struct {
@@ -47,6 +49,12 @@ type cleanupCommand struct {
 	TaskID string `arg:"" help:"Task with an accepted result."`
 }
 
+type resolveCommand struct {
+	ReplyID     string `arg:"" help:"Pending bound reply message ID."`
+	MessageRoot string `help:"Absolute Tincan message root." required:""`
+	Mode        string `help:"Close the row or retain a held row in the queue." enum:"close,retain" default:"close"`
+}
+
 type addCommand struct {
 	TaskID   string   `arg:"" help:"Stable task ID."`
 	Title    string   `arg:"" help:"Task title."`
@@ -69,7 +77,7 @@ type addResult struct {
 }
 
 func help() string {
-	return "usage: concierge-backlog --root ROOT add ID TITLE --kind KIND --repo REPO; or list [--state STATE]; or show ID [--full]; or start ID; or finish ID --mode close|retain; or cleanup ID"
+	return "usage: concierge-backlog --root ROOT add ID TITLE --kind KIND --repo REPO; or list [--state STATE]; or show ID [--full]; or start ID; or finish ID --mode close|retain; or cleanup ID; or resolve REPLY_ID --message-root ROOT --mode close|retain"
 }
 
 func fail(output io.Writer, code int, err error, next string) int {
@@ -103,7 +111,8 @@ func runWithClient(
 	if selected.Command() != "add <task-id> <title>" && selected.Command() != "list" &&
 		selected.Command() != "show <task-id>" &&
 		selected.Command() != "start <task-id>" && selected.Command() != "finish <task-id>" &&
-		selected.Command() != "cleanup <task-id>" {
+		selected.Command() != "cleanup <task-id>" &&
+		selected.Command() != "resolve <reply-id>" {
 		return fail(output, 2, fmt.Errorf("unknown command %q", selected.Command()), help())
 	}
 	root, err := firstmate.ParseAbsolutePath(command.Root)
@@ -164,8 +173,9 @@ func runWithClient(
 		return 0
 	}
 	if selected.Command() == "finish <task-id>" {
-		result, err := finishTask(root.String(), command.Finish.TaskID, backlogFile,
-			command.Finish.Mode)
+		result, err := finishTask(root.String(), backlogFile, finishRequest{
+			TaskID: command.Finish.TaskID, Mode: crew.CompletionMode(command.Finish.Mode),
+		})
 		if err != nil {
 			return fail(
 				output,
@@ -185,6 +195,20 @@ func runWithClient(
 			return fail(output, 1, err, "verify the accepted result and close the recorded pane before cleanup")
 		}
 		fmt.Fprintf(output, "task: %q\nstate: cleaned\n", command.Cleanup.TaskID)
+		return 0
+	}
+	if selected.Command() == "resolve <reply-id>" {
+		messageRoot, err := firstmate.ParseAbsolutePath(command.Resolve.MessageRoot)
+		if err != nil {
+			return fail(output, 2, err, "use an absolute, clean --message-root path")
+		}
+		result, err := resolveTask(root.String(), backlogFile, messageRoot.String(),
+			command.Resolve.ReplyID, command.Resolve.Mode)
+		if err != nil {
+			return fail(output, 1, err, "inspect the reply, assignment, task binding, and backlog row before retrying")
+		}
+		fmt.Fprintf(output, "task: %q\nstate: %s\nalready: %t\nreply: acknowledged\n",
+			result.TaskID, result.State, result.Already)
 		return 0
 	}
 	args := []string{

@@ -319,7 +319,7 @@ func (store *Store) Acknowledge(recipient Recipient, id MessageID) error {
 		handled := mailbox.handledPath()
 		source, destination := pending.messagePath(id), handled.messagePath(id)
 		if _, err := os.Stat(destination.String()); err == nil {
-			return nil
+			return syncAcknowledgeDirectories(mailbox)
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}

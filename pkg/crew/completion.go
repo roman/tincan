@@ -31,6 +31,13 @@ type completionMarker struct {
 	Mode            CompletionMode `json:"mode"`
 }
 
+// CompletionReceipt identifies the generation retired by a completed cleanup.
+type CompletionReceipt struct {
+	TaskID          string         `json:"task_id"`
+	SpawnGeneration string         `json:"spawn_generation"`
+	Mode            CompletionMode `json:"mode"`
+}
+
 // Completion keeps one task's records and pending transition under its metadata lock.
 type Completion struct {
 	id         firstmate.TaskID
@@ -48,6 +55,8 @@ type Completion struct {
 }
 
 func markerName(id firstmate.TaskID) string { return id.String() + ".completion.json" }
+
+func receiptName(id firstmate.TaskID) string { return id.String() + ".receipt.json" }
 
 func completionPending(root *os.Root, id firstmate.TaskID) (bool, error) {
 	_, err := root.Lstat(markerName(id))
@@ -252,6 +261,14 @@ func (completion *Completion) Pending() bool { return completion.markerInfo != n
 // Mode returns the recorded transition for a pending completion.
 func (completion *Completion) Mode() CompletionMode { return completion.marker.Mode }
 
+// SpawnGeneration returns the generation of the accepted result or current worker.
+func (completion *Completion) SpawnGeneration() string {
+	if completion.Pending() {
+		return completion.marker.SpawnGeneration
+	}
+	return completion.record.SpawnGeneration
+}
+
 // Accept records the selected result before pane cleanup begins.
 func (completion *Completion) Accept(mode CompletionMode) error {
 	if completion == nil || !validCompletionMode(mode) {
@@ -420,4 +437,104 @@ func (completion *Completion) Clear() error {
 	}
 	completion.markerInfo = nil
 	return completion.checkCurrent()
+}
+
+// RecordReceipt keeps the retired generation available after the marker clears.
+func (completion *Completion) RecordReceipt() error {
+	if completion == nil || !completion.Pending() ||
+		completion.metaInfo != nil || completion.recordInfo != nil {
+		return ErrConflict
+	}
+	if err := completion.checkCurrent(); err != nil {
+		return err
+	}
+	receipt := CompletionReceipt{
+		TaskID: completion.id.String(), SpawnGeneration: completion.marker.SpawnGeneration,
+		Mode: completion.marker.Mode,
+	}
+	data, err := json.Marshal(receipt)
+	if err != nil {
+		return err
+	}
+	file, name, err := temporaryFile(completion.taskRoot)
+	if err != nil {
+		return err
+	}
+	defer completion.taskRoot.Remove(name)
+	if _, err := file.Write(data); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := completion.taskRoot.Rename(name, receiptName(completion.id)); err != nil {
+		return err
+	}
+	return syncRoot(completion.taskRoot)
+}
+
+// WithRetiredReceipt reads a receipt while no task records can replace it.
+func (registry *Registry) WithRetiredReceipt(
+	taskID string, operation func(CompletionReceipt) error,
+) error {
+	if operation == nil {
+		return ErrInvalidRecord
+	}
+	id, err := firstmate.ParseTaskID(taskID)
+	if err != nil {
+		return err
+	}
+	return registry.withLockedTask(taskID, func(taskRoot *os.Root, check func() error) error {
+		if err := check(); err != nil {
+			return err
+		}
+		for _, name := range []string{id.String() + ".meta", markerName(id)} {
+			if _, err := taskRoot.Lstat(name); !errors.Is(err, os.ErrNotExist) {
+				return ErrStaleRecord
+			}
+		}
+		crewRoot, err := registry.openCrew()
+		if err != nil {
+			return err
+		}
+		defer crewRoot.Close()
+		if _, err := crewRoot.Lstat(id.String() + ".json"); !errors.Is(err, os.ErrNotExist) {
+			return ErrStaleRecord
+		}
+		selected, err := taskRoot.Lstat(receiptName(id))
+		if err != nil {
+			return err
+		}
+		if !selected.Mode().IsRegular() {
+			return ErrInvalidRecord
+		}
+		file, err := taskRoot.Open(receiptName(id))
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		opened, err := file.Stat()
+		if err != nil || !os.SameFile(selected, opened) {
+			return ErrStaleRecord
+		}
+		data, err := io.ReadAll(io.LimitReader(file, maximumRecordBytes+1))
+		if err != nil || len(data) > maximumRecordBytes {
+			return ErrInvalidRecord
+		}
+		var receipt CompletionReceipt
+		if json.Unmarshal(data, &receipt) != nil || receipt.TaskID != taskID ||
+			firstmate.ValidateSpawnGeneration(receipt.SpawnGeneration) != nil ||
+			!validCompletionMode(receipt.Mode) {
+			return ErrInvalidRecord
+		}
+		if err := check(); err != nil {
+			return err
+		}
+		return operation(receipt)
+	})
 }

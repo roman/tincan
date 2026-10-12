@@ -16,7 +16,7 @@ in this repository.
 | `tincan-task-receive` | Read and acknowledge assignments for the current worker generation. |
 | `concierge-brief` | Show pending primary wakes, queued backlog work, local tasks, and registered workers at session start. |
 | `concierge-worker` | Record and inspect local worker launch identities. |
-| `concierge-backlog` | Queue, list, start, finish, and clean up tasks in the supervisor backlog. |
+| `concierge-backlog` | Queue, list, start, resolve replies, and clean up tasks in the supervisor backlog. |
 | `concierge-task` | Adopt a live local worker, cancel an incomplete adoption, or list task records. |
 | `tincan-notify` | Ring an agent while its inbox has pending messages. |
 | `concierge-control` | Inspect, start, or interrupt an agent. |
@@ -173,10 +173,14 @@ assignment after the reply is durable. Reusing the reply key after a crash
 returns the same reply and completes the acknowledgement. A changed reply key
 for the same assignment is rejected. An assignment retry with the same key and
 body returns the same message ID within one worker generation. A new generation
-gets a new assignment ID. The primary uses `check` before acting on the reply. It
-reports `stale` without the reply body if the task has ended or its worker
-generation changed. A separate `tincan-notify` process can ring the primary
-while its inbox has pending messages.
+gets a new assignment ID. The primary uses `check` to read the reply and decide
+whether to close or retain the task. It reports `stale` without the reply body
+if the task has ended or its worker generation changed. For a reply bound to an
+assignment, use `concierge-backlog resolve` to record that decision. The command
+verifies the assignment and worker generation, finishes the backlog row, records
+a durable disposition, then acknowledges the reply. Retry the same reply ID and
+mode after an interrupted resolution. A separate `tincan-notify` process can
+ring the primary while its inbox has pending messages.
 
 ```sh
 tincan-task-receive --task-root /absolute/concierge-state --message-root /absolute/tincan-state read task-1 MESSAGE_ID --generation GEN
@@ -184,7 +188,7 @@ tincan-task-receive --task-root /absolute/concierge-state --message-root /absolu
 tincan-task-reply --task-root /absolute/concierge-state --message-root /absolute/tincan-state send task-1 --generation GEN --key answer-1 --assignment-id MESSAGE_ID --body-file reply.txt
 tincan-inbox --root /absolute/tincan-state list firstmate
 tincan-task-reply --task-root /absolute/concierge-state --message-root /absolute/tincan-state check MESSAGE_ID
-tincan-inbox --root /absolute/tincan-state ack firstmate MESSAGE_ID
+concierge-backlog --root /absolute/concierge-state resolve MESSAGE_ID --message-root /absolute/tincan-state --mode close
 ```
 
 Herdr agent control and supervision use a live agent name or pane ID:

@@ -54,27 +54,6 @@ func replyBody(path string, stdin io.Reader) (string, error) {
 	return string(data), nil
 }
 
-func readBoundAssignment(
-	store *inbox.Store, taskRoot, taskID, generation string, id inbox.MessageID,
-) error {
-	worker, _ := inbox.ParseRecipient(taskID)
-	assignment, err := store.Read(worker, id)
-	if errors.Is(err, os.ErrNotExist) {
-		assignment, err = store.ReadHandled(worker, id)
-	}
-	if err != nil {
-		return err
-	}
-	envelope, err := taskprotocol.DecodeAssignment(assignment.Body, taskRoot, taskID)
-	if err != nil {
-		return err
-	}
-	if envelope.SpawnGeneration != generation {
-		return errors.New("assignment does not match this task and generation")
-	}
-	return nil
-}
-
 func send(command cli, stdin io.Reader, stdout io.Writer) error {
 	input := command.Send
 	if _, err := firstmate.ParseTaskID(input.TaskID); err != nil {
@@ -112,7 +91,7 @@ func send(command cli, stdin io.Reader, stdout io.Writer) error {
 			return errOldGeneration
 		}
 		if input.AssignmentID != "" {
-			if err := readBoundAssignment(store, command.TaskRoot, input.TaskID,
+			if err := taskprotocol.ValidateBoundAssignment(store, command.TaskRoot, input.TaskID,
 				input.Generation, assignmentID); err != nil {
 				return err
 			}
@@ -192,7 +171,7 @@ func check(command cli, stdout io.Writer) error {
 			if err != nil {
 				return err
 			}
-			if err := readBoundAssignment(store, command.TaskRoot, envelope.Task,
+			if err := taskprotocol.ValidateBoundAssignment(store, command.TaskRoot, envelope.Task,
 				envelope.SpawnGeneration, assignmentID); err != nil {
 				return err
 			}

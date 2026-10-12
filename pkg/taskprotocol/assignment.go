@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/roman/tincan/pkg/firstmate"
+	"github.com/roman/tincan/pkg/inbox"
 )
 
 var ErrInvalidAssignment = errors.New("message is not an assignment for this task root")
@@ -35,4 +37,25 @@ func DecodeAssignment(body, taskRoot, taskID string) (Assignment, error) {
 		return Assignment{}, err
 	}
 	return assignment, nil
+}
+
+func ValidateBoundAssignment(
+	store *inbox.Store, taskRoot, taskID, generation string, id inbox.MessageID,
+) error {
+	worker, _ := inbox.ParseRecipient(taskID)
+	assignment, err := store.Read(worker, id)
+	if errors.Is(err, os.ErrNotExist) {
+		assignment, err = store.ReadHandled(worker, id)
+	}
+	if err != nil {
+		return err
+	}
+	envelope, err := DecodeAssignment(assignment.Body, taskRoot, taskID)
+	if err != nil {
+		return err
+	}
+	if envelope.SpawnGeneration != generation {
+		return errors.New("assignment does not match this task and generation")
+	}
+	return nil
 }
