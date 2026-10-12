@@ -2,12 +2,13 @@ package conciergecli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 
-	"github.com/roman/tincan/pkg/taskops"
+	"github.com/roman/tincan/pkg/hostservice"
 	"github.com/roman/tincan/pkg/taskstate"
 	"github.com/roman/tincan/pkg/taskview"
 )
@@ -103,25 +104,38 @@ func (command *backlogCommands) run(
 				taskstate.Dependency{Type: "blocked-by", ID: id},
 			)
 		}
-		service, err := taskops.New(root)
-		if err != nil {
-			return fail(output, 2, err, backlogHelp)
-		}
-		task, err := service.Create(ctx, definition)
+		response, err := hostservice.Call(
+			ctx,
+			filepath.Join(root, "host.sock"),
+			hostservice.Request{Operation: hostservice.Intake, Intake: &definition},
+		)
 		if err != nil {
 			return fail(
 				output,
 				1,
 				err,
-				"inspect the existing task and use an initialized version 2 --root; retry the same intake after correcting storage errors",
+				"run concierge --root ROOT host serve outside the model sandbox; backlog add also needs approved unsandboxed execution or verified socket permission; inspect the task before retrying identical intake",
 			)
 		}
+		if response.Outcome != hostservice.Completed {
+			code := 1
+			if response.Outcome == hostservice.Invalid {
+				code = 2
+			}
+			return fail(
+				output,
+				code,
+				errors.New(response.Error),
+				"use the current primary session; inspect backlog show TASK_ID and retry identical intake after correcting the reported error",
+			)
+		}
+		task := response.Task
 		_, err = fmt.Fprintf(
 			output,
 			"task: %s\ntitle: %s\nstate: %s\nkind: %s\nrepo: %s\nbacklog: %s\n",
-			quote(task.ID()),
+			quote(task.Definition.ID),
 			quote(definition.Title),
-			task.State(),
+			task.State,
 			quote(definition.Kind),
 			quote(definition.Repo),
 			quote(filepath.Join(root, "backlog.md")),

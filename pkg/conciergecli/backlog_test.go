@@ -42,7 +42,12 @@ func invoke(t *testing.T, root, input string, args ...string) string {
 }
 
 func TestBacklogIntakeUsesRecordsAndStableRetries(t *testing.T) {
-	root := taskRoot(t, t.TempDir())
+	if runUnderNativeParent(t) {
+		return
+	}
+	root := shortTaskRoot(t)
+	claimNativeParent(t, root)
+	serveTaskRoot(t, root)
 	args := []string{
 		"backlog",
 		"add",
@@ -97,7 +102,12 @@ func TestBacklogIntakeUsesRecordsAndStableRetries(t *testing.T) {
 }
 
 func TestBacklogIntakeReadsBodyFileAndRejectsConflict(t *testing.T) {
-	root := taskRoot(t, t.TempDir())
+	if runUnderNativeParent(t) {
+		return
+	}
+	root := shortTaskRoot(t)
+	claimNativeParent(t, root)
+	serveTaskRoot(t, root)
 	path := filepath.Join(t.TempDir(), "body.md")
 	if err := os.WriteFile(path, []byte(strings.Repeat("é", 250)), 0600); err != nil {
 		t.Fatal(err)

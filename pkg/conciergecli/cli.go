@@ -17,9 +17,12 @@ import (
 
 const version = "0.1.0"
 
-const cliHelp = "commands: state init|backup|migrate|recover, brief [--limit N], primary claim|verify|release, control status|interrupt|start, supervise pane|task, backlog, worker list|show, task list|pending|send|receive|ack|reply|adopt|stop|cancel; global flags: --root, --message-root, --recipient, --help; run concierge COMMAND --help for arguments"
+const cliHelp = "commands: host serve, state init|backup|migrate|recover, brief [--limit N], primary claim|verify|release, control status|interrupt|start, supervise pane|task, backlog, worker list|show, task list|pending|send|receive|ack|reply|adopt|stop|cancel; global flags: --root, --message-root, --recipient, --help; run concierge COMMAND --help for arguments"
 
 type cli struct {
+	Host struct {
+		Serve struct{} `cmd:"" help:"Serve primary-owned operations until interrupted; run outside the model sandbox."`
+	} `cmd:"" help:"Run the host service for this state root."`
 	State       stateCommands       `cmd:"" help:"Initialize, back up, and migrate task state with all writers stopped."`
 	Supervise   supervisionCommands `cmd:"" help:"Monitor workers and recover missing agents."`
 	Control     controlCommands     `cmd:"" help:"Inspect and control live Herdr agents."`
@@ -103,6 +106,8 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return fail(stdout, 2, err, "use an absolute, clean --root path")
 	}
 	switch selected.Command() {
+	case "host serve":
+		return command.runHost(ctx, root, stdout)
 	case "state init":
 		return runStateInitialization(ctx, root, stdout)
 	case "state backup", "state migrate", "state recover":

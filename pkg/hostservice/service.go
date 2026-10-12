@@ -58,6 +58,7 @@ type Response struct {
 
 // Server binds operations to roots selected by the host process.
 type Server struct {
+	root      string
 	authorize func(primary.Caller) error
 	create    func(context.Context, taskstate.Definition) (taskstate.Task, error)
 }
@@ -68,6 +69,7 @@ func New(root string, recipient inbox.Recipient) (*Server, error) {
 		return nil, err
 	}
 	return &Server{
+		root:      root,
 		authorize: func(caller primary.Caller) error { return primary.AuthorizeCaller(root, caller) },
 		create:    service.Create,
 	}, nil

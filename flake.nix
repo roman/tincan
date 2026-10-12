@@ -135,8 +135,22 @@
             test "$1" = ${packages.tincan}/bin/tincan
             ${packages.concierge}/bin/concierge --root "$TMPDIR/state" state init > initialized
             ${pkgs.gnugrep}/bin/grep -qx 'version: 2' initialized
+            ${pkgs.coreutils}/bin/cp ${pkgs.bash}/bin/bash "$TMPDIR/codex"
+            "$TMPDIR/codex" -e <<'INTAKE'
+            ${pkgs.jq}/bin/jq -n --arg cwd "$TMPDIR" \
+              '{cwd:$cwd,session_id:"packaged-intake",hook_event_name:"SessionStart"}' | \
+              ${packages.concierge}/bin/concierge --root "$TMPDIR/state" primary claim >/dev/null
+            ${packages.concierge}/bin/concierge --root "$TMPDIR/state" host serve > "$TMPDIR/host-output" &
+            host_pid=$!
+            trap 'kill "$host_pid" 2>/dev/null || true; wait "$host_pid" 2>/dev/null || true' EXIT
+            for attempt in {1..100}; do
+              test ! -S "$TMPDIR/state/host.sock" || break
+              kill -0 "$host_pid"
+              ${pkgs.coreutils}/bin/sleep 0.01
+            done
             ${packages.concierge}/bin/concierge --root "$TMPDIR/state" backlog add smoke-a1 'Packaged intake' \
               --kind task --repo exmachina >/dev/null
+            INTAKE
             ${packages.concierge}/bin/concierge --root "$TMPDIR/state" backlog list > backlog
             ${pkgs.gnugrep}/bin/grep -Fx '  "smoke-a1",queued,"task","exmachina","Packaged intake"' backlog
             ${packages.concierge}/bin/concierge --root "$TMPDIR/state" backlog show smoke-a1 --full > detail

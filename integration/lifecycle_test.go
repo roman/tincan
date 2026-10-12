@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/roman/tincan/pkg/inbox"
+	"github.com/roman/tincan/pkg/taskops"
+	"github.com/roman/tincan/pkg/taskstate"
 )
 
 func TestWorkerReplySurvivesPrimaryRestart(t *testing.T) {
@@ -74,8 +77,13 @@ func TestWorkerReplySurvivesPrimaryRestart(t *testing.T) {
 		return string(output)
 	}
 	run("--root", root, "state", "init")
-	run("--root", root, "backlog", "add", "task-1", "Test worker reply",
-		"--kind", "task", "--repo", "exmachina")
+	service, err := taskops.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Create(context.Background(), taskstate.Definition{ID: "task-1", Title: "Test worker reply", Kind: "task", Repo: "exmachina"}); err != nil {
+		t.Fatal(err)
+	}
 	run(
 		"--root",
 		root,
