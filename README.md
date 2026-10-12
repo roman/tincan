@@ -16,7 +16,7 @@ in this repository.
 | `tincan-task-receive` | Read and acknowledge assignments for the current worker generation. |
 | `concierge-brief` | Show pending primary wakes, queued backlog work, local tasks, and registered workers at session start. |
 | `concierge-worker` | Record and inspect local worker launch identities. |
-| `concierge-backlog` | Queue, list, start, and finish tasks in the supervisor backlog. |
+| `concierge-backlog` | Queue, list, start, finish, and clean up tasks in the supervisor backlog. |
 | `concierge-task` | Adopt a live local worker, cancel an incomplete adoption, or list task records. |
 | `tincan-notify` | Ring an agent while its inbox has pending messages. |
 | `concierge-control` | Inspect, start, or interrupt an agent. |
@@ -136,13 +136,20 @@ start the queued backlog row. The start command requires matching task metadata
 and a current worker record. It rejects blocked or held work and can be retried
 after an interrupted transition. The start command requires version 0.2.6
 because it uses that version's backlog lock protocol. The `finish` command
-completes a task after its recorded worker pane closes.
+accepts a result and updates the backlog while the worker pane can still be
+open. Run `concierge-task stop` after accepting the result. Then run
+`concierge-backlog cleanup` to confirm the pane is gone and retire the task
+records. An interrupted finish keeps its accepted result for retry. Cleanup
+refuses a task whose backlog row has not reached the accepted state.
 
 ```sh
 concierge-backlog --root /absolute/concierge-state add task-1 'Fix startup' --kind task --repo exmachina
 concierge-backlog --root /absolute/concierge-state list
 concierge-backlog --root /absolute/concierge-state show task-1 --full
 concierge-backlog --root /absolute/concierge-state start task-1
+concierge-backlog --root /absolute/concierge-state finish task-1 --mode close
+concierge-task --root /absolute/concierge-state stop task-1
+concierge-backlog --root /absolute/concierge-state cleanup task-1
 ```
 
 Use `show ID --full` to read the complete title and body for a listed task.

@@ -16,7 +16,6 @@ import (
 
 type finishRunner struct {
 	response string
-	during   func()
 }
 
 func (runner finishRunner) RunSession(
@@ -25,35 +24,105 @@ func (runner finishRunner) RunSession(
 	if session != "work" || strings.Join(arguments, " ") != "pane get pane-1 --session work" {
 		return nil, nil, errors.New("unexpected Herdr request")
 	}
-	if runner.during != nil {
-		runner.during()
-	}
 	return []byte(runner.response), nil, nil
 }
 
-func finishCLI(t *testing.T, root, mode, response string) (int, string) {
+func finishCLI(t *testing.T, root, mode string) (int, string) {
 	t.Helper()
 	var output bytes.Buffer
 	code := runWithClient(
 		context.Background(),
 		[]string{"--root", root, "finish", "task-1", "--mode", mode},
 		&output,
-		herdr.Client{SessionRunner: finishRunner{response: response}},
+		herdr.Client{SessionRunner: finishRunner{}},
 	)
 	return code, output.String()
 }
 
-func TestFinishRequiresInFlightBoundTaskAndGonePane(t *testing.T) {
+func TestFinishRecordsResultBeforePaneCleanup(t *testing.T) {
+	root := backlogRoot(t)
+	queueTask(t, root, "task-1")
+	bindWorker(t, root, "task-1")
+	startBoundTask(t, root)
+	livePane := `{"result":{"pane":{"pane_id":"pane-1"}}}`
+	if code, output := finishCLI(t, root, "close"); code != 0 {
+		t.Fatalf("finish with live pane: %s", output)
+	}
+	if !strings.Contains(backlogState(t, root, "task-1"), "state: done") {
+		t.Fatal("accepted result did not reach the backlog")
+	}
+	for _, path := range []string{
+		filepath.Join(root, "tasks", "task-1.meta"),
+		filepath.Join(root, "crew", "task-1.json"),
+		filepath.Join(root, "tasks", "task-1.completion.json"),
+	} {
+		if _, err := os.Lstat(path); err != nil {
+			t.Fatalf("finish removed %s before cleanup: %v", path, err)
+		}
+	}
+	cleanup := func(response string) (int, string) {
+		var output bytes.Buffer
+		code := runWithClient(context.Background(),
+			[]string{"--root", root, "cleanup", "task-1"}, &output,
+			herdr.Client{SessionRunner: finishRunner{response: response}})
+		return code, output.String()
+	}
+	if code, _ := cleanup(livePane); code == 0 {
+		t.Fatal("cleanup retired a live pane")
+	}
+	if code, output := cleanup(`{"error":{"code":"pane_not_found"}}`); code != 0 {
+		t.Fatalf("cleanup after pane departure: %s", output)
+	}
+	for _, path := range []string{
+		filepath.Join(root, "tasks", "task-1.meta"),
+		filepath.Join(root, "crew", "task-1.json"),
+		filepath.Join(root, "tasks", "task-1.completion.json"),
+	} {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("cleanup left %s: %v", path, err)
+		}
+	}
+}
+
+func TestFinishResumesAcceptedResultBeforeBacklogTransition(t *testing.T) {
+	root := backlogRoot(t)
+	queueTask(t, root, "task-1")
+	bindWorker(t, root, "task-1")
+	startBoundTask(t, root)
+	registry, err := crew.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.WithCompletion("task-1", func(completion *crew.Completion) error {
+		return completion.Accept(crew.CloseTask)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if code := runWithClient(context.Background(),
+		[]string{"--root", root, "cleanup", "task-1"}, &output,
+		herdr.Client{SessionRunner: finishRunner{response: `{"error":{"code":"pane_not_found"}}`}},
+	); code == 0 {
+		t.Fatal("cleanup accepted an in-flight backlog row")
+	}
+	if code, result := finishCLI(t, root, "close"); code != 0 {
+		t.Fatalf("finish retry: %s", result)
+	}
+	if !strings.Contains(backlogState(t, root, "task-1"), "state: done") {
+		t.Fatal("backlog transition was lost")
+	}
+	if _, err := os.Lstat(filepath.Join(root, "tasks", "task-1.completion.json")); err != nil {
+		t.Fatalf("accepted result was lost: %v", err)
+	}
+}
+
+func TestFinishRequiresInFlightBoundTask(t *testing.T) {
 	for _, test := range []struct {
-		name         string
-		bind         bool
-		start        bool
-		paneResponse string
+		name string
+		bind bool
 	}{
-		{"queued without worker", false, false, `{"error":{"code":"pane_not_found"}}`},
-		{"queued with worker", true, false, `{"error":{"code":"pane_not_found"}}`},
-		{"live pane", true, true, `{"result":{"pane":{"pane_id":"pane-1"}}}`},
-		{"unreadable pane", true, true, `{"error":{"code":"server_unavailable"}}`},
+		{"queued without worker", false},
+		{"queued with worker", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := backlogRoot(t)
@@ -61,18 +130,11 @@ func TestFinishRequiresInFlightBoundTaskAndGonePane(t *testing.T) {
 			if test.bind {
 				bindWorker(t, root, "task-1")
 			}
-			if test.start {
-				startBoundTask(t, root)
-			}
-			code, output := finishCLI(t, root, "close", test.paneResponse)
+			code, output := finishCLI(t, root, "close")
 			if code == 0 {
 				t.Fatalf("unsafe completion succeeded: %s", output)
 			}
-			wantState := "state: queued"
-			if test.start {
-				wantState = "state: in_flight"
-			}
-			if !strings.Contains(backlogState(t, root, "task-1"), wantState) {
+			if !strings.Contains(backlogState(t, root, "task-1"), "state: queued") {
 				t.Fatal("backlog state changed")
 			}
 			if test.bind {
@@ -120,7 +182,7 @@ func TestFinishClosesOrRetainsBoundTask(t *testing.T) {
 					t.Fatalf("hold task: %v: %s", err, output)
 				}
 			}
-			code, output := finishCLI(t, root, test.mode, `{"error":{"code":"pane_not_found"}}`)
+			code, output := finishCLI(t, root, test.mode)
 			if code != 0 {
 				t.Fatalf("finish task: %s", output)
 			}
@@ -136,8 +198,24 @@ func TestFinishClosesOrRetainsBoundTask(t *testing.T) {
 				filepath.Join(root, "crew", "task-1.json"),
 				filepath.Join(root, "tasks", "task-1.completion.json"),
 			} {
+				if _, err := os.Lstat(path); err != nil {
+					t.Fatalf("accepted result lost %s: %v", path, err)
+				}
+			}
+			var cleanupOutput bytes.Buffer
+			if code := runWithClient(context.Background(),
+				[]string{"--root", root, "cleanup", "task-1"}, &cleanupOutput,
+				herdr.Client{SessionRunner: finishRunner{response: `{"error":{"code":"pane_not_found"}}`}},
+			); code != 0 {
+				t.Fatalf("cleanup: %s", cleanupOutput.String())
+			}
+			for _, path := range []string{
+				filepath.Join(root, "tasks", "task-1.meta"),
+				filepath.Join(root, "crew", "task-1.json"),
+				filepath.Join(root, "tasks", "task-1.completion.json"),
+			} {
 				if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-					t.Fatalf("record remains at %s: %v", path, err)
+					t.Fatalf("cleanup left %s: %v", path, err)
 				}
 			}
 		})
@@ -167,9 +245,7 @@ func TestFinishRespectsHeldRow(t *testing.T) {
 					t.Fatalf("hold task: %v: %s", err, output)
 				}
 			}
-			if code, output := finishCLI(
-				t, root, test.mode, `{"error":{"code":"pane_not_found"}}`,
-			); code == 0 {
+			if code, output := finishCLI(t, root, test.mode); code == 0 {
 				t.Fatalf("invalid held transition succeeded: %s", output)
 			}
 			if !strings.Contains(backlogState(t, root, "task-1"), "state: in_flight") {
@@ -227,7 +303,7 @@ func TestFinishResumesPendingClose(t *testing.T) {
 					t.Fatalf("done task: %v: %s", err, output)
 				}
 			}
-			code, output := finishCLI(t, root, "close", "")
+			code, output := finishCLI(t, root, "close")
 			if code != 0 {
 				t.Fatalf("retry pending close: %s", output)
 			}
@@ -237,11 +313,19 @@ func TestFinishResumesPendingClose(t *testing.T) {
 			if !strings.Contains(backlogState(t, root, "task-1"), "state: done") {
 				t.Fatal("backlog row remains in flight")
 			}
-			if _, err := os.Lstat(filepath.Join(root, "tasks", "task-1.completion.json")); !errors.Is(
-				err,
-				os.ErrNotExist,
-			) {
-				t.Fatalf("pending marker remains: %v", err)
+			markerPath := filepath.Join(root, "tasks", "task-1.completion.json")
+			if _, err := os.Lstat(markerPath); err != nil {
+				t.Fatalf("accepted marker lost: %v", err)
+			}
+			var cleanupOutput bytes.Buffer
+			if code := runWithClient(context.Background(),
+				[]string{"--root", root, "cleanup", "task-1"}, &cleanupOutput,
+				herdr.Client{SessionRunner: finishRunner{response: `{"error":{"code":"pane_not_found"}}`}},
+			); code != 0 {
+				t.Fatalf("cleanup: %s", cleanupOutput.String())
+			}
+			if _, err := os.Lstat(markerPath); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("cleanup left marker: %v", err)
 			}
 		})
 	}
@@ -256,7 +340,7 @@ func TestFinishRefusesBacklogLockBeforeRetirement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, output := finishCLI(t, root, "close", `{"error":{"code":"pane_not_found"}}`)
+	code, output := finishCLI(t, root, "close")
 	if code == 0 {
 		t.Fatalf("locked backlog changed: %s", output)
 	}
@@ -270,51 +354,5 @@ func TestFinishRefusesBacklogLockBeforeRetirement(t *testing.T) {
 		if _, err := os.Lstat(path); err != nil {
 			t.Fatalf("record changed while backlog locked: %v", err)
 		}
-	}
-}
-
-func TestFinishRetainsMarkerWhenBacklogUnlockFails(t *testing.T) {
-	root := backlogRoot(t)
-	queueTask(t, root, "task-1")
-	bindWorker(t, root, "task-1")
-	startBoundTask(t, root)
-	lockPath := filepath.Join(root, "backlog.md.lock")
-	runner := finishRunner{
-		response: `{"error":{"code":"pane_not_found"}}`,
-		during: func() {
-			if err := os.Rename(lockPath, lockPath+".original"); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(lockPath, []byte("other owner\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-		},
-	}
-	var output bytes.Buffer
-	code := runWithClient(
-		context.Background(),
-		[]string{"--root", root, "finish", "task-1", "--mode", "close"},
-		&output,
-		herdr.Client{SessionRunner: runner},
-	)
-	if code == 0 || !strings.Contains(output.String(), "backlog lock changed") {
-		t.Fatalf("unlock failure was hidden: %s", output.String())
-	}
-	if !strings.Contains(backlogState(t, root, "task-1"), "state: done") {
-		t.Fatal("backlog transition did not land before unlock failure")
-	}
-	markerPath := filepath.Join(root, "tasks", "task-1.completion.json")
-	if _, err := os.Lstat(markerPath); err != nil {
-		t.Fatalf("pending marker was lost: %v", err)
-	}
-	if err := os.Remove(lockPath); err != nil {
-		t.Fatal(err)
-	}
-	if code, output := finishCLI(t, root, "close", ""); code != 0 ||
-		!strings.Contains(output, "already: true") {
-		t.Fatalf("pending close retry failed: %s", output)
-	}
-	if _, err := os.Lstat(markerPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("pending marker remains after retry: %v", err)
 	}
 }

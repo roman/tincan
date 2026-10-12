@@ -12,6 +12,7 @@ import (
 
 	"github.com/roman/tincan/pkg/firstmate"
 	"github.com/roman/tincan/pkg/herdr"
+	"github.com/roman/tincan/pkg/presentation"
 )
 
 // CompletionMode selects the backlog state after a worker is retired.
@@ -163,6 +164,23 @@ func (completion *Completion) load() error {
 		completion.record = record
 		completion.recordInfo = recordInfo
 	}
+	if info == nil && completion.recordInfo != nil &&
+		record.PendingGeneration != "" && record.PendingLaunch == "" {
+		if _, err := recoverPendingGeneration(completion.taskRoot, completion.crewRoot,
+			completion.id, record); err != nil {
+			return err
+		}
+		completion.metadata, completion.metaInfo, err = firstmate.ReadTaskWithInfoFromRoot(
+			completion.taskRoot, completion.id)
+		if err != nil {
+			return err
+		}
+		completion.record, completion.recordInfo, err = readRecordWithInfo(
+			completion.crewRoot, completion.id.String())
+		if err != nil {
+			return err
+		}
+	}
 	if info == nil {
 		if completion.metaInfo == nil || completion.recordInfo == nil ||
 			completion.record.PendingAdoption || completion.record.PendingGeneration != "" ||
@@ -256,6 +274,23 @@ func (completion *Completion) Accept(mode CompletionMode) error {
 		Session: completion.record.HerdrSession, Pane: completion.record.PaneID, Mode: mode,
 	}
 	return completion.publishMarker()
+}
+
+// StopPane closes the bound pane before or after the task result is accepted.
+func (completion *Completion) StopPane(ctx context.Context, client herdr.Client) error {
+	if completion == nil || completion.metaInfo == nil || completion.recordInfo == nil {
+		return ErrConflict
+	}
+	if err := completion.checkCurrent(); err != nil {
+		return err
+	}
+	target, err := herdr.ParseTarget(completion.record.HerdrSession, completion.record.PaneID)
+	if err != nil {
+		return err
+	}
+	return presentation.CloseBoundPane(ctx, client, target,
+		completion.metadata.HerdrWorkspaceID(), completion.metadata.HerdrTabID(),
+		completion.checkCurrent)
 }
 
 // Retire confirms the exact pane is gone, records intent, then removes both task records.

@@ -1,7 +1,6 @@
 package crew
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -10,8 +9,6 @@ import (
 	"time"
 
 	"github.com/roman/tincan/pkg/firstmate"
-	"github.com/roman/tincan/pkg/herdr"
-	"github.com/roman/tincan/pkg/presentation"
 )
 
 var ErrStaleRecord = errors.New("crew record does not match current task")
@@ -55,16 +52,6 @@ func (task *CurrentTask) CheckCurrent() error {
 		return ErrStaleRecord
 	}
 	return nil
-}
-
-// StopPane closes the worker pane while retaining the task records for finish.
-func (task *CurrentTask) StopPane(ctx context.Context, client herdr.Client) error {
-	target, err := herdr.ParseTarget(task.record.HerdrSession, task.record.PaneID)
-	if err != nil {
-		return err
-	}
-	return presentation.CloseBoundPane(ctx, client, target,
-		task.metadata.HerdrWorkspaceID(), task.metadata.HerdrTabID(), task.CheckCurrent)
 }
 
 // WithCurrentTask holds the task metadata lock while a caller uses its crew record.

@@ -117,81 +117,223 @@ func TestStopPaneKeepsTaskRecordsAndRetries(t *testing.T) {
 	}
 }
 
-func TestStopPaneRefusesBindingChangedDuringHerdrLock(t *testing.T) {
-	for _, changed := range []string{"crew", "metadata"} {
-		t.Run(changed, func(t *testing.T) {
+func TestStopPaneAfterAcceptedResult(t *testing.T) {
+	root := t.TempDir()
+	worktree := filepath.Join(root, "worktree")
+	if err := os.Mkdir(worktree, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runner := &liveRunner{worktree: worktree, status: "done", process: "codex"}
+	client := herdr.Client{SessionRunner: runner}
+	var output bytes.Buffer
+	if code := run(context.Background(), adoptionArguments(root, worktree), &output, client); code != 0 {
+		t.Fatalf("adopt: %s", output.String())
+	}
+	registry, err := crew.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.WithCompletion("task-1", func(completion *crew.Completion) error {
+		return completion.Accept(crew.CloseTask)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	output.Reset()
+	if code := run(context.Background(), []string{"--root", root, "stop", "task-1"}, &output, client); code != 0 {
+		t.Fatalf("stop after result: %s", output.String())
+	}
+	if !runner.paneGone {
+		t.Fatal("worker pane remained open")
+	}
+}
+
+func TestStopPaneRecoversInterruptedGeneration(t *testing.T) {
+	for _, metadataGeneration := range []string{"current", "gen-2"} {
+		t.Run(metadataGeneration, func(t *testing.T) {
 			root := t.TempDir()
 			worktree := filepath.Join(root, "worktree")
 			if err := os.Mkdir(worktree, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Mkdir(filepath.Join(root, "tasks"), 0o700); err != nil {
-				t.Fatal(err)
-			}
-			runner := &liveRunner{worktree: worktree, status: "working", process: "codex"}
+			runner := &liveRunner{worktree: worktree, status: "done", process: "codex"}
 			client := herdr.Client{SessionRunner: runner}
 			var output bytes.Buffer
 			if code := run(context.Background(), adoptionArguments(root, worktree), &output, client); code != 0 {
-				t.Fatalf("adopt code=%d output=%s", code, output.String())
+				t.Fatalf("adopt: %s", output.String())
 			}
-			runner.onCommand = func(args []string) {
-				if len(args) < 2 || args[0] != "session" || args[1] != "list" {
-					return
-				}
-				runner.onCommand = nil
-				if changed == "crew" {
-					registry, err := crew.New(root)
-					if err != nil {
-						t.Fatal(err)
-					}
-					record, err := registry.Get("task-1")
-					if err != nil {
-						t.Fatal(err)
-					}
-					record.Name = "replacement-worker"
-					data, err := json.Marshal(record)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if err := os.WriteFile(filepath.Join(root, "crew", "task-1.json"), data, 0o600); err != nil {
-						t.Fatal(err)
-					}
-					return
-				}
+			registry, err := crew.New(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			record, err := registry.Get("task-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			record.PendingGeneration = "gen-2"
+			encoded, err := json.Marshal(record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "crew", "task-1.json"), encoded, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if metadataGeneration == "gen-2" {
 				path := filepath.Join(root, "tasks", "task-1.meta")
 				data, err := os.ReadFile(path)
 				if err != nil {
 					t.Fatal(err)
 				}
-				updated := strings.Replace(
-					string(data),
-					"herdr_tab_id=tab-1",
-					"herdr_tab_id=tab-other",
-					1,
-				)
+				updated := strings.Replace(string(data), "spawn_gen="+record.SpawnGeneration,
+					"spawn_gen=gen-2", 1)
 				if updated == string(data) {
-					t.Fatal("metadata fixture lacks the selected tab")
+					t.Fatal("metadata fixture lacks the generation")
 				}
 				if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
 			output.Reset()
-			code := run(
-				context.Background(),
-				[]string{"--root", root, "stop", "task-1"},
-				&output,
-				client,
-			)
-			if code == 0 || runner.paneGone {
-				t.Fatalf(
-					"stale stop code=%d pane gone=%v output=%s",
-					code,
-					runner.paneGone,
-					output.String(),
-				)
+			if code := run(context.Background(), []string{"--root", root, "stop", "task-1"},
+				&output, client); code != 0 {
+				t.Fatalf("stop interrupted generation: %s", output.String())
+			}
+			final, err := registry.Get("task-1")
+			if err != nil || final.SpawnGeneration != "gen-2" || final.PendingGeneration != "" {
+				t.Fatalf("recovered record = %+v, error = %v", final, err)
 			}
 		})
+	}
+}
+
+func TestStopPaneDoesNotAdvanceReservedLaunch(t *testing.T) {
+	root := t.TempDir()
+	worktree := filepath.Join(root, "worktree")
+	if err := os.Mkdir(worktree, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runner := &liveRunner{worktree: worktree, status: "done", process: "codex"}
+	client := herdr.Client{SessionRunner: runner}
+	var output bytes.Buffer
+	if code := run(context.Background(), adoptionArguments(root, worktree), &output, client); code != 0 {
+		t.Fatalf("adopt: %s", output.String())
+	}
+	registry, err := crew.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := registry.Get("task-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.PendingLaunch = "gen-2"
+	record.PendingGeneration = "gen-2"
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "crew", "task-1.json"), encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output.Reset()
+	if code := run(context.Background(), []string{"--root", root, "stop", "task-1"},
+		&output, client); code == 0 || runner.paneGone {
+		t.Fatalf("reserved launch changed: %s", output.String())
+	}
+	selected, err := registry.Get("task-1")
+	if err != nil || selected.SpawnGeneration != record.SpawnGeneration ||
+		selected.PendingGeneration != "gen-2" || selected.PendingLaunch != "gen-2" {
+		t.Fatalf("reserved record = %+v, error = %v", selected, err)
+	}
+}
+
+func TestStopPaneRefusesBindingChangedDuringHerdrLock(t *testing.T) {
+	for _, accepted := range []bool{false, true} {
+		for _, changed := range []string{"crew", "metadata"} {
+			t.Run(fmt.Sprintf("accepted=%t/%s", accepted, changed), func(t *testing.T) {
+				root := t.TempDir()
+				worktree := filepath.Join(root, "worktree")
+				if err := os.Mkdir(worktree, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(filepath.Join(root, "tasks"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				runner := &liveRunner{worktree: worktree, status: "working", process: "codex"}
+				client := herdr.Client{SessionRunner: runner}
+				var output bytes.Buffer
+				if code := run(context.Background(), adoptionArguments(root, worktree), &output, client); code != 0 {
+					t.Fatalf("adopt code=%d output=%s", code, output.String())
+				}
+				if accepted {
+					registry, err := crew.New(root)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := registry.WithCompletion("task-1", func(completion *crew.Completion) error {
+						return completion.Accept(crew.CloseTask)
+					}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				runner.onCommand = func(args []string) {
+					if len(args) < 2 || args[0] != "session" || args[1] != "list" {
+						return
+					}
+					runner.onCommand = nil
+					if changed == "crew" {
+						registry, err := crew.New(root)
+						if err != nil {
+							t.Fatal(err)
+						}
+						record, err := registry.Get("task-1")
+						if err != nil {
+							t.Fatal(err)
+						}
+						record.Name = "replacement-worker"
+						data, err := json.Marshal(record)
+						if err != nil {
+							t.Fatal(err)
+						}
+						if err := os.WriteFile(filepath.Join(root, "crew", "task-1.json"), data, 0o600); err != nil {
+							t.Fatal(err)
+						}
+						return
+					}
+					path := filepath.Join(root, "tasks", "task-1.meta")
+					data, err := os.ReadFile(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					updated := strings.Replace(
+						string(data),
+						"herdr_tab_id=tab-1",
+						"herdr_tab_id=tab-other",
+						1,
+					)
+					if updated == string(data) {
+						t.Fatal("metadata fixture lacks the selected tab")
+					}
+					if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				output.Reset()
+				code := run(
+					context.Background(),
+					[]string{"--root", root, "stop", "task-1"},
+					&output,
+					client,
+				)
+				if code == 0 || runner.paneGone {
+					t.Fatalf(
+						"stale stop code=%d pane gone=%v output=%s",
+						code,
+						runner.paneGone,
+						output.String(),
+					)
+				}
+			})
+		}
 	}
 }
 

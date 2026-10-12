@@ -98,19 +98,20 @@ func run(ctx context.Context, arguments []string, output io.Writer, client herdr
 		if err != nil {
 			return fail(output, 2, err, help())
 		}
-		if err := registry.WithCurrentTask(command.Stop.TaskID, func(task *crew.CurrentTask) error {
-			return task.StopPane(ctx, client)
-		}); err != nil {
+		stopErr := registry.WithCompletion(command.Stop.TaskID, func(completion *crew.Completion) error {
+			return completion.StopPane(ctx, client)
+		})
+		if stopErr != nil {
 			return fail(
 				output,
 				1,
-				err,
+				stopErr,
 				"retry concierge-task --root ROOT stop TASK_ID after resolving the reported state",
 			)
 		}
 		fmt.Fprintf(
 			output,
-			"task: %s\nstate: pane_closed\nhelp: concierge-backlog --root ROOT finish %s --mode close|retain\n",
+			"task: %s\nstate: pane_closed\nhelp: concierge-backlog --root ROOT cleanup %s after finish\n",
 			command.Stop.TaskID,
 			command.Stop.TaskID,
 		)

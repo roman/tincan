@@ -16,12 +16,13 @@ import (
 )
 
 type cli struct {
-	Root   string        `help:"Absolute Concierge state root." required:""`
-	Add    addCommand    `cmd:"" help:"Queue a task in the root backlog."`
-	List   listCommand   `cmd:"" help:"List backlog tasks without the startup row limit."`
-	Show   showCommand   `cmd:"" help:"Show one backlog task."`
-	Start  startCommand  `cmd:"" help:"Start a queued task with a current worker binding."`
-	Finish finishCommand `cmd:"" help:"Complete a local task after its Herdr pane is gone."`
+	Root    string         `help:"Absolute Concierge state root." required:""`
+	Add     addCommand     `cmd:"" help:"Queue a task in the root backlog."`
+	List    listCommand    `cmd:"" help:"List backlog tasks without the startup row limit."`
+	Show    showCommand    `cmd:"" help:"Show one backlog task."`
+	Start   startCommand   `cmd:"" help:"Start a queued task with a current worker binding."`
+	Finish  finishCommand  `cmd:"" help:"Accept a local task result and update its backlog row."`
+	Cleanup cleanupCommand `cmd:"" help:"Retire task records after the accepted result and pane departure."`
 }
 
 type listCommand struct {
@@ -40,6 +41,10 @@ type startCommand struct {
 type finishCommand struct {
 	TaskID string `arg:"" help:"In-flight task ID."`
 	Mode   string `help:"Close the row or retain a held row in the queue." enum:"close,retain" default:"close"`
+}
+
+type cleanupCommand struct {
+	TaskID string `arg:"" help:"Task with an accepted result."`
 }
 
 type addCommand struct {
@@ -64,7 +69,7 @@ type addResult struct {
 }
 
 func help() string {
-	return "usage: concierge-backlog --root ROOT add ID TITLE --kind KIND --repo REPO; or list [--state STATE]; or show ID [--full]; or start ID; or finish ID --mode close|retain"
+	return "usage: concierge-backlog --root ROOT add ID TITLE --kind KIND --repo REPO; or list [--state STATE]; or show ID [--full]; or start ID; or finish ID --mode close|retain; or cleanup ID"
 }
 
 func fail(output io.Writer, code int, err error, next string) int {
@@ -97,7 +102,8 @@ func runWithClient(
 	}
 	if selected.Command() != "add <task-id> <title>" && selected.Command() != "list" &&
 		selected.Command() != "show <task-id>" &&
-		selected.Command() != "start <task-id>" && selected.Command() != "finish <task-id>" {
+		selected.Command() != "start <task-id>" && selected.Command() != "finish <task-id>" &&
+		selected.Command() != "cleanup <task-id>" {
 		return fail(output, 2, fmt.Errorf("unknown command %q", selected.Command()), help())
 	}
 	root, err := firstmate.ParseAbsolutePath(command.Root)
@@ -158,10 +164,8 @@ func runWithClient(
 		return 0
 	}
 	if selected.Command() == "finish <task-id>" {
-		result, err := finishTask(
-			ctx, root.String(), command.Finish.TaskID, backlogFile,
-			command.Finish.Mode, client,
-		)
+		result, err := finishTask(root.String(), command.Finish.TaskID, backlogFile,
+			command.Finish.Mode)
 		if err != nil {
 			return fail(
 				output,
@@ -174,6 +178,13 @@ func runWithClient(
 			output, "task: %q\nstate: %s\nalready: %t\n",
 			command.Finish.TaskID, result.State, result.Already,
 		)
+		return 0
+	}
+	if selected.Command() == "cleanup <task-id>" {
+		if err := cleanupTask(ctx, root.String(), command.Cleanup.TaskID, backlogFile, client); err != nil {
+			return fail(output, 1, err, "verify the accepted result and close the recorded pane before cleanup")
+		}
+		fmt.Fprintf(output, "task: %q\nstate: cleaned\n", command.Cleanup.TaskID)
 		return 0
 	}
 	args := []string{

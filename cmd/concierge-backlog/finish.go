@@ -20,7 +20,7 @@ type finishResult struct {
 }
 
 func finishTask(
-	ctx context.Context, root, taskID, backlogFile, requestedMode string, client herdr.Client,
+	root, taskID, backlogFile, requestedMode string,
 ) (finishResult, error) {
 	if _, err := firstmate.ParseTaskID(taskID); err != nil {
 		return finishResult{}, err
@@ -64,13 +64,7 @@ func finishTask(
 			return fmt.Errorf("pending completion mode is %s", completion.Mode())
 		}
 		if completion.Pending() && row.State == result.State {
-			if err := completion.Retire(ctx, client, mode); err != nil {
-				return err
-			}
 			if err := release(); err != nil {
-				return err
-			}
-			if err := completion.Clear(); err != nil {
 				return err
 			}
 			result.Already = true
@@ -85,7 +79,7 @@ func finishTask(
 		if mode == crew.RetainTask && row.Held != "yes" && !completion.Pending() {
 			return fmt.Errorf("retention requires a held task")
 		}
-		if err := completion.Retire(ctx, client, mode); err != nil {
+		if err := completion.Accept(mode); err != nil {
 			return err
 		}
 		staged, selected, err := stageBacklog(backlogFile)
@@ -130,10 +124,47 @@ func finishTask(
 		if err := release(); err != nil {
 			return err
 		}
-		return completion.Clear()
+		return nil
 	})
 	if err != nil {
 		return finishResult{}, fmt.Errorf("task completion or backlog transition: %w", err)
 	}
 	return result, nil
+}
+
+func cleanupTask(
+	ctx context.Context, root, taskID, backlogFile string, client herdr.Client,
+) error {
+	if _, err := firstmate.ParseTaskID(taskID); err != nil {
+		return err
+	}
+	registry, err := crew.New(root)
+	if err != nil {
+		return err
+	}
+	return registry.WithCompletion(taskID, func(completion *crew.Completion) error {
+		if !completion.Pending() {
+			return errors.New("task has no accepted result to clean up")
+		}
+		unlock, err := lockBacklog(backlogFile)
+		if err != nil {
+			return err
+		}
+		row, rowErr := showBacklogRow(backlogFile, taskID)
+		unlockErr := unlock()
+		if err := errors.Join(rowErr, unlockErr); err != nil {
+			return err
+		}
+		expected := "done"
+		if completion.Mode() == crew.RetainTask {
+			expected = "queued"
+		}
+		if row.State != expected {
+			return fmt.Errorf("task is %s; expected %s before cleanup", row.State, expected)
+		}
+		if err := completion.Retire(ctx, client, completion.Mode()); err != nil {
+			return err
+		}
+		return completion.Clear()
+	})
 }
