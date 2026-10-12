@@ -16,7 +16,7 @@ import (
 
 const version = "0.1.0"
 
-const cliHelp = "commands: brief [--limit N], backlog, worker list|show, task list|pending|send|receive|ack; global flags: --root, --message-root, --recipient, --help; run concierge COMMAND --help for arguments"
+const cliHelp = "commands: brief [--limit N], backlog, worker list|show, task list|pending|send|receive|ack|reply; global flags: --root, --message-root, --recipient, --help; run concierge COMMAND --help for arguments"
 
 type cli struct {
 	Root        string          `help:"Absolute Concierge state root; defaults to .concierge in the current directory." env:"CONCIERGE_HOME"`
@@ -92,7 +92,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return fail(stdout, 2, err, "use an absolute, clean --root path")
 	}
 	switch selected.Command() {
-	case "task send <task-id>",
+	case "task reply send <task-id>", "task reply check <message-id>", "task send <task-id>",
 		"task receive <task-id> <message-id>",
 		"task ack <task-id> <message-id>":
 		return command.runTaskMessages(ctx, root, selected.Command(), stdin, stdout)

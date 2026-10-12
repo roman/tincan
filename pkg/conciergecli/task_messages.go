@@ -6,10 +6,11 @@ import (
 	"io"
 
 	"github.com/roman/tincan/pkg/firstmate"
+	"github.com/roman/tincan/pkg/inbox"
 	"github.com/roman/tincan/pkg/taskops"
 )
 
-const taskMessageHelp = "concierge task send TASK_ID [--key KEY] --body-file FILE|-; concierge task receive|ack TASK_ID MESSAGE_ID --generation GENERATION; global flags: --root, --message-root, --help"
+const taskMessageHelp = "concierge task send TASK_ID [--key KEY] --body-file FILE|-; concierge task receive|ack TASK_ID MESSAGE_ID --generation GENERATION; global flags: --root, --message-root, --recipient, --help; " + replySendUsage + "; " + replyCheckUsage
 
 type assignmentSelection struct {
 	TaskID     string `arg:"" help:"Task ID."`
@@ -18,6 +19,8 @@ type assignmentSelection struct {
 }
 
 type taskCommands struct {
+	Reply replyCommands `cmd:"" help:"Send worker results or check a primary reply."`
+
 	Send struct {
 		TaskID   string `arg:"" help:"Task ID."`
 		Key      string `help:"Stable logical assignment key for safe retries; omit for an independent message."`
@@ -43,12 +46,26 @@ func (command *cli) runTaskMessages(
 	if _, err := firstmate.ParseAbsolutePath(messageRoot); err != nil {
 		return fail(output, 2, err, "use an absolute, clean --message-root path")
 	}
-	service, err := taskops.New(root)
+	var service *taskops.Service
+	switch selected {
+	case "task reply send <task-id>", "task reply check <message-id>":
+		recipient, parseErr := inbox.ParseRecipient(command.Recipient)
+		if parseErr != nil {
+			return fail(output, 2, parseErr, "use a valid primary --recipient name")
+		}
+		service, err = taskops.NewWithPrimaryRecipient(root, recipient)
+	default:
+		service, err = taskops.New(root)
+	}
 	if err != nil {
 		return fail(output, 2, err, taskMessageHelp)
 	}
 	var result taskops.AssignmentStatus
 	switch selected {
+	case "task reply send <task-id>":
+		return command.Task.Reply.send(ctx, service, messageRoot, stdin, output)
+	case "task reply check <message-id>":
+		return command.Task.Reply.check(ctx, service, messageRoot, output)
 	case "task send <task-id>":
 		return command.Task.sendAssignment(ctx, service, messageRoot, stdin, output)
 	case "task receive <task-id> <message-id>":
