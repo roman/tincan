@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/roman/tincan/pkg/inbox"
+	"github.com/roman/tincan/pkg/taskops"
 	"github.com/roman/tincan/pkg/taskstate"
 )
 
@@ -18,7 +19,7 @@ func TestTaskReplySendCheckAndRetiredRetry(t *testing.T) {
 	for _, binding := range []string{"bound", "unbound"} {
 		t.Run(binding, func(t *testing.T) {
 			root := lifecycleRoot(t)
-			invoke(t, root, "", "backlog", "start", "task-1")
+			startFixtureTask(t, root)
 			messageRoot := t.TempDir()
 			assignment := assignmentMessage(t, root, messageRoot, "gen-1", "Work")
 			body := "Complete result\n\"quoted\" ✓\n"
@@ -87,18 +88,14 @@ func TestTaskReplySendCheckAndRetiredRetry(t *testing.T) {
 				t.Fatalf("check: %s", got)
 			}
 			t.Setenv(workerLaunchGeneration, "gen-1")
-			invoke(
-				t,
-				root,
-				"",
-				"backlog",
-				"finish",
-				"task-1",
-				"--generation",
-				"gen-1",
-				"--closed-on",
-				"2026-10-12",
-			)
+			service, err := taskops.New(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := service.Finish(context.Background(), "task-1", "gen-1", taskstate.Close, "2026-10-12"); err != nil {
+				t.Fatal(err)
+			}
+
 			store, _ := taskstate.NewStore(root)
 			if _, err := store.Update(context.Background(), "task-1", func(task taskstate.Task) (taskstate.Task, error) { return task.RetireResult("gen-1") }); err != nil {
 				t.Fatal(err)
@@ -121,7 +118,7 @@ func TestTaskReplySendCheckAndRetiredRetry(t *testing.T) {
 func TestTaskReplyPreservesDeliveryWhenAcknowledgementFails(t *testing.T) {
 	t.Setenv(workerLaunchGeneration, "gen-1")
 	root := lifecycleRoot(t)
-	invoke(t, root, "", "backlog", "start", "task-1")
+	startFixtureTask(t, root)
 	messageRoot := t.TempDir()
 	assignment := assignmentMessage(t, root, messageRoot, "gen-1", "Work")
 	handled := filepath.Join(messageRoot, "inbox", "task-1", "handled")
@@ -177,7 +174,7 @@ func TestTaskReplyPreservesDeliveryWhenAcknowledgementFails(t *testing.T) {
 func TestTaskReplyUsagePublicationAndWriterFailures(t *testing.T) {
 	t.Setenv(workerLaunchGeneration, "gen-1")
 	root := lifecycleRoot(t)
-	invoke(t, root, "", "backlog", "start", "task-1")
+	startFixtureTask(t, root)
 	messageRoot := t.TempDir()
 	args := []string{
 		"--message-root",

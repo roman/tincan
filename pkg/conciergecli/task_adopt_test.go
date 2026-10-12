@@ -95,7 +95,7 @@ func TestTaskAdoptForwardsBindingAndPreservesGeneration(t *testing.T) {
 	if got := invoke(t, root, "", args...); got != want {
 		t.Fatalf("retry output: %s", got)
 	}
-	invoke(t, root, "", "backlog", "start", "task-1")
+	startFixtureTask(t, root)
 	if got := invoke(t, root, "", args...); got != strings.Replace(
 		want,
 		"state: queued",

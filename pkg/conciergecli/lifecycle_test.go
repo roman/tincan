@@ -8,12 +8,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/roman/tincan/pkg/taskops"
 	"github.com/roman/tincan/pkg/taskstate"
 )
 
 func lifecycleRoot(t *testing.T) string {
 	t.Helper()
-	root := taskRoot(t, t.TempDir())
+	root := shortTaskRoot(t)
 	worker := taskstate.Worker{
 		Name:       "worker",
 		Harness:    "codex",
@@ -47,9 +48,14 @@ func expectLifecycleError(t *testing.T, root string, code int, args ...string) s
 }
 
 func TestBacklogLifecycleCloseAndRetain(t *testing.T) {
+	if runUnderNativeParent(t) {
+		return
+	}
 	for _, mode := range []string{"close", "retain"} {
 		t.Run(mode, func(t *testing.T) {
 			root := lifecycleRoot(t)
+			claimNativeParent(t, root)
+			serveTaskRoot(t, root)
 			directory := t.TempDir()
 			script := `#!/bin/sh
 [ "$HERDR_SESSION" = work ] || exit 71
@@ -156,7 +162,12 @@ func TestFinishDatesFailBeforeRootDiscovery(t *testing.T) {
 }
 
 func TestCleanupRequiresPaneDeparture(t *testing.T) {
+	if runUnderNativeParent(t) {
+		return
+	}
 	root := lifecycleRoot(t)
+	claimNativeParent(t, root)
+	serveTaskRoot(t, root)
 	invoke(t, root, "", "backlog", "start", "task-1")
 	invoke(
 		t,
@@ -180,5 +191,27 @@ func TestCleanupRequiresPaneDeparture(t *testing.T) {
 	task, err := store.Read(context.Background(), "task-1")
 	if err != nil || task.Snapshot().Worker == nil || task.Snapshot().Completion == nil {
 		t.Fatalf("premature retirement: %#v %v", task.Snapshot(), err)
+	}
+}
+
+func startFixtureTask(t *testing.T, root string) {
+	t.Helper()
+	service, err := taskops.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Start(context.Background(), "task-1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func holdFixtureTask(t *testing.T, root, reason string) {
+	t.Helper()
+	service, err := taskops.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.PlaceHold(context.Background(), "task-1", taskstate.Hold{Reason: reason}); err != nil {
+		t.Fatal(err)
 	}
 }

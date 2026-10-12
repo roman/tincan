@@ -67,7 +67,7 @@ func TestResolveCommandUsesSelectedMailboxAndRecoversRetiredResults(t *testing.T
 	for _, mode := range []string{"close", "retain"} {
 		t.Run(mode, func(t *testing.T) {
 			root := lifecycleRoot(t)
-			invoke(t, root, "", "backlog", "start", "task-1")
+			startFixtureTask(t, root)
 			messageRoot := t.TempDir()
 			reply := boundCLIReply(t, root, messageRoot, "gen-1")
 			args := []string{
@@ -81,7 +81,7 @@ func TestResolveCommandUsesSelectedMailboxAndRecoversRetiredResults(t *testing.T
 			}
 			state := "done"
 			if mode == "retain" {
-				invoke(t, root, "", "backlog", "hold", "task-1", "--reason", "More work")
+				holdFixtureTask(t, root, "More work")
 				args = append(args, "--mode", "retain")
 				state = "queued"
 			} else {
@@ -126,7 +126,7 @@ func TestResolveCommandUsesSelectedMailboxAndRecoversRetiredResults(t *testing.T
 
 func TestResolveRejectsInvalidAndStaleInputsWithoutAcknowledgement(t *testing.T) {
 	root := lifecycleRoot(t)
-	invoke(t, root, "", "backlog", "start", "task-1")
+	startFixtureTask(t, root)
 	messageRoot := t.TempDir()
 	reply := boundCLIReply(t, root, messageRoot, "old-generation")
 	base := []string{

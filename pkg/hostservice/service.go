@@ -30,8 +30,9 @@ const Intake Operation = "intake"
 
 // Request never carries caller identity or a selectable state root.
 type Request struct {
-	Operation Operation             `json:"operation"`
-	Intake    *taskstate.Definition `json:"intake,omitempty"`
+	Operation  Operation             `json:"operation"`
+	Intake     *taskstate.Definition `json:"intake,omitempty"`
+	Transition *TransitionRequest    `json:"transition,omitempty"`
 }
 
 type Outcome string
@@ -51,14 +52,16 @@ type TaskResult struct {
 }
 
 type Response struct {
-	Outcome Outcome     `json:"outcome"`
-	Task    *TaskResult `json:"task,omitempty"`
-	Error   string      `json:"error,omitempty"`
+	Outcome    Outcome             `json:"outcome"`
+	Task       *TaskResult         `json:"task,omitempty"`
+	Error      string              `json:"error,omitempty"`
+	Transition *taskstate.Snapshot `json:"transition,omitempty"`
 }
 
 // Server binds operations to roots selected by the host process.
 type Server struct {
 	root      string
+	service   *taskops.Service
 	authorize func(primary.Caller) error
 	create    func(context.Context, taskstate.Definition) (taskstate.Task, error)
 }
@@ -70,6 +73,7 @@ func New(root string, recipient inbox.Recipient) (*Server, error) {
 	}
 	return &Server{
 		root:      root,
+		service:   service,
 		authorize: func(caller primary.Caller) error { return primary.AuthorizeCaller(root, caller) },
 		create:    service.Create,
 	}, nil
@@ -160,17 +164,7 @@ func (server *Server) handle(ctx context.Context, connection *net.UnixConn) {
 		server.respond(connection, Response{Outcome: Invalid, Error: err.Error()})
 		return
 	}
-	if request.Operation != Intake || request.Intake == nil {
-		server.respond(
-			connection,
-			Response{
-				Outcome: Invalid,
-				Error:   "request needs operation intake and an intake definition",
-			},
-		)
-		return
-	}
-	if _, err := taskstate.NewQueued(*request.Intake); err != nil {
+	if err := validateRequest(request); err != nil {
 		server.respond(connection, Response{Outcome: Invalid, Error: err.Error()})
 		return
 	}
@@ -195,10 +189,15 @@ func (server *Server) handle(ctx context.Context, connection *net.UnixConn) {
 		server.respond(connection, Response{Outcome: Failed, Error: err.Error()})
 		return
 	}
-	task, err := server.create(ctx, *request.Intake)
+	task, err := server.execute(ctx, request)
 	response := Response{Outcome: Completed}
 	if task.ID() != "" {
-		response.Task = &TaskResult{Definition: task.Definition(), State: task.State()}
+		if request.Operation == Intake {
+			response.Task = &TaskResult{Definition: task.Definition(), State: task.State()}
+		} else {
+			snapshot := task.Snapshot()
+			response.Transition = &snapshot
+		}
 	}
 	if err != nil {
 		response.Outcome, response.Error = Failed, err.Error()
@@ -253,7 +252,11 @@ func Call(ctx context.Context, socket string, request Request) (Response, error)
 func validateResponse(response Response, request Request) error {
 	switch response.Outcome {
 	case Completed:
-		if response.Task == nil || request.Intake == nil || response.Error != "" ||
+		if request.Operation != Intake {
+			return validateTransitionResponse(response, request)
+		}
+		if response.Transition != nil || response.Task == nil || request.Intake == nil ||
+			response.Error != "" ||
 			response.Task.State != taskstate.Queued {
 			return errors.New("host returned an incomplete intake result")
 		}

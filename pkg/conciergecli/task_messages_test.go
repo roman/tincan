@@ -40,7 +40,7 @@ func assignmentMessage(t *testing.T, root, messageRoot, generation, body string)
 
 func TestAssignmentReceiveAndAckRespectCallerGeneration(t *testing.T) {
 	root := lifecycleRoot(t)
-	invoke(t, root, "", "backlog", "start", "task-1")
+	startFixtureTask(t, root)
 	messageRoot := t.TempDir()
 	body := "Full assignment\nQuote: \"value\"\n" + strings.Repeat("✓", 600)
 	encodedBody, _ := json.Marshal(body)
@@ -115,7 +115,7 @@ func TestAssignmentReceiveAndAckRespectCallerGeneration(t *testing.T) {
 func TestAssignmentUsageAndOutputFailures(t *testing.T) {
 	t.Setenv(workerLaunchGeneration, "gen-1")
 	root := lifecycleRoot(t)
-	invoke(t, root, "", "backlog", "start", "task-1")
+	startFixtureTask(t, root)
 	messageRoot := t.TempDir()
 	message := assignmentMessage(t, root, messageRoot, "gen-1", "Work")
 	for _, operation := range []string{"receive", "ack"} {

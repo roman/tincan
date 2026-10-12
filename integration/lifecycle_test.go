@@ -107,7 +107,9 @@ func TestWorkerReplySurvivesPrimaryRestart(t *testing.T) {
 		"--agent-arg",
 		"thread-1",
 	)
-	run("--root", root, "backlog", "start", "task-1")
+	if _, err := service.Start(context.Background(), "task-1"); err != nil {
+		t.Fatal(err)
+	}
 	generation := outputField(t, run("--root", root, "worker", "show", "task-1"),
 		"spawn_generation")
 	if generation == "" {
@@ -179,8 +181,9 @@ func TestWorkerReplySurvivesPrimaryRestart(t *testing.T) {
 		"finish:task-1:"+generation+":close:2026-10-12"); err != nil {
 		t.Fatal(err)
 	}
-	run("--root", root, "backlog", "finish", "task-1", "--generation", generation,
-		"--closed-on", "2026-10-12")
+	if _, err := service.Finish(context.Background(), "task-1", generation, taskstate.Close, "2026-10-12"); err != nil {
+		t.Fatal(err)
+	}
 	resolveArguments := []string{"--root", root, "--message-root", messages,
 		"backlog", "resolve", replyID, "--closed-on", "2026-10-12"}
 	started, err := store.ReadDisposition(primary, replyMessageID)

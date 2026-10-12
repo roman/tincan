@@ -136,11 +136,12 @@ Initialize or migrate the state before starting the host. Stop the host before
 an offline migration. Only one host can serve a state root. The host checks the
 calling process against the current primary claim. Intake fails without the
 service and never falls back to a local write. An ordinary Codex tool sandbox
-also blocks the client connection. Run `backlog add` with explicitly approved
+also blocks the client connection. Run intake and the routed lifecycle commands with explicitly approved
 unsandboxed execution, or a socket permission verified to preserve the caller
 identity. No saved sandbox configuration changes automatically.
-Other lifecycle mutations still
-use their existing local paths until their service routing is installed.
+Backlog start, finish, hold, and release use the same authenticated service.
+Cleanup, reply resolution, worker control, and supervision still use their
+existing local paths until their service routing is installed.
 
 Queue a task from the primary session and read its full contents:
 

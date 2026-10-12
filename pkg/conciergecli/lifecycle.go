@@ -2,11 +2,14 @@ package conciergecli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"time"
 
 	"github.com/roman/tincan/pkg/herdr"
+	"github.com/roman/tincan/pkg/hostservice"
 	"github.com/roman/tincan/pkg/taskops"
 	"github.com/roman/tincan/pkg/taskstate"
 )
@@ -33,25 +36,39 @@ func (command *backlogCommands) runLifecycle(
 	root, selected string,
 	output io.Writer,
 ) int {
-	service, err := taskops.New(root)
-	if err != nil {
-		return fail(output, 2, err, backlogHelp)
-	}
+
 	var task taskstate.Task
+	var err error
 	generation := ""
+	request := hostservice.Request{Transition: &hostservice.TransitionRequest{}}
+	input := request.Transition
 	switch selected {
 	case "backlog start <task-id>":
-		task, err = service.Start(ctx, command.Start.TaskID)
+		request.Operation = hostservice.Start
+		input.TaskID = command.Start.TaskID
 	case "backlog finish <task-id>":
-		generation = command.Finish.Generation
-		task, err = service.Finish(
-			ctx,
-			command.Finish.TaskID,
-			generation,
-			taskstate.CompletionMode(command.Finish.Mode),
-			command.Finish.ClosedOn,
-		)
+		request.Operation = hostservice.Finish
+		input.TaskID = command.Finish.TaskID
+		input.Generation = command.Finish.Generation
+		input.Mode = taskstate.CompletionMode(command.Finish.Mode)
+		input.ClosedOn = command.Finish.ClosedOn
+		generation = input.Generation
+	case "backlog hold <task-id>":
+		request.Operation = hostservice.Hold
+		input.TaskID = command.Hold.TaskID
+		input.Hold = &taskstate.Hold{
+			Reason: command.Hold.Reason,
+			Kind:   command.Hold.Kind,
+			Until:  command.Hold.Until,
+		}
+	case "backlog release <task-id>":
+		request.Operation = hostservice.Release
+		input.TaskID = command.Release.TaskID
 	case "backlog cleanup <task-id>":
+		service, setupErr := taskops.New(root)
+		if setupErr != nil {
+			return fail(output, 2, setupErr, backlogHelp)
+		}
 		generation = command.Cleanup.Generation
 		task, err = service.Retire(
 			ctx,
@@ -59,20 +76,32 @@ func (command *backlogCommands) runLifecycle(
 			generation,
 			herdr.NewClient("herdr"),
 		)
-	case "backlog hold <task-id>":
-		task, err = service.PlaceHold(
-			ctx,
-			command.Hold.TaskID,
-			taskstate.Hold{
-				Reason: command.Hold.Reason,
-				Kind:   command.Hold.Kind,
-				Until:  command.Hold.Until,
-			},
-		)
-	case "backlog release <task-id>":
-		task, err = service.ReleaseHold(ctx, command.Release.TaskID)
 	default:
 		return fail(output, 2, fmt.Errorf("unknown command %q", selected), backlogHelp)
+	}
+	if selected != "backlog cleanup <task-id>" {
+		response, callErr := hostservice.Call(ctx, filepath.Join(root, "host.sock"), request)
+		if callErr != nil {
+			return fail(
+				output,
+				1,
+				callErr,
+				"run concierge host serve outside the model sandbox; this client needs approved unsandboxed execution or verified socket permission; inspect the task and retry the identical request",
+			)
+		}
+		if response.Outcome != hostservice.Completed {
+			code := 1
+			if response.Outcome == hostservice.Invalid {
+				code = 2
+			}
+			return fail(
+				output,
+				code,
+				errors.New(response.Error),
+				"use the current primary session; inspect the task before retrying the identical request",
+			)
+		}
+		task, err = taskstate.NewMigrated(*response.Transition)
 	}
 	if err != nil {
 		return fail(
