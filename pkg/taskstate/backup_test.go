@@ -40,7 +40,7 @@ func TestBackupLegacyCopiesTaskStateAndManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.Format != 1 || manifest.Source != source || manifest.TaskStateVersion != 1 ||
+	if manifest.Format != 2 || manifest.Source != source || manifest.TaskStateVersion != 1 ||
 		len(manifest.Files) != len(files) {
 		t.Fatalf("manifest = %#v", manifest)
 	}
@@ -55,6 +55,7 @@ func TestBackupLegacyCopiesTaskStateAndManifest(t *testing.T) {
 		digest := sha256.Sum256([]byte(content))
 		entry := BackupFile{
 			Path:   filepath.ToSlash(name),
+			Kind:   "file",
 			Size:   int64(len(content)),
 			SHA256: hex.EncodeToString(digest[:]),
 			Mode:   0o600,
@@ -77,7 +78,7 @@ func TestBackupLegacyCopiesTaskStateAndManifest(t *testing.T) {
 	}
 }
 
-func TestBackupLegacyRejectsSymlinkWithoutPublishing(t *testing.T) {
+func TestBackupLegacyPreservesSymlinkWithoutFollowingIt(t *testing.T) {
 	parent := t.TempDir()
 	source := filepath.Join(parent, "state")
 	if err := os.Mkdir(source, 0o700); err != nil {
@@ -86,15 +87,54 @@ func TestBackupLegacyRejectsSymlinkWithoutPublishing(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source, "backlog.md"), []byte("# Backlog\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink("backlog.md", filepath.Join(source, "alias")); err != nil {
+	if err := os.WriteFile(filepath.Join(parent, "outside"), []byte("do not copy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../outside", filepath.Join(source, "profile")); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(parent, "backup")
+	manifest, err := BackupLegacy(context.Background(), source, destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := os.Readlink(filepath.Join(destination, "profile"))
+	if err != nil || target != "../outside" {
+		t.Fatalf("backed up link = %q, %v", target, err)
+	}
+	digest := sha256.Sum256([]byte("../outside"))
+	entry := BackupFile{
+		Path: "profile", Kind: "symlink", Target: "../outside", Size: int64(len("../outside")),
+		SHA256: hex.EncodeToString(digest[:]), Mode: 0o777,
+	}
+	if !slices.Contains(manifest.Files, entry) {
+		t.Fatalf("manifest lacks link entry %#v: %#v", entry, manifest.Files)
+	}
+	data, err := os.ReadFile(filepath.Join(destination, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored BackupManifest
+	if err := json.Unmarshal(data, &stored); err != nil || !slices.Contains(stored.Files, entry) {
+		t.Fatalf("stored manifest lacks link entry %#v: %#v, %v", entry, stored.Files, err)
+	}
+}
+
+func TestBackupLegacyRejectsInvalidUTF8LinkTarget(t *testing.T) {
+	parent := t.TempDir()
+	source := filepath.Join(parent, "state")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(string([]byte{0xff}), filepath.Join(source, "link")); err != nil {
 		t.Fatal(err)
 	}
 	destination := filepath.Join(parent, "backup")
 	if _, err := BackupLegacy(context.Background(), source, destination); err == nil {
-		t.Fatal("backup accepted symlink")
+		t.Fatal("backup accepted a link target that the manifest cannot preserve")
 	}
-	if _, err := os.Stat(destination); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("backup published after error: %v", err)
+	if _, err := os.Lstat(destination); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("invalid backup was published: %v", err)
 	}
 }
 

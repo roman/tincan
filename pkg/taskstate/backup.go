@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"unicode/utf8"
 
 	"github.com/roman/tincan/pkg/firstmate"
 	"github.com/roman/tincan/pkg/stateversion"
@@ -21,9 +22,11 @@ var ErrBackupPublicationUnconfirmed = errors.New(
 	"legacy backup publication requires reconciliation",
 )
 
-// BackupFile records the bytes and permissions of one source file.
+// BackupFile records the bytes or link target and permissions of one source entry.
 type BackupFile struct {
 	Path   string `json:"path"`
+	Kind   string `json:"kind"`
+	Target string `json:"target,omitempty"`
 	Size   int64  `json:"size"`
 	SHA256 string `json:"sha256"`
 	Mode   uint32 `json:"mode"`
@@ -117,7 +120,7 @@ func publishLegacyBackup(
 	}
 	defer backup.Close()
 	manifest := BackupManifest{
-		Format:           1,
+		Format:           2,
 		Source:           sourcePath,
 		TaskStateVersion: 1,
 		Files:            []BackupFile{},
@@ -245,6 +248,12 @@ func copyLegacyDirectory(
 				return err
 			}
 			manifest.Files = append(manifest.Files, file)
+		case selected.Mode()&os.ModeSymlink != 0:
+			link, err := copyLegacySymlink(source, destination, name, path, selected)
+			if err != nil {
+				return err
+			}
+			manifest.Files = append(manifest.Files, link)
 		default:
 			return fmt.Errorf("unsupported legacy state entry: %s", path)
 		}
@@ -365,8 +374,33 @@ func copyLegacyFile(
 		return BackupFile{}, err
 	}
 	return BackupFile{
-		Path: filepath.ToSlash(path), Size: size,
+		Path: filepath.ToSlash(path), Kind: "file", Size: size,
 		SHA256: hex.EncodeToString(hash.Sum(nil)), Mode: uint32(selected.Mode().Perm()),
+	}, nil
+}
+
+func copyLegacySymlink(
+	source, destination *os.Root, name, path string, selected os.FileInfo,
+) (BackupFile, error) {
+	target, err := source.Readlink(name)
+	if err != nil {
+		return BackupFile{}, err
+	}
+	if !utf8.ValidString(target) {
+		return BackupFile{}, fmt.Errorf("legacy link target is not UTF-8: %s", path)
+	}
+	if err := destination.Symlink(target, name); err != nil {
+		return BackupFile{}, err
+	}
+	created, err := destination.Lstat(name)
+	if err != nil || created.Mode()&os.ModeSymlink == 0 {
+		return BackupFile{}, fmt.Errorf("backup link was not created: %s", path)
+	}
+	digest := sha256.Sum256([]byte(target))
+	return BackupFile{
+		Path: filepath.ToSlash(path), Kind: "symlink", Target: target,
+		Size: int64(len(target)), SHA256: hex.EncodeToString(digest[:]),
+		Mode: uint32(selected.Mode().Perm()),
 	}, nil
 }
 
