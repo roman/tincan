@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 
 	"github.com/roman/tincan/pkg/firstmate"
 	"github.com/roman/tincan/pkg/inbox"
@@ -18,13 +16,9 @@ func (command *cli) runResolve(ctx context.Context, root string, output io.Write
 	if err != nil {
 		return fail(output, 2, err, "use a valid primary --recipient name")
 	}
-	messageRoot := command.MessageRoot
-	if messageRoot == "" {
-		directory, err := os.Getwd()
-		if err != nil {
-			return fail(output, 1, err, "provide an absolute --message-root path")
-		}
-		messageRoot = filepath.Join(directory, ".tincan")
+	messageRoot, err := rootWithDefault(command.MessageRoot, ".tincan")
+	if err != nil {
+		return fail(output, 1, err, "provide an absolute --message-root path")
 	}
 	if _, err := firstmate.ParseAbsolutePath(messageRoot); err != nil {
 		return fail(output, 2, err, "use an absolute, clean --message-root path")

@@ -16,7 +16,7 @@ import (
 
 const version = "0.1.0"
 
-const cliHelp = "commands: brief [--limit N], backlog, worker list|show, task list|pending; global flags: --root, --message-root, --recipient, --help; run concierge COMMAND --help for arguments"
+const cliHelp = "commands: brief [--limit N], backlog, worker list|show, task list|pending|receive|ack; global flags: --root, --message-root, --recipient, --help; run concierge COMMAND --help for arguments"
 
 type cli struct {
 	Root        string          `help:"Absolute Concierge state root; defaults to .concierge in the current directory." env:"CONCIERGE_HOME"`
@@ -29,10 +29,7 @@ type cli struct {
 			TaskID string `arg:"" help:"Task ID."`
 		} `cmd:"" help:"Show a worker's launch identity and recovery markers."`
 	} `cmd:"" help:"Inspect local worker bindings."`
-	Task struct {
-		List    struct{} `cmd:"" help:"List tasks with confirmed worker bindings."`
-		Pending struct{} `cmd:"" help:"List accepted results awaiting completion recovery."`
-	} `cmd:"" help:"Inspect local tasks and pending completions."`
+	Task  taskCommands `cmd:"" help:"Inspect local tasks and exchange assignments."`
 	Brief struct {
 		Limit int `help:"Maximum rows from each source." default:"10"`
 	} `cmd:"" default:"1" help:"Show root context from task records and pending messages."`
@@ -87,18 +84,16 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			)
 		}
 	}
-	root := command.Root
-	if root == "" {
-		directory, err := os.Getwd()
-		if err != nil {
-			return fail(stdout, 1, err, "provide an absolute --root path")
-		}
-		root = filepath.Join(directory, ".concierge")
+	root, err := rootWithDefault(command.Root, ".concierge")
+	if err != nil {
+		return fail(stdout, 1, err, "provide an absolute --root path")
 	}
 	if _, err := firstmate.ParseAbsolutePath(root); err != nil {
 		return fail(stdout, 2, err, "use an absolute, clean --root path")
 	}
 	switch selected.Command() {
+	case "task receive <task-id> <message-id>", "task ack <task-id> <message-id>":
+		return command.runTaskMessages(ctx, root, selected.Command(), stdout)
 	case "backlog resolve <reply-id>":
 		return command.runResolve(ctx, root, stdout)
 	case "worker list", "worker show <task-id>", "task list", "task pending":
@@ -118,4 +113,15 @@ func quote(value string) string {
 func fail(output io.Writer, code int, err error, help string) int {
 	fmt.Fprintf(output, "error: %s\nhelp: %s\n", quote(err.Error()), quote(help))
 	return code
+}
+
+func rootWithDefault(value, directoryName string) (string, error) {
+	if value != "" {
+		return value, nil
+	}
+	directory, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(directory, directoryName), nil
 }
