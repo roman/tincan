@@ -22,6 +22,9 @@ type workerRunner struct {
 	mutex             sync.Mutex
 	worktree          string
 	harness           string
+	pane              string
+	promptTargets     []string
+	onAgentRead       func()
 	absent            bool
 	unreadable        bool
 	promptError       error
@@ -42,6 +45,10 @@ func (runner *workerRunner) RunSession(
 	runner.mutex.Lock()
 	defer runner.mutex.Unlock()
 	runner.calls++
+	pane := runner.pane
+	if pane == "" {
+		pane = "pane-1"
+	}
 	if session != "work" {
 		return nil, nil, fmt.Errorf("unexpected session %s", session)
 	}
@@ -49,11 +56,14 @@ func (runner *workerRunner) RunSession(
 	case "pane get":
 		return []byte(
 			fmt.Sprintf(
-				`{"result":{"pane":{"pane_id":"pane-1","foreground_cwd":%q}}}`,
-				runner.worktree,
+				`{"result":{"pane":{"pane_id":%q,"foreground_cwd":%q}}}`,
+				pane, runner.worktree,
 			),
 		), nil, nil
 	case "agent get":
+		if runner.onAgentRead != nil {
+			runner.onAgentRead()
+		}
 		if runner.verificationError && runner.starts > 0 {
 			return []byte(`{"result":{}}`), nil, nil
 		}
@@ -62,8 +72,8 @@ func (runner *workerRunner) RunSession(
 		}
 		return []byte(
 			fmt.Sprintf(
-				`{"result":{"agent":{"pane_id":"pane-1","agent_status":"working","agent":%q}}}`,
-				runner.harness,
+				`{"result":{"agent":{"pane_id":%q,"agent_status":"working","agent":%q}}}`,
+				pane, runner.harness,
 			),
 		), nil, nil
 	case "pane process-info":
@@ -75,6 +85,7 @@ func (runner *workerRunner) RunSession(
 		), nil, nil
 	case "agent prompt":
 		runner.prompts++
+		runner.promptTargets = append(runner.promptTargets, args[2])
 		if runner.onPrompt != nil {
 			runner.onPrompt()
 		}

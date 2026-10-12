@@ -86,7 +86,7 @@ func (worker *SupervisedWorker) sendAssignment(
 			result.Notification = NotificationAcknowledged
 			return nil
 		}
-		result.NotificationError = worker.promptBoundWorker(ctx, bound)
+		result.NotificationError = worker.promptBoundWorker(ctx, task)
 		if result.NotificationError == nil {
 			result.Notification = NotificationSent
 		}
@@ -107,8 +107,12 @@ func assignmentWorker(task taskstate.Task) (taskstate.Worker, error) {
 
 func (worker *SupervisedWorker) promptBoundWorker(
 	ctx context.Context,
-	bound taskstate.Worker,
+	task *taskstate.LockedTask,
 ) error {
+	bound, err := assignmentWorker(task.Current())
+	if err != nil {
+		return err
+	}
 	client, err := worker.boundClient(ctx, bound)
 	if err != nil {
 		return err
@@ -119,6 +123,9 @@ func (worker *SupervisedWorker) promptBoundWorker(
 	}
 	if agent.PaneID != bound.Pane || agent.Kind != bound.Harness {
 		return fmt.Errorf("unexpected agent for task %s", worker.taskID)
+	}
+	if err := task.CheckCurrent(); err != nil {
+		return err
 	}
 	return client.Prompt(ctx, bound.Pane, notify.DoorbellText)
 }
