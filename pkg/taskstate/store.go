@@ -18,6 +18,7 @@ import (
 
 var ErrStoreLockTimeout = errors.New("task record lock timed out")
 var ErrPublicationUnconfirmed = errors.New("task record publication requires reconciliation")
+var ErrWorkerConflict = errors.New("worker is already assigned to another task")
 
 const storeLockTimeout = 2 * time.Second
 
@@ -38,6 +39,9 @@ func NewStore(path string) (*Store, error) {
 
 // Create writes a task only when its ID has no record.
 func (store *Store) Create(ctx context.Context, task Task) error {
+	if task.Snapshot().Worker != nil {
+		return ErrInvalidTask
+	}
 	data, err := task.Encode()
 	if err != nil {
 		return err
@@ -158,34 +162,115 @@ func (store *Store) Update(
 	}
 	var updated Task
 	err = store.withVersionTwo(ctx, func(root *os.Root) error {
-		return withTaskLock(ctx, root, id, func() error {
-			records, selectedDirectory, err := openRecords(root)
+		var updateErr error
+		updated, updateErr = store.updatePinned(ctx, root, id, func(current Task) (Task, error) {
+			candidate, err := transition(current)
+			if err != nil {
+				return Task{}, err
+			}
+			if !sameWorkerIdentity(current, candidate) {
+				return Task{}, ErrWorkerConflict
+			}
+			return candidate, nil
+		})
+		return updateErr
+	})
+	if err != nil && !errors.Is(err, ErrPublicationUnconfirmed) {
+		return Task{}, err
+	}
+	return updated, err
+}
+
+// ReserveAdoption serializes worker identity claims across all task records.
+func (store *Store) ReserveAdoption(
+	ctx context.Context, taskID string, worker Worker,
+) (Task, error) {
+	id, err := parseStoreTaskID(taskID)
+	if err != nil {
+		return Task{}, err
+	}
+	var updated Task
+	err = store.withVersionTwo(ctx, func(root *os.Root) error {
+		return withRootLock(ctx, root, ".worker-adoption.lock", func() error {
+			tasks, err := ListPinned(ctx, root)
 			if err != nil {
 				return err
 			}
-			defer records.Close()
-			current, selectedRecord, err := readRecord(records, id.String())
-			if err != nil {
-				return err
-			}
-			updated, err = transition(current)
-			if err != nil {
-				return err
-			}
-			if updated.ID() != id.String() {
-				return ErrInvalidTask
-			}
-			data, err := updated.Encode()
-			if err != nil {
-				return err
-			}
-			return writeRecord(root, records, selectedDirectory, id.String(), data,
-				selectedRecord, store.syncDirectory)
+			updated, err = store.updatePinned(ctx, root, id, func(task Task) (Task, error) {
+				candidate, err := task.ReserveAdoption(worker)
+				if err != nil {
+					return Task{}, err
+				}
+				if err := checkWorkerIdentity(tasks, candidate); err != nil {
+					return Task{}, err
+				}
+				return candidate, nil
+			})
+			return err
 		})
 	})
 	if err != nil && !errors.Is(err, ErrPublicationUnconfirmed) {
 		return Task{}, err
 	}
+	return updated, err
+}
+
+func sameWorkerIdentity(current, candidate Task) bool {
+	previous := current.Snapshot().Worker
+	worker := candidate.Snapshot().Worker
+	if worker == nil {
+		return true
+	}
+	return previous != nil && previous.Session == worker.Session &&
+		previous.Name == worker.Name && previous.Pane == worker.Pane
+}
+
+func checkWorkerIdentity(tasks []Task, candidate Task) error {
+	worker := candidate.Snapshot().Worker
+	if worker == nil {
+		return nil
+	}
+	for _, task := range tasks {
+		if task.ID() == candidate.ID() {
+			continue
+		}
+		assigned := task.Snapshot().Worker
+		if assigned != nil && assigned.Session == worker.Session &&
+			(assigned.Name == worker.Name || assigned.Pane == worker.Pane) {
+			return ErrWorkerConflict
+		}
+	}
+	return nil
+}
+
+func (store *Store) updatePinned(
+	ctx context.Context, root *os.Root, id firstmate.TaskID, transition func(Task) (Task, error),
+) (Task, error) {
+	var updated Task
+	err := withTaskLock(ctx, root, id, func() error {
+		records, selectedDirectory, err := openRecords(root)
+		if err != nil {
+			return err
+		}
+		defer records.Close()
+		current, selectedRecord, err := readRecord(records, id.String())
+		if err != nil {
+			return err
+		}
+		updated, err = transition(current)
+		if err != nil {
+			return err
+		}
+		if updated.ID() != id.String() {
+			return ErrInvalidTask
+		}
+		data, err := updated.Encode()
+		if err != nil {
+			return err
+		}
+		return writeRecord(root, records, selectedDirectory, id.String(), data,
+			selectedRecord, store.syncDirectory)
+	})
 	return updated, err
 }
 
@@ -235,7 +320,12 @@ func openRecords(root *os.Root) (*os.Root, os.FileInfo, error) {
 func withTaskLock(
 	ctx context.Context, root *os.Root, id firstmate.TaskID, operation func() error,
 ) error {
-	name := ".task-" + id.String() + ".lock"
+	return withRootLock(ctx, root, ".task-"+id.String()+".lock", operation)
+}
+
+func withRootLock(
+	ctx context.Context, root *os.Root, name string, operation func() error,
+) error {
 	lock, err := root.OpenFile(name, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err

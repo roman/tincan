@@ -31,6 +31,21 @@ func testRoot(t *testing.T) string {
 	return root
 }
 
+func adoptStoredWorker(
+	t *testing.T, store *taskstate.Store, taskID string, worker taskstate.Worker, tab string,
+) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := store.ReserveAdoption(ctx, taskID, worker); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Update(ctx, taskID, func(task taskstate.Task) (taskstate.Task, error) {
+		return task.ConfirmAdoption("workspace-1", tab)
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCreateAndFinishKeepRecordAndBacklogViewTogether(t *testing.T) {
 	ctx := context.Background()
 	root := testRoot(t)
@@ -56,15 +71,7 @@ func TestCreateAndFinishKeepRecordAndBacklogViewTogether(t *testing.T) {
 		Project: "/project", Worktree: "/worktree", Generation: "gen-1",
 		AgentArgs: []string{"resume", "thread-1"},
 	}
-	if _, err := store.Update(ctx, "task-1", func(task taskstate.Task) (taskstate.Task, error) {
-		reserved, err := task.ReserveAdoption(worker)
-		if err != nil {
-			return taskstate.Task{}, err
-		}
-		return reserved.ConfirmAdoption("workspace-1", "tab-1")
-	}); err != nil {
-		t.Fatal(err)
-	}
+	adoptStoredWorker(t, store, "task-1", worker, "tab-1")
 	if _, err := service.Start(ctx, "task-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -118,15 +125,7 @@ func TestStartRequiresFinishedDependencies(t *testing.T) {
 		Project: "/project", Worktree: "/worktree", Generation: "gen-2",
 		AgentArgs: []string{"resume", "thread-2"},
 	}
-	if _, err := store.Update(ctx, "task-2", func(task taskstate.Task) (taskstate.Task, error) {
-		reserved, err := task.ReserveAdoption(worker)
-		if err != nil {
-			return taskstate.Task{}, err
-		}
-		return reserved.ConfirmAdoption("workspace-1", "tab-2")
-	}); err != nil {
-		t.Fatal(err)
-	}
+	adoptStoredWorker(t, store, "task-2", worker, "tab-2")
 	started, err := service.Start(ctx, "task-2")
 	if err != nil || started.State() != taskstate.InFlight {
 		t.Fatalf("start after dependency completion = %#v, %v", started.Snapshot(), err)
@@ -191,15 +190,7 @@ func TestStartReportsSavedRecordWhenProjectionFails(t *testing.T) {
 		Project: "/project", Worktree: "/worktree", Generation: "gen-1",
 		AgentArgs: []string{"resume", "thread-1"},
 	}
-	if _, err := store.Update(ctx, "task-1", func(task taskstate.Task) (taskstate.Task, error) {
-		reserved, err := task.ReserveAdoption(worker)
-		if err != nil {
-			return taskstate.Task{}, err
-		}
-		return reserved.ConfirmAdoption("workspace-1", "tab-1")
-	}); err != nil {
-		t.Fatal(err)
-	}
+	adoptStoredWorker(t, store, "task-1", worker, "tab-1")
 	projection := filepath.Join(root, "backlog.md")
 	if err := os.Remove(projection); err != nil {
 		t.Fatal(err)
