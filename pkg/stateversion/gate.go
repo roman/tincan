@@ -24,12 +24,21 @@ const pendingFile = ".task-state-migration-pending"
 const lockSuffix = ".task-state-version.lock"
 const lockTimeout = 2 * time.Second
 
-// Guard holds a shared command lease or an exclusive migration lease.
+type guardPurpose int
+
+const (
+	commandPurpose guardPurpose = iota
+	migrationPurpose
+	recoveryPurpose
+	initializationPurpose
+)
+
+// Guard holds a task-state lease with a specific publication purpose.
 type Guard struct {
 	root          *os.Root
 	parent        *os.Root
 	lock          *os.File
-	exclusive     bool
+	purpose       guardPurpose
 	syncDirectory func(*os.Root) error
 }
 
@@ -61,6 +70,7 @@ func AcquireRecovery(ctx context.Context, root string) (*Guard, error) {
 		guard.Close()
 		return nil, err
 	}
+	guard.purpose = recoveryPurpose
 	return guard, nil
 }
 
@@ -74,6 +84,7 @@ func AcquireMigration(ctx context.Context, root string) (*Guard, error) {
 		guard.Close()
 		return nil, fmt.Errorf("task-state root does not exist: %s", root)
 	}
+	guard.purpose = migrationPurpose
 	return guard, nil
 }
 
@@ -131,7 +142,7 @@ func acquire(ctx context.Context, path string, mode int) (*Guard, error) {
 		return nil, err
 	}
 	guard := &Guard{
-		parent: parent, lock: lock, exclusive: mode == syscall.LOCK_EX,
+		parent: parent, lock: lock,
 		syncDirectory: syncStateDirectory,
 	}
 	selected, err := parent.Lstat(lockName)
@@ -277,7 +288,8 @@ func (guard *Guard) readPending() (bool, error) {
 
 // PublishVersion commits a new marker while the migration lease is held.
 func (guard *Guard) PublishVersion(version int) error {
-	if guard == nil || !guard.exclusive || version != 2 {
+	if guard == nil || (guard.purpose != migrationPurpose && guard.purpose != recoveryPurpose) ||
+		version != 2 {
 		return ErrIncompatible
 	}
 	current, err := guard.readVersion()
@@ -293,6 +305,13 @@ func (guard *Guard) PublishVersion(version int) error {
 	if current == version {
 		return guard.ConfirmPublishedVersion()
 	}
+	if err := guard.publishVersionMarker(version); err != nil {
+		return err
+	}
+	return guard.finishPending()
+}
+
+func (guard *Guard) publishVersionMarker(version int) error {
 	name := ".task-state-version-" + rand.Text()
 	temporary, err := guard.root.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -316,12 +335,13 @@ func (guard *Guard) PublishVersion(version int) error {
 	if err := guard.syncDirectory(guard.root); err != nil {
 		return errors.Join(ErrPublicationUnconfirmed, err)
 	}
-	return guard.finishPending()
+	return nil
 }
 
 // ConfirmPublishedVersion syncs an already visible version 2 marker.
 func (guard *Guard) ConfirmPublishedVersion() error {
-	if guard == nil || !guard.exclusive || guard.root == nil {
+	if guard == nil || (guard.purpose != migrationPurpose && guard.purpose != recoveryPurpose) ||
+		guard.root == nil {
 		return ErrIncompatible
 	}
 	version, err := guard.readVersion()
