@@ -12,9 +12,17 @@ import (
 	"github.com/roman/tincan/pkg/taskview"
 )
 
-const backlogHelp = "global flags: --root, --help; commands: backlog add ID TITLE --kind KIND --repo REPO [--body-file FILE|-] [--blocked-by ID]; backlog list [--state queued|in_flight|held|done]; backlog show ID [--full]; backlog start|hold|release ID; backlog finish|cleanup ID --generation GEN; run concierge backlog COMMAND --help for arguments"
+const resolveUsage = "concierge backlog resolve REPLY_ID [--mode close|retain] [--closed-on YYYY-MM-DD]"
+
+const backlogHelp = "global flags: --root, --help; commands: backlog add ID TITLE --kind KIND --repo REPO [--body-file FILE|-] [--blocked-by ID]; backlog list [--state queued|in_flight|held|done]; backlog show ID [--full]; backlog start|hold|release ID; backlog finish|cleanup ID --generation GEN; run concierge backlog COMMAND --help for arguments; " + resolveUsage
 
 type backlogCommands struct {
+	Resolve struct {
+		ReplyID  string `arg:"" help:"Bound reply message ID in the primary inbox."`
+		Mode     string `enum:"close,retain" default:"close" help:"Close the task or retain held work in the queue."`
+		ClosedOn string `help:"Closing date YYYY-MM-DD; required for close, forbidden for retain."`
+	} `cmd:"" help:"Accept a bound result and acknowledge its primary reply."`
+
 	Start struct {
 		TaskID string `arg:"" help:"Task ID."`
 	} `cmd:"" help:"Start a confirmed worker after checking holds and dependencies."`

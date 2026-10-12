@@ -77,6 +77,16 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			)
 		}
 	}
+	if selected.Command() == "backlog resolve <reply-id>" {
+		if err := validateCompletion(command.Backlog.Resolve.Mode, command.Backlog.Resolve.ClosedOn); err != nil {
+			return fail(
+				stdout,
+				2,
+				err,
+				"close requires --closed-on YYYY-MM-DD; retain forbids --closed-on",
+			)
+		}
+	}
 	root := command.Root
 	if root == "" {
 		directory, err := os.Getwd()
@@ -89,6 +99,8 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return fail(stdout, 2, err, "use an absolute, clean --root path")
 	}
 	switch selected.Command() {
+	case "backlog resolve <reply-id>":
+		return command.runResolve(ctx, root, stdout)
 	case "worker list", "worker show <task-id>", "task list", "task pending":
 		return runRecordView(ctx, root, selected.Command(), command.Worker.Show.TaskID, stdout)
 	case "brief":
