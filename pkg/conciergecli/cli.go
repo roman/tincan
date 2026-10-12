@@ -17,15 +17,16 @@ import (
 
 const version = "0.1.0"
 
-const cliHelp = "commands: brief [--limit N], primary claim|verify|release, control status|interrupt|start, backlog, worker list|show, task list|pending|send|receive|ack|reply|adopt|stop|cancel; global flags: --root, --message-root, --recipient, --help; run concierge COMMAND --help for arguments"
+const cliHelp = "commands: brief [--limit N], primary claim|verify|release, control status|interrupt|start, supervise pane, backlog, worker list|show, task list|pending|send|receive|ack|reply|adopt|stop|cancel; global flags: --root, --message-root, --recipient, --help; run concierge COMMAND --help for arguments"
 
 type cli struct {
-	Control     controlCommands `cmd:"" help:"Inspect and control live Herdr agents."`
-	Primary     primaryCommands `cmd:"" help:"Manage the root session owner through Linux /proc lifecycle hooks."`
-	Root        string          `help:"Absolute Concierge state root; defaults to .concierge in the current directory." env:"CONCIERGE_HOME"`
-	MessageRoot string          `help:"Absolute message root; defaults to .tincan in the current directory." env:"TINCAN_HOME"`
-	Recipient   string          `help:"Primary inbox recipient." default:"${primaryRecipient}"`
-	Backlog     backlogCommands `cmd:"" help:"Queue and inspect authoritative task records."`
+	Supervise   supervisionCommands `cmd:"" help:"Monitor workers and recover missing agents."`
+	Control     controlCommands     `cmd:"" help:"Inspect and control live Herdr agents."`
+	Primary     primaryCommands     `cmd:"" help:"Manage the root session owner through Linux /proc lifecycle hooks."`
+	Root        string              `help:"Absolute Concierge state root; defaults to .concierge in the current directory." env:"CONCIERGE_HOME"`
+	MessageRoot string              `help:"Absolute message root; defaults to .tincan in the current directory." env:"TINCAN_HOME"`
+	Recipient   string              `help:"Primary inbox recipient." default:"${primaryRecipient}"`
+	Backlog     backlogCommands     `cmd:"" help:"Queue and inspect authoritative task records."`
 	Worker      struct {
 		List struct{} `cmd:"" help:"List confirmed workers and pending adoptions."`
 		Show struct {
@@ -68,6 +69,8 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return fail(stdout, 2, err, cliHelp)
 	}
 	switch selected.Command() {
+	case "supervise pane":
+		return command.Supervise.runPane(ctx, stdout)
 	case "control status <target>", "control interrupt <target>", "control start":
 		return command.Control.run(ctx, selected.Command(), stdout)
 	}
