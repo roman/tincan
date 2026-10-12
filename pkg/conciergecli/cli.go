@@ -11,14 +11,16 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/roman/tincan/pkg/firstmate"
+	"github.com/roman/tincan/pkg/primary"
 	"github.com/roman/tincan/pkg/taskops"
 )
 
 const version = "0.1.0"
 
-const cliHelp = "commands: brief [--limit N], backlog, worker list|show, task list|pending|send|receive|ack|reply|adopt|stop|cancel; global flags: --root, --message-root, --recipient, --help; run concierge COMMAND --help for arguments"
+const cliHelp = "commands: brief [--limit N], primary claim|verify|release, backlog, worker list|show, task list|pending|send|receive|ack|reply|adopt|stop|cancel; global flags: --root, --message-root, --recipient, --help; run concierge COMMAND --help for arguments"
 
 type cli struct {
+	Primary     primaryCommands `cmd:"" help:"Manage the root session owner through Linux /proc lifecycle hooks."`
 	Root        string          `help:"Absolute Concierge state root; defaults to .concierge in the current directory." env:"CONCIERGE_HOME"`
 	MessageRoot string          `help:"Absolute message root; defaults to .tincan in the current directory." env:"TINCAN_HOME"`
 	Recipient   string          `help:"Primary inbox recipient." default:"${primaryRecipient}"`
@@ -92,6 +94,8 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return fail(stdout, 2, err, "use an absolute, clean --root path")
 	}
 	switch selected.Command() {
+	case "primary claim", "primary verify", "primary release":
+		return runPrimary(root, selected.Command(), stdin, stdout, primary.CurrentHookIdentity)
 	case "task stop <task-id>", "task cancel <task-id>":
 		return command.Task.runControl(ctx, root, selected.Command(), stdout)
 	case "task adopt <task-id>":
