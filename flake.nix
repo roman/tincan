@@ -15,12 +15,28 @@
       forEachSystem = function:
         nixpkgs.lib.genAttrs systems (system: function (import nixpkgs { inherit system; }));
       golinesFlags = "-m 100 --no-reformat-tags --base-formatter=gofmt";
+      goSource = pkgs: pkgs.lib.fileset.toSource {
+        root = ./.;
+        fileset = pkgs.lib.fileset.unions [ ./go.mod ./go.sum ./cmd ./pkg ];
+      };
       goModule = pkgs: {
         version = "0.1.0";
-        src = self;
+        src = goSource pkgs;
         go = pkgs.go_1_25;
         vendorHash = "sha256-dnZtAeufL7NxseT95FGiPCvq6oGp6eUO7/sIQEHNRa0=";
       };
+      buildCommands = pkgs:
+        let tasksAxi = pkgs.callPackage ./nix/tasks-axi.nix { };
+        in pkgs.buildGoModule ((goModule pkgs) // {
+          pname = "tincan-commands";
+          subPackages = [ "cmd/..." ];
+          checkPhase = ''
+            runHook preCheck
+            export PATH=${tasksAxi}/bin:$PATH
+            go test ./...
+            runHook postCheck
+          '';
+        });
     in
     {
       packages = forEachSystem (pkgs:
@@ -28,16 +44,16 @@
           system = pkgs.stdenv.hostPlatform.system;
           herdrPackage = herdr.packages.${system}.default;
           tasksAxi = pkgs.callPackage ./nix/tasks-axi.nix { };
-          mkProgram = { name, runtime ? null }: pkgs.buildGoModule ((goModule pkgs) // {
-            pname = name;
-            subPackages = [ "cmd/${name}" ];
-            doCheck = false;
+          allCommands = buildCommands pkgs;
+          mkProgram = { name, runtime ? null }: pkgs.runCommand "${name}-0.1.0" {
             nativeBuildInputs = pkgs.lib.optionals (runtime != null) [ pkgs.makeWrapper ];
             disallowedRequisites = pkgs.lib.optionals (runtime == null) [ herdrPackage ];
-            postFixup = pkgs.lib.optionalString (runtime != null) ''
+          } ''
+            install -Dm755 ${allCommands}/bin/${name} "$out/bin/${name}"
+            ${pkgs.lib.optionalString (runtime != null) ''
               wrapProgram "$out/bin/${name}" --prefix PATH : ${runtime}/bin
-            '';
-          });
+            ''}
+          '';
           tincan-inbox = mkProgram { name = "tincan-inbox"; };
           tincan-notify = mkProgram { name = "tincan-notify"; runtime = herdrPackage; };
           tincan-task-send = mkProgram { name = "tincan-task-send"; runtime = herdrPackage; };
@@ -80,10 +96,16 @@
       checks = forEachSystem (pkgs:
         let
           packages = self.packages.${pkgs.stdenv.hostPlatform.system};
-          tasksAxi = pkgs.callPackage ./nix/tasks-axi.nix { };
         in
         {
           inherit (packages) tincan-inbox tincan-notify tincan-task-send tincan-task-reply tincan-task-receive concierge-brief concierge-worker concierge-backlog concierge-task concierge-migrate concierge-control concierge-supervise;
+          go-source = pkgs.runCommand "tincan-go-source" { src = (goModule pkgs).src; } ''
+            test -e "$src/go.mod"
+            test -e "$src/cmd"
+            test -e "$src/pkg"
+            test ! -e "$src/README.md"
+            touch "$out"
+          '';
           concierge-smoke = pkgs.runCommand "concierge-smoke" { } ''
             ${packages.concierge-worker}/bin/concierge-worker --help >/dev/null
             ${packages.concierge-backlog}/bin/concierge-backlog --help >/dev/null
@@ -118,7 +140,7 @@
           '';
           go-format = pkgs.runCommand "tincan-go-format" {
             nativeBuildInputs = [ pkgs.golines pkgs.go_1_25 ];
-            src = self;
+            src = goSource pkgs;
           } ''
             cd "$src"
             unformatted="$(golines ${golinesFlags} -l .)"
@@ -128,16 +150,7 @@
             fi
             touch "$out"
           '';
-          go-tests = pkgs.buildGoModule ((goModule pkgs) // {
-            pname = "tincan-go-tests";
-            subPackages = [ "cmd/..." ];
-            checkPhase = ''
-              runHook preCheck
-              export PATH=${tasksAxi}/bin:$PATH
-              go test ./...
-              runHook postCheck
-            '';
-          });
+          go-tests = buildCommands pkgs;
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux { inherit (packages) concierge-primary; });
 
       devShells = forEachSystem (pkgs:
