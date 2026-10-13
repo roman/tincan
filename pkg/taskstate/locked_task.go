@@ -35,7 +35,7 @@ func (task *LockedTask) CheckCurrent() error {
 }
 
 // Apply publishes a transition before returning, including unchanged records.
-// New worker identities require Store.ReserveAdoption's global reservation lock.
+// New worker and launch resource claims require the Store reservation methods.
 func (task *LockedTask) Apply(transition func(Task) (Task, error)) (Task, error) {
 	return task.apply(func(current Task) (Task, error) {
 		if transition == nil {

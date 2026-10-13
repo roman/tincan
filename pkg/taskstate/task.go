@@ -109,11 +109,12 @@ type Receipt struct {
 type record struct {
 	Format int `json:"format"`
 	Definition
-	State         State       `json:"state"`
-	Worker        *Worker     `json:"worker,omitempty"`
-	Completion    *Completion `json:"completion,omitempty"`
-	Receipt       *Receipt    `json:"receipt,omitempty"`
-	PriorReceipts []Receipt   `json:"prior_receipts,omitempty"`
+	State         State         `json:"state"`
+	Worker        *Worker       `json:"worker,omitempty"`
+	LaunchIntent  *LaunchIntent `json:"launch_intent,omitempty"`
+	Completion    *Completion   `json:"completion,omitempty"`
+	Receipt       *Receipt      `json:"receipt,omitempty"`
+	PriorReceipts []Receipt     `json:"prior_receipts,omitempty"`
 }
 
 // Snapshot carries one complete task across the explicit migration boundary.
@@ -121,6 +122,7 @@ type Snapshot struct {
 	Definition    Definition
 	State         State
 	Worker        *Worker
+	LaunchIntent  *LaunchIntent
 	Completion    *Completion
 	Receipt       *Receipt
 	PriorReceipts []Receipt
@@ -143,8 +145,9 @@ func NewMigrated(input Snapshot) (Task, error) {
 	selected := record{
 		Format: formatVersion, Definition: cloneDefinition(input.Definition),
 		State: input.State, Worker: cloneWorker(input.Worker),
-		Completion: cloneCompletion(input.Completion),
-		Receipt:    cloneReceipt(input.Receipt), PriorReceipts: slices.Clone(input.PriorReceipts),
+		LaunchIntent: cloneLaunchIntent(input.LaunchIntent),
+		Completion:   cloneCompletion(input.Completion),
+		Receipt:      cloneReceipt(input.Receipt), PriorReceipts: slices.Clone(input.PriorReceipts),
 	}
 	if err := validate(selected); err != nil {
 		return Task{}, err
@@ -202,6 +205,7 @@ func (task Task) Snapshot() Snapshot {
 	return Snapshot{
 		Definition: cloneDefinition(task.record.Definition), State: task.record.State,
 		Worker:        cloneWorker(task.record.Worker),
+		LaunchIntent:  cloneLaunchIntent(task.record.LaunchIntent),
 		Completion:    cloneCompletion(task.record.Completion),
 		Receipt:       cloneReceipt(task.record.Receipt),
 		PriorReceipts: slices.Clone(task.record.PriorReceipts),
@@ -266,6 +270,9 @@ func validate(selected record) error {
 		return ErrInvalidTask
 	}
 	if selected.State != Queued && selected.State != InFlight && selected.State != Done {
+		return ErrInvalidTask
+	}
+	if !validLaunchIntent(selected) {
 		return ErrInvalidTask
 	}
 	if selected.Worker != nil && !validWorker(*selected.Worker) {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"sort"
 	"strings"
 	"syscall"
@@ -40,7 +41,7 @@ func NewStore(path string) (*Store, error) {
 
 // Create writes a task only when its ID has no record.
 func (store *Store) Create(ctx context.Context, task Task) error {
-	if task.Snapshot().Worker != nil {
+	if task.Snapshot().Worker != nil || task.record.LaunchIntent != nil {
 		return ErrInvalidTask
 	}
 	data, err := task.Encode()
@@ -186,6 +187,32 @@ func (store *Store) Update(
 func (store *Store) ReserveAdoption(
 	ctx context.Context, taskID string, worker Worker,
 ) (Task, error) {
+	return store.reserveWorkerResources(ctx, taskID, func(task Task) (Task, error) {
+		return task.ReserveAdoption(worker)
+	})
+}
+
+// ReserveInitialLaunch claims the worker name and worktree before external effects.
+func (store *Store) ReserveInitialLaunch(
+	ctx context.Context, taskID string, intent LaunchIntent,
+) (Task, error) {
+	return store.reserveWorkerResources(ctx, taskID, func(task Task) (Task, error) {
+		return task.ReserveInitialLaunch(intent)
+	})
+}
+
+// RecordLaunchEndpoint claims the discovered pane under the adoption lock.
+func (store *Store) RecordLaunchEndpoint(
+	ctx context.Context, taskID, generation string, endpoint LaunchEndpoint,
+) (Task, error) {
+	return store.reserveWorkerResources(ctx, taskID, func(task Task) (Task, error) {
+		return task.RecordLaunchEndpoint(generation, endpoint)
+	})
+}
+
+func (store *Store) reserveWorkerResources(
+	ctx context.Context, taskID string, transition func(Task) (Task, error),
+) (Task, error) {
 	id, err := parseStoreTaskID(taskID)
 	if err != nil {
 		return Task{}, err
@@ -198,7 +225,7 @@ func (store *Store) ReserveAdoption(
 				return err
 			}
 			updated, err = store.updatePinned(ctx, root, id, func(task Task) (Task, error) {
-				candidate, err := task.ReserveAdoption(worker)
+				candidate, err := transition(task)
 				if err != nil {
 					return Task{}, err
 				}
@@ -217,6 +244,21 @@ func (store *Store) ReserveAdoption(
 }
 
 func sameWorkerIdentity(current, candidate Task) bool {
+	previousLaunch := cloneLaunchIntent(current.record.LaunchIntent)
+	launch := cloneLaunchIntent(candidate.record.LaunchIntent)
+	if launch != nil {
+		if previousLaunch == nil {
+			return false
+		}
+		if previousLaunch.Endpoint == nil && launch.Endpoint != nil {
+			return false
+		}
+		previousLaunch.Phase, launch.Phase = LaunchReserved, LaunchReserved
+		previousLaunch.ResumeArgs, launch.ResumeArgs = nil, nil
+		if !reflect.DeepEqual(previousLaunch, launch) {
+			return false
+		}
+	}
 	previous := current.Snapshot().Worker
 	worker := candidate.Snapshot().Worker
 	if worker == nil {
@@ -228,7 +270,8 @@ func sameWorkerIdentity(current, candidate Task) bool {
 
 func checkWorkerIdentity(tasks []Task, candidate Task) error {
 	worker := candidate.Snapshot().Worker
-	if worker == nil {
+	launch := candidate.record.LaunchIntent
+	if worker == nil && launch == nil {
 		return nil
 	}
 	for _, task := range tasks {
@@ -236,12 +279,32 @@ func checkWorkerIdentity(tasks []Task, candidate Task) error {
 			continue
 		}
 		assigned := task.Snapshot().Worker
-		if assigned != nil && assigned.Session == worker.Session &&
+		if worker != nil && assigned != nil && assigned.Session == worker.Session &&
 			(assigned.Name == worker.Name || assigned.Pane == worker.Pane) {
+			return ErrWorkerConflict
+		}
+		if launchConflicts(launch, task.record.LaunchIntent, assigned) ||
+			launchConflicts(task.record.LaunchIntent, nil, worker) {
 			return ErrWorkerConflict
 		}
 	}
 	return nil
+}
+
+func launchConflicts(launch, other *LaunchIntent, worker *Worker) bool {
+	if launch == nil {
+		return false
+	}
+	if worker != nil && (launch.Worktree == worker.Worktree ||
+		(launch.Session == worker.Session && (launch.Name == worker.Name ||
+			(launch.Endpoint != nil && launch.Endpoint.Pane == worker.Pane)))) {
+		return true
+	}
+	return other != nil && (launch.Worktree == other.Worktree ||
+		(launch.Project == other.Project && launch.Branch == other.Branch) ||
+		(launch.Session == other.Session && (launch.Name == other.Name ||
+			(launch.Workspace == other.Workspace && launch.Label == other.Label) ||
+			(launch.Endpoint != nil && other.Endpoint != nil && launch.Endpoint.Pane == other.Endpoint.Pane))))
 }
 
 func (store *Store) updatePinned(

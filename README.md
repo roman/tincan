@@ -292,3 +292,24 @@ respectively. The hook's working directory must equal the parent of the
 Concierge state root. One live session owns the primary role. Repository skills
 instruct secondary sessions to leave shared task supervision to that owner.
 The default `concierge` command renders the root brief after state setup.
+
+## Initial launch state
+
+The task-state API preserves an initial launch request inside its authoritative
+task record. Its phases are `reserved`, `preparing`, `pane_requested`, and
+`agent_requested`. Each new reservation needs a fresh generation. Exact retries
+retain that generation and request. Every progress transition checks the expected
+generation. A rejected or uncertain write must stop the executor before further
+external effects.
+
+The shared adoption lock reserves worker names, worktrees, branches, creation
+labels, and captured endpoints across tasks. Endpoint and native resume identity
+are write-once. Only `reserved` intent permits cancellation without resource
+reconciliation. A hold prevents new preparation or launch effects. Already-created
+resources can still be recorded during a hold.
+
+Intent remains alongside matching adoption and in-flight records. The caller
+must confirm durable assignment publication before clearing it. Results and
+ordinary restart are blocked during initial launch finalization. A potentially
+submitted pane creation requires reconciliation; an empty lookup after a timeout
+does not permit another creation attempt.

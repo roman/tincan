@@ -52,7 +52,7 @@ func (task Task) ConfirmAdoption(workspace, tab string) (Task, error) {
 
 // CancelAdoption releases a reservation that has no confirmed worker binding.
 func (task Task) CancelAdoption() (Task, error) {
-	if task.State() != Queued {
+	if task.State() != Queued || task.record.LaunchIntent != nil {
 		return Task{}, ErrInvalidTransition
 	}
 	if task.record.Worker == nil {
@@ -116,6 +116,9 @@ func (task Task) AcceptResult(
 	mode CompletionMode,
 	closedOn string,
 ) (Task, error) {
+	if task.record.LaunchIntent != nil {
+		return Task{}, ErrInvalidTransition
+	}
 	if (mode == Retain && closedOn != "") ||
 		(mode == Close && (closedOn == "" ||
 			(task.State() == Done && task.record.Closed != closedOn))) {

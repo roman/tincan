@@ -5,8 +5,10 @@ import "github.com/roman/tincan/pkg/firstmate"
 // ReserveLaunch keeps one new generation through restart retries.
 func (task Task) ReserveLaunch(candidate string) (Task, error) {
 	worker := task.record.Worker
-	if task.State() != InFlight || worker == nil || worker.PendingAdoption ||
-		worker.PendingGeneration != "" || task.record.Completion != nil ||
+	if task.record.LaunchIntent != nil || task.State() != InFlight || worker == nil ||
+		worker.PendingAdoption ||
+		worker.PendingGeneration != "" ||
+		task.record.Completion != nil ||
 		firstmate.ValidateSpawnGeneration(candidate) != nil {
 		return Task{}, ErrInvalidTransition
 	}
