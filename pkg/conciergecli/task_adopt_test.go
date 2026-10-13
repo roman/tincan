@@ -15,7 +15,7 @@ import (
 
 func adoptionCLIFixture(t *testing.T) (string, []string) {
 	t.Helper()
-	root := taskRoot(t, t.TempDir())
+	root := shortTaskRoot(t)
 	seedViewTask(t, root, "task-1", taskstate.Queued, nil, nil)
 	worktree := t.TempDir()
 	project := t.TempDir()
@@ -39,10 +39,6 @@ esac
 	t.Setenv("TEST_PROJECT", project)
 	t.Setenv("TEST_ADOPTION_FAIL", "")
 	return root, []string{
-		"--message-root",
-		"relative-unused",
-		"--recipient",
-		"../unused",
 		"task",
 		"adopt",
 		"task-1",
@@ -67,7 +63,11 @@ esac
 }
 
 func TestTaskAdoptForwardsBindingAndPreservesGeneration(t *testing.T) {
+	if runUnderNativeParent(t) {
+		return
+	}
 	root, args := adoptionCLIFixture(t)
+	serveHerdrFixture(t, root, filepath.Join(root, "messages"))
 	got := invoke(t, root, "", args...)
 	store, _ := taskstate.NewStore(root)
 	task, err := store.Read(context.Background(), "task-1")
@@ -105,7 +105,7 @@ func TestTaskAdoptForwardsBindingAndPreservesGeneration(t *testing.T) {
 		t.Fatalf("running retry: %s", got)
 	}
 	conflict := append([]string{}, args...)
-	conflict[8] = "another-worker"
+	conflict[4] = "another-worker"
 	expectLifecycleError(t, root, 1, conflict...)
 	after, err := store.Read(context.Background(), "task-1")
 	if err != nil || after.Snapshot().Worker.Generation != worker.Generation {
@@ -114,7 +114,11 @@ func TestTaskAdoptForwardsBindingAndPreservesGeneration(t *testing.T) {
 }
 
 func TestTaskAdoptRejectsVerificationAndMissingArguments(t *testing.T) {
+	if runUnderNativeParent(t) {
+		return
+	}
 	root, args := adoptionCLIFixture(t)
+	serveHerdrFixture(t, root, filepath.Join(root, "messages"))
 	expectLifecycleError(t, root, 2, args[:len(args)-5]...)
 	t.Setenv("TEST_ADOPTION_FAIL", "1")
 	got := expectLifecycleError(t, root, 1, args...)
@@ -129,7 +133,11 @@ func TestTaskAdoptRejectsVerificationAndMissingArguments(t *testing.T) {
 }
 
 func TestTaskAdoptReportsProjectionAndWriterFailures(t *testing.T) {
+	if runUnderNativeParent(t) {
+		return
+	}
 	root, args := adoptionCLIFixture(t)
+	serveHerdrFixture(t, root, filepath.Join(root, "messages"))
 	if err := os.Mkdir(filepath.Join(root, "backlog.md"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -156,15 +164,19 @@ func TestTaskAdoptReportsProjectionAndWriterFailures(t *testing.T) {
 }
 
 func TestTaskAdoptRequiresLaunchGeneration(t *testing.T) {
+	if runUnderNativeParent(t) {
+		return
+	}
 	root, args := adoptionCLIFixture(t)
+	serveHerdrFixture(t, root, filepath.Join(root, "messages"))
 	for _, test := range []struct {
 		name string
 		args []string
 		code int
 	}{
 		{"missing", args[:len(args)-2], 2},
-		{"empty", append(append([]string{}, args[:len(args)-1]...), ""), 1},
-		{"malformed", append(append([]string{}, args[:len(args)-1]...), "bad generation"), 1},
+		{"empty", append(append([]string{}, args[:len(args)-1]...), ""), 2},
+		{"malformed", append(append([]string{}, args[:len(args)-1]...), "bad generation"), 2},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got := expectLifecycleError(t, root, test.code, test.args...)

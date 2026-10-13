@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/roman/tincan/pkg/firstmate"
+	"github.com/roman/tincan/pkg/herdr"
 	"time"
 
 	"github.com/roman/tincan/pkg/taskstate"
@@ -16,6 +17,9 @@ const (
 	Finish  Operation = "finish"
 	Hold    Operation = "hold"
 	Release Operation = "release"
+	Cleanup Operation = "cleanup"
+	Cancel  Operation = "cancel"
+	Stop    Operation = "stop"
 )
 
 type TransitionRequest struct {
@@ -27,6 +31,43 @@ type TransitionRequest struct {
 }
 
 func validateRequest(request Request) error {
+	payloads := 0
+	for _, present := range []bool{request.Intake != nil, request.Transition != nil, request.Resolve != nil, request.Adoption != nil, request.Assignment != nil, request.Control != nil, request.Supervision != nil} {
+		if present {
+			payloads++
+		}
+	}
+	if payloads != 1 {
+		return errors.New("host operation requires exactly one payload")
+	}
+	if request.Operation == Supervise || request.Operation == StopSupervision {
+		return validateSupervisionInput(request.Operation, request.Supervision)
+	}
+	if request.Supervision != nil {
+		return errors.New("unrelated supervision payload")
+	}
+	if request.Operation == ControlStart || request.Operation == ControlInterrupt {
+		return validateControlInput(request.Operation, request.Control)
+	}
+	if request.Control != nil {
+		return errors.New("unrelated control payload")
+	}
+	if request.Operation == Adopt {
+		return validateAdoptionInput(request.Adoption)
+	}
+	if request.Operation == SendAssignment {
+		return validateAssignmentInput(request.Assignment)
+	}
+	if request.Adoption != nil || request.Assignment != nil {
+		return errors.New("unrelated worker payload")
+	}
+
+	if request.Operation == Resolve {
+		return validateResolveRequest(request)
+	}
+	if request.Resolve != nil {
+		return errors.New("unrelated resolution payload")
+	}
 	if request.Operation == Intake {
 		if request.Intake == nil || request.Transition != nil {
 			return errors.New("intake requires only an intake definition")
@@ -43,7 +84,7 @@ func validateRequest(request Request) error {
 		return err
 	}
 	switch request.Operation {
-	case Start, Release:
+	case Start, Release, Cancel:
 		if input.Hold != nil || input.Generation != "" || input.Mode != "" || input.ClosedOn != "" {
 			return errors.New("start and release accept only a task ID")
 		}
@@ -51,6 +92,11 @@ func validateRequest(request Request) error {
 		if input.Hold == nil || input.Generation != "" || input.Mode != "" || input.ClosedOn != "" {
 			return errors.New("hold requires only a task ID and hold")
 		}
+	case Cleanup, Stop:
+		if input.Generation == "" || input.Mode != "" || input.ClosedOn != "" || input.Hold != nil {
+			return errors.New("cleanup requires only a task ID and generation")
+		}
+		return firstmate.ValidateSpawnGeneration(input.Generation)
 	case Finish:
 		if input.Hold != nil || input.Generation == "" {
 			return errors.New("finish requires a generation and no hold")
@@ -96,6 +142,15 @@ func (server *Server) execute(ctx context.Context, request Request) (taskstate.T
 		return server.service.PlaceHold(ctx, input.TaskID, *input.Hold)
 	case Release:
 		return server.service.ReleaseHold(ctx, input.TaskID)
+	case Cancel:
+		return server.service.CancelAdoption(ctx, input.TaskID)
+	case Cleanup:
+		return server.service.Retire(
+			ctx,
+			input.TaskID,
+			input.Generation,
+			herdr.NewClient(server.config.HerdrExecutable),
+		)
 	default:
 		return taskstate.Task{}, errors.New("unknown host operation")
 	}
@@ -127,6 +182,10 @@ func validateTransitionResponse(response Response, request Request) error {
 		repeated, err = task.ReleaseHold()
 	case Finish:
 		repeated, err = task.AcceptResult(input.Generation, input.Mode, input.ClosedOn)
+	case Cleanup:
+		repeated, err = task.RetireResult(input.Generation)
+	case Cancel:
+		repeated, err = task.CancelAdoption()
 	}
 	if err != nil {
 		return err

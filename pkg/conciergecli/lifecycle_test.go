@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/roman/tincan/pkg/hostservice"
+	"github.com/roman/tincan/pkg/inbox"
 	"github.com/roman/tincan/pkg/taskops"
 	"github.com/roman/tincan/pkg/taskstate"
 )
@@ -55,7 +57,6 @@ func TestBacklogLifecycleCloseAndRetain(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			root := lifecycleRoot(t)
 			claimNativeParent(t, root)
-			serveTaskRoot(t, root)
 			directory := t.TempDir()
 			script := `#!/bin/sh
 [ "$HERDR_SESSION" = work ] || exit 71
@@ -67,6 +68,16 @@ printf '%s\n' '{"error":{"code":"pane_not_found"}}'
 			}
 			t.Setenv("PATH", directory)
 			t.Setenv("HERDR_SESSION", "wrong-ambient-session")
+			recipient, _ := inbox.ParseRecipient("concierge")
+			serveConfiguredTaskRoot(
+				t,
+				hostservice.Config{
+					Root:            root,
+					MessageRoot:     filepath.Join(root, "messages"),
+					Recipient:       recipient,
+					HerdrExecutable: filepath.Join(directory, "herdr"),
+				},
+			)
 			invoke(
 				t,
 				root,
@@ -167,7 +178,17 @@ func TestCleanupRequiresPaneDeparture(t *testing.T) {
 	}
 	root := lifecycleRoot(t)
 	claimNativeParent(t, root)
-	serveTaskRoot(t, root)
+	directory := t.TempDir()
+	recipient, _ := inbox.ParseRecipient("concierge")
+	serveConfiguredTaskRoot(
+		t,
+		hostservice.Config{
+			Root:            root,
+			MessageRoot:     filepath.Join(root, "messages"),
+			Recipient:       recipient,
+			HerdrExecutable: filepath.Join(directory, "herdr"),
+		},
+	)
 	invoke(t, root, "", "backlog", "start", "task-1")
 	invoke(
 		t,
@@ -181,7 +202,6 @@ func TestCleanupRequiresPaneDeparture(t *testing.T) {
 		"--closed-on",
 		"2026-10-12",
 	)
-	directory := t.TempDir()
 	if err := os.WriteFile(filepath.Join(directory, "herdr"), []byte("#!/bin/sh\nprintf '%s\\n' '{\"result\":{\"pane\":{\"pane_id\":\"pane-1\"}}}'\n"), 0700); err != nil {
 		t.Fatal(err)
 	}

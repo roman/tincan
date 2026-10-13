@@ -28,14 +28,10 @@ func (service *Service) Stop(
 			current.HasReceipt(generation, taskstate.Retain) {
 			return nil
 		}
-		worker := current.Snapshot().Worker
-		if worker == nil || worker.Generation != generation || worker.PendingAdoption ||
-			worker.PendingGeneration != "" ||
-			worker.PendingLaunch != "" ||
-			worker.Workspace == "" ||
-			worker.Tab == "" {
-			return taskstate.ErrInvalidTransition
+		if err := CheckStop(current, generation); err != nil {
+			return err
 		}
+		worker := current.Snapshot().Worker
 		target, err := herdr.ParseTarget(worker.Session, worker.Pane)
 		if err != nil {
 			return err
@@ -49,5 +45,26 @@ func (service *Service) Stop(
 			task.CheckCurrent,
 		)
 	})
+	return err
+}
+
+// CheckStop validates the confirmed binding before stopping its supervision.
+func CheckStop(task taskstate.Task, generation string) error {
+	if err := firstmate.ValidateSpawnGeneration(generation); err != nil {
+		return err
+	}
+	if task.HasReceipt(generation, taskstate.Close) ||
+		task.HasReceipt(generation, taskstate.Retain) {
+		return nil
+	}
+	worker := task.Snapshot().Worker
+	if worker == nil || worker.Generation != generation || worker.PendingAdoption ||
+		worker.PendingGeneration != "" ||
+		worker.PendingLaunch != "" ||
+		worker.Workspace == "" ||
+		worker.Tab == "" {
+		return taskstate.ErrInvalidTransition
+	}
+	_, err := herdr.ParseTarget(worker.Session, worker.Pane)
 	return err
 }

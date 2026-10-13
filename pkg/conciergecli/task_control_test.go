@@ -9,13 +9,20 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/roman/tincan/pkg/hostservice"
+	"github.com/roman/tincan/pkg/inbox"
 	"github.com/roman/tincan/pkg/taskstate"
 )
 
 func TestTaskCancelReleasesOnlyUnboundAdoptions(t *testing.T) {
+	if runUnderNativeParent(t) {
+		return
+	}
 	for _, binding := range []string{"empty", "pending", "published", "confirmed"} {
 		t.Run(binding, func(t *testing.T) {
 			root := lifecycleRoot(t)
+			claimNativeParent(t, root)
+			serveTaskRoot(t, root)
 			store, _ := taskstate.NewStore(root)
 			_, err := store.Update(
 				context.Background(),
@@ -40,17 +47,15 @@ func TestTaskCancelReleasesOnlyUnboundAdoptions(t *testing.T) {
 			}
 			path := filepath.Join(root, "records", "task-1.json")
 			before, _ := os.ReadFile(path)
-			args := []string{
-				"--recipient",
-				"../unused",
-				"--message-root",
-				"relative-unused",
-				"task",
-				"cancel",
-				"task-1",
-			}
+			args := []string{"task", "cancel", "task-1"}
 			if binding == "confirmed" || binding == "published" {
-				expectLifecycleError(t, root, 1, args...)
+				got := expectLifecycleError(t, root, 1, args...)
+				if !strings.Contains(
+					got,
+					"cancellation requires an unbound reservation or an empty queued task",
+				) {
+					t.Fatalf("missing cancellation guidance: %s", got)
+				}
 				after, _ := os.ReadFile(path)
 				if !bytes.Equal(before, after) {
 					t.Fatal("changed protected binding")
@@ -71,6 +76,9 @@ func TestTaskCancelReleasesOnlyUnboundAdoptions(t *testing.T) {
 }
 
 func TestTaskStopRequiresGenerationAndPreservesHistoricalWorker(t *testing.T) {
+	if runUnderNativeParent(t) {
+		return
+	}
 	root := lifecycleRoot(t)
 	store, _ := taskstate.NewStore(root)
 	_, err := store.Update(
@@ -94,17 +102,22 @@ func TestTaskStopRequiresGenerationAndPreservesHistoricalWorker(t *testing.T) {
 	}
 	t.Setenv("PATH", directory)
 	t.Setenv("TEST_CALLS", record)
-	args := []string{
-		"--recipient",
-		"../unused",
-		"--message-root",
-		"relative-unused",
-		"task",
-		"stop",
-		"task-1",
-		"--generation",
-		"gen-1",
+	recipient, _ := inbox.ParseRecipient("firstmate")
+	claimNativeParent(t, root)
+	serveConfiguredTaskRoot(
+		t,
+		hostservice.Config{
+			Root:            root,
+			MessageRoot:     filepath.Join(filepath.Dir(root), ".tincan"),
+			Recipient:       recipient,
+			HerdrExecutable: filepath.Join(directory, "herdr"),
+		},
+	)
+	// Startup restoration probes the current worker before request assertions.
+	if err := os.Remove(record); err != nil {
+		t.Fatal(err)
 	}
+	args := []string{"task", "stop", "task-1", "--generation", "gen-1"}
 	path := filepath.Join(root, "records", "task-1.json")
 	before, _ := os.ReadFile(path)
 	expectLifecycleError(t, root, 2, args[:len(args)-2]...)
@@ -137,6 +150,9 @@ func TestTaskStopRequiresGenerationAndPreservesHistoricalWorker(t *testing.T) {
 }
 
 func TestTaskStopUsesRecordedSessionAndPane(t *testing.T) {
+	if runUnderNativeParent(t) {
+		return
+	}
 	root := lifecycleRoot(t)
 	directory := t.TempDir()
 	record := filepath.Join(directory, "calls")
@@ -156,6 +172,18 @@ esac
 	t.Setenv("HERDR_SESSION", "wrong-ambient")
 	t.Setenv("TEST_CALLS", record)
 	t.Setenv("TEST_SOCKET", filepath.Join(directory, "herdr.sock"))
+	recipient, _ := inbox.ParseRecipient("firstmate")
+	claimNativeParent(t, root)
+	serveConfiguredTaskRoot(
+		t,
+		hostservice.Config{
+			Root:            root,
+			MessageRoot:     filepath.Join(filepath.Dir(root), ".tincan"),
+			Recipient:       recipient,
+			HerdrExecutable: filepath.Join(directory, "herdr"),
+			Session:         "wrong-manual",
+		},
+	)
 	before, _ := os.ReadFile(filepath.Join(root, "records", "task-1.json"))
 	got := invoke(t, root, "", "task", "stop", "task-1", "--generation", "gen-1")
 	if got != "task: \"task-1\"\ngeneration: \"gen-1\"\n" {

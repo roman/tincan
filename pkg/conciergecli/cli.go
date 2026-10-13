@@ -8,20 +8,30 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/roman/tincan/pkg/firstmate"
+	"github.com/roman/tincan/pkg/hostservice"
 	"github.com/roman/tincan/pkg/primary"
 	"github.com/roman/tincan/pkg/taskops"
 )
 
 const version = "0.1.0"
 
-const cliHelp = "commands: host serve, state init|backup|migrate|recover, brief [--limit N], primary claim|verify|release, control status|interrupt|start, supervise pane|task, backlog, worker list|show, task list|pending|send|receive|ack|reply|adopt|stop|cancel; global flags: --root, --message-root, --recipient, --help; run concierge COMMAND --help for arguments"
+const cliHelp = "commands: host serve, state init|backup|migrate|recover, brief [--limit N], primary claim|verify|release, control status|interrupt|start, supervise pane|task|stop, backlog, worker list|show, task list|pending|send|receive|ack|reply|adopt|stop|cancel; global flags: --root, --message-root, --recipient, --help; run concierge COMMAND --help for arguments"
 
 type cli struct {
-	Host struct {
-		Serve struct{} `cmd:"" help:"Serve primary-owned operations until interrupted; run outside the model sandbox."`
+	hostExpectations        hostservice.Expectations
+	supervisionExpectations *hostservice.SupervisionSettings
+	Host                    struct {
+		Herdr            string        `help:"Host Herdr executable." default:"herdr" env:"TINCAN_HERDR"`
+		Session          string        `help:"Host session for manual pane control." env:"HERDR_SESSION"`
+		Interval         time.Duration `help:"Host time between health checks." default:"5s"`
+		RestartTolerance int           `help:"Host failed checks tolerated per window." default:"5"`
+		RestartWindow    time.Duration `help:"Host failed-check window." default:"1m"`
+		Serve            struct{}      `cmd:"" help:"Serve primary-owned operations until interrupted; run outside the model sandbox."`
 	} `cmd:"" help:"Run the host service for this state root."`
 	State       stateCommands       `cmd:"" help:"Initialize, back up, and migrate task state with all writers stopped."`
 	Supervise   supervisionCommands `cmd:"" help:"Monitor workers and recover missing agents."`
@@ -72,11 +82,67 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	if err != nil {
 		return fail(stdout, 2, err, cliHelp)
 	}
+	command.hostExpectations.MessageRoot = command.MessageRoot
+	if strings.HasPrefix(selected.Command(), "supervise ") {
+		command.supervisionExpectations = &hostservice.SupervisionSettings{}
+		if selected.Command() == "supervise pane" || selected.Command() == "supervise stop pane" {
+			command.hostExpectations.Session = command.Supervise.Session
+		}
+		if os.Getenv("TINCAN_HERDR") != "" {
+			executable, err := resolveHerdrExecutable(command.Supervise.Herdr)
+			if err != nil {
+				return fail(stdout, 2, err, supervisionHelp)
+			}
+			command.hostExpectations.HerdrExecutable = executable
+		}
+	}
+	if selected.Command() == "control start" || selected.Command() == "control interrupt <target>" {
+		command.hostExpectations.Session = os.Getenv("HERDR_SESSION")
+	}
+	if (selected.Command() == "control start" || selected.Command() == "control interrupt <target>") &&
+		os.Getenv("TINCAN_HERDR") != "" {
+		executable, err := resolveHerdrExecutable(command.Control.Herdr)
+		if err != nil {
+			return fail(stdout, 2, err, "provide a valid --herdr executable")
+		}
+		command.hostExpectations.HerdrExecutable = executable
+	}
+	for _, trace := range selected.Path {
+		if trace.Flag == nil {
+			continue
+		}
+		switch trace.Flag.Name {
+		case "interval":
+			if command.supervisionExpectations != nil {
+				command.supervisionExpectations.Interval = &command.Supervise.Interval
+			}
+		case "restart-tolerance":
+			if command.supervisionExpectations != nil {
+				command.supervisionExpectations.RestartTolerance = &command.Supervise.RestartTolerance
+			}
+		case "restart-window":
+			if command.supervisionExpectations != nil {
+				command.supervisionExpectations.RestartWindow = &command.Supervise.RestartWindow
+			}
+		case "recipient":
+			command.hostExpectations.Recipient = command.Recipient
+		case "herdr":
+			executable, err := resolveHerdrExecutable(fmt.Sprint(selected.FlagValue(trace.Flag)))
+			if err != nil {
+				return fail(stdout, 2, err, "provide a valid --herdr executable")
+			}
+			command.hostExpectations.HerdrExecutable = executable
+		case "session":
+			if selected.Command() == "control start" ||
+				selected.Command() == "control interrupt <target>" ||
+				selected.Command() == "supervise pane" || selected.Command() == "supervise stop pane" {
+				command.hostExpectations.Session = fmt.Sprint(selected.FlagValue(trace.Flag))
+			}
+		}
+	}
 	switch selected.Command() {
-	case "supervise pane":
-		return command.Supervise.runPane(ctx, stdout)
-	case "control status <target>", "control interrupt <target>", "control start":
-		return command.Control.run(ctx, selected.Command(), stdout)
+	case "control status <target>":
+		return command.Control.runStatus(ctx, stdout)
 	}
 	if selected.Command() == "backlog finish <task-id>" {
 		if err := validateCompletion(command.Backlog.Finish.Mode, command.Backlog.Finish.ClosedOn); err != nil {
@@ -106,20 +172,37 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return fail(stdout, 2, err, "use an absolute, clean --root path")
 	}
 	switch selected.Command() {
+	case "control interrupt <target>", "control start":
+		return command.Control.runMutation(
+			ctx,
+			root,
+			selected.Command(),
+			command.hostExpectations,
+			stdout,
+		)
 	case "host serve":
 		return command.runHost(ctx, root, stdout)
 	case "state init":
 		return runStateInitialization(ctx, root, stdout)
 	case "state backup", "state migrate", "state recover":
 		return command.State.run(ctx, root, selected.Command(), stdout)
-	case "supervise task <task-id>":
-		return command.runTaskSupervision(ctx, root, stdout)
+	case "supervise task <task-id>",
+		"supervise pane",
+		"supervise stop task <task-id>",
+		"supervise stop pane":
+		return command.runSupervision(ctx, root, selected.Command(), stdout)
 	case "primary claim", "primary verify", "primary release":
 		return runPrimary(root, selected.Command(), stdin, stdout, primary.CurrentHookIdentity)
 	case "task stop <task-id>", "task cancel <task-id>":
-		return command.Task.runControl(ctx, root, selected.Command(), stdout)
+		return command.Task.runControl(
+			ctx,
+			root,
+			selected.Command(),
+			command.hostExpectations,
+			stdout,
+		)
 	case "task adopt <task-id>":
-		return command.Task.Adopt.run(ctx, root, stdout)
+		return command.Task.Adopt.run(ctx, root, command.hostExpectations, stdout)
 	case "task reply send <task-id>", "task reply check <message-id>", "task send <task-id>",
 		"task receive <task-id> <message-id>",
 		"task ack <task-id> <message-id>":

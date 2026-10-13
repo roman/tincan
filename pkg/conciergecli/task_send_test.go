@@ -17,7 +17,7 @@ import (
 
 func assignmentSendFixture(t *testing.T) (string, string, string) {
 	t.Helper()
-	root := taskRoot(t, t.TempDir())
+	root := shortTaskRoot(t)
 	worktree := t.TempDir()
 	worker := taskstate.Worker{
 		Name:       "worker",
@@ -56,8 +56,12 @@ esac
 }
 
 func TestTaskSendPreservesDeliveryOnNotificationFailureAndRetry(t *testing.T) {
+	if runUnderNativeParent(t) {
+		return
+	}
 	t.Setenv(workerLaunchGeneration, "gen-1")
 	root, messageRoot, record := assignmentSendFixture(t)
+	serveHerdrFixture(t, root, messageRoot)
 	body := "Complete assignment\n\"quoted\" ✓\n"
 	path := filepath.Join(t.TempDir(), "body")
 	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
@@ -66,8 +70,6 @@ func TestTaskSendPreservesDeliveryOnNotificationFailureAndRetry(t *testing.T) {
 	args := []string{
 		"--message-root",
 		messageRoot,
-		"--recipient",
-		"../unused",
 		"task",
 		"send",
 		"task-1",
@@ -129,7 +131,11 @@ func TestTaskSendPreservesDeliveryOnNotificationFailureAndRetry(t *testing.T) {
 }
 
 func TestTaskSendFailuresDoNotInventDelivery(t *testing.T) {
+	if runUnderNativeParent(t) {
+		return
+	}
 	root, messageRoot, _ := assignmentSendFixture(t)
+	serveHerdrFixture(t, root, messageRoot)
 	args := []string{"--message-root", messageRoot, "task", "send", "task-1", "--body-file", "-"}
 	expectLifecycleError(t, root, 2, args[:len(args)-2]...)
 	t.Setenv("TEST_NOTIFY_FAILURE", "1")
@@ -145,7 +151,7 @@ func TestTaskSendFailuresDoNotInventDelivery(t *testing.T) {
 	}
 	args[1] = failedRoot
 	stdout.Reset()
-	if code := Run(context.Background(), append([]string{"--root", root}, args...), strings.NewReader("Work"), &stdout, &stderr); code != 1 ||
+	if code := Run(context.Background(), append([]string{"--root", root}, args...), strings.NewReader("Work"), &stdout, &stderr); code != 2 ||
 		strings.Contains(stdout.String(), "message_id:") {
 		t.Fatalf("unconfirmed delivery: %d %s", code, &stdout)
 	}

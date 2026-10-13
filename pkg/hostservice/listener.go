@@ -23,7 +23,7 @@ type Listener struct {
 // Listen holds a stable lease before removing an abandoned socket. The lease
 // remains on disk so replacement processes cannot lock different file inodes.
 func (server *Server) Listen(ctx context.Context) (_ *Listener, result error) {
-	version, err := stateversion.AcquireVersionTwo(ctx, server.root)
+	version, err := stateversion.AcquireVersionTwo(ctx, server.config.Root)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +54,7 @@ func (server *Server) Listen(ctx context.Context) (_ *Listener, result error) {
 		}
 		return nil, err
 	}
-	listener, err := listenSocket(filepath.Join(server.root, "host.sock"))
+	listener, err := listenSocket(filepath.Join(server.config.Root, "host.sock"))
 	if err != nil {
 		lease.Close()
 		return nil, err

@@ -3,50 +3,62 @@ package conciergecli
 import (
 	"bytes"
 	"context"
+	"github.com/roman/tincan/pkg/hostservice"
+	"github.com/roman/tincan/pkg/inbox"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestSupervisePanePreservesManualRestartAndAmbientRouting(t *testing.T) {
-	_, record := controlFixture(t)
+func TestSupervisePanePreservesManualRestartAndHostRouting(t *testing.T) {
+	if runUnderNativeParent(t) {
+		return
+	}
+	executable, record := controlFixture(t)
 	t.Setenv("TEST_CONTROL_START", "1")
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	var output bytes.Buffer
-	result := make(chan int, 1)
-	go func() {
-		result <- Run(ctx, []string{"--root", "unused-relative", "--message-root", "unused-relative", "--recipient", "../unused", "supervise", "--interval", "1h", "pane", "--pane", "pane-1", "--name", "worker", "--kind", "codex", "--agent-arg", "resume", "--agent-arg", "thread,one", "--agent-arg=--flag"}, strings.NewReader(""), &output, io.Discard)
-	}()
-	want := "ambient|ambient-socket|ambient-pane|agent get worker\n" +
-		"ambient|ambient-socket|ambient-pane|agent get pane-1\n" +
-		"ambient|ambient-socket|ambient-pane|agent start worker --kind codex --pane pane-1 -- resume thread,one --flag\n" +
-		"ambient|ambient-socket|ambient-pane|agent get worker\n"
-	ticker := time.NewTicker(5 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		calls, _ := os.ReadFile(record)
-		if strings.HasPrefix(string(calls), want) {
-			cancel()
-			break
-		}
-		select {
-		case code := <-result:
-			t.Fatalf("supervision ended before restart: %d %s calls=%s", code, &output, calls)
-		case <-ctx.Done():
-			t.Fatalf("restart did not complete: %s", calls)
-		case <-ticker.C:
+	root := shortTaskRoot(t)
+	claimNativeParent(t, root)
+	recipient, _ := inbox.ParseRecipient("concierge")
+	serveConfiguredTaskRoot(
+		t,
+		hostservice.Config{
+			Root:            root,
+			MessageRoot:     filepath.Join(root, "messages"),
+			Recipient:       recipient,
+			HerdrExecutable: executable,
+			Session:         "ambient",
+		},
+	)
+	args := []string{
+		"supervise",
+		"pane",
+		"--pane",
+		"pane-1",
+		"--name",
+		"worker",
+		"--kind",
+		"codex",
+		"--agent-arg",
+		"resume",
+		"--agent-arg",
+		"thread,one",
+		"--agent-arg=--flag",
+	}
+	for range 2 {
+		if got := invoke(t, root, "", args...); got != "pane: \"pane-1\"\nsupervision: active\n" {
+			t.Fatal(got)
 		}
 	}
-	select {
-	case code := <-result:
-		if code != 0 || output.Len() != 0 {
-			t.Fatalf("cancel: %d %s", code, &output)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("manual supervisor ignored cancellation")
+	calls, _ := os.ReadFile(record)
+	want := "ambient|||agent get worker\nambient|||agent get pane-1\nambient|||agent start worker --kind codex --pane pane-1 -- resume thread,one --flag\nambient|||agent get worker\n"
+	if !strings.HasPrefix(string(calls), want) {
+		t.Fatalf("restart routing: %s", calls)
+	}
+	if got := invoke(t, root, "", "supervise", "stop", "pane", "--pane", "pane-1"); got != "pane: \"pane-1\"\nsupervision: stopped\n" {
+		t.Fatal(got)
 	}
 }
 
@@ -86,18 +98,33 @@ func TestSupervisePaneRejectsConfigurationBeforeHerdr(t *testing.T) {
 }
 
 func TestSupervisePaneReportsBindingMismatch(t *testing.T) {
+	if runUnderNativeParent(t) {
+		return
+	}
 	for _, binding := range []struct{ name, pane, kind string }{{"pane", "different-pane", "codex"}, {"kind", "pane-1", "claude"}} {
 		t.Run(binding.name, func(t *testing.T) {
-			_, record := controlFixture(t)
+			executable, record := controlFixture(t)
+			root := shortTaskRoot(t)
+			claimNativeParent(t, root)
+			recipient, _ := inbox.ParseRecipient("concierge")
+			serveConfiguredTaskRoot(
+				t,
+				hostservice.Config{
+					Root:            root,
+					MessageRoot:     filepath.Join(root, "messages"),
+					Recipient:       recipient,
+					HerdrExecutable: executable,
+					Session:         "ambient",
+				},
+			)
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			var output bytes.Buffer
 			code := Run(
 				ctx,
 				[]string{
+					"--root", root,
 					"supervise",
-					"--restart-tolerance",
-					"0",
 					"pane",
 					"--pane",
 					binding.pane,
@@ -115,7 +142,7 @@ func TestSupervisePaneReportsBindingMismatch(t *testing.T) {
 			}
 			calls, err := os.ReadFile(record)
 			if err != nil ||
-				string(calls) != "ambient|ambient-socket|ambient-pane|agent get worker\n" {
+				string(calls) != "ambient|||agent get worker\n" {
 				t.Fatalf("unsafe restart attempt: %s %v", calls, err)
 			}
 		})

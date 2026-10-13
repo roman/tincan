@@ -2,11 +2,13 @@ package conciergecli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
-	"github.com/roman/tincan/pkg/herdr"
+	"github.com/roman/tincan/pkg/hostservice"
 	"github.com/roman/tincan/pkg/taskops"
 )
 
@@ -23,8 +25,8 @@ func readBodyFile(path string, stdin io.Reader) (string, error) {
 
 func (command *taskCommands) sendAssignment(
 	ctx context.Context,
-	service *taskops.Service,
-	messageRoot string,
+	root string,
+	expectations hostservice.Expectations,
 	stdin io.Reader,
 	output io.Writer,
 ) int {
@@ -32,35 +34,41 @@ func (command *taskCommands) sendAssignment(
 	if err != nil {
 		return fail(output, 1, err, "provide a readable --body-file or use --body-file - for stdin")
 	}
-	result, err := service.SendAssignment(
-		ctx,
-		messageRoot,
-		command.Send.TaskID,
-		command.Send.Key,
-		body,
-		herdr.NewClient("herdr"),
-	)
-	if result.Message.ID.String() != "" {
-		if _, writeErr := fmt.Fprintf(output, "message_id: %s\nnotification: %s\n", quote(result.Message.ID.String()), result.Notification); writeErr != nil {
+	response, err := hostservice.Call(ctx, filepath.Join(root, "host.sock"), hostservice.Request{
+		Operation: hostservice.SendAssignment, Expectations: &expectations,
+		Assignment: &hostservice.AssignmentRequest{
+			TaskID: command.Send.TaskID,
+			Key:    command.Send.Key,
+			Body:   body,
+		},
+	})
+	if err == nil && response.Outcome != hostservice.Completed {
+		err = errors.New(response.Error)
+	}
+	result := response.Assignment
+
+	if result != nil {
+		if _, writeErr := fmt.Fprintf(output, "message_id: %s\nnotification: %s\n", quote(result.MessageID), result.Notification); writeErr != nil {
 			return 1
 		}
 	}
 	if err != nil {
+		code := 1
+		if response.Outcome == hostservice.Invalid {
+			code = 2
+		}
 		return fail(
 			output,
-			1,
+			code,
 			err,
 			"inspect the task and assignment mailbox before sending more work",
 		)
 	}
-	if result.Notification == taskops.NotificationFailed {
-		notificationErr := result.NotificationError
-		if notificationErr == nil {
-			notificationErr = fmt.Errorf("worker notification failed")
-		}
+	if result != nil && result.Notification == taskops.NotificationFailed {
+		notificationErr := errors.New(result.NotificationError)
 		help := "assignment is durable; inspect the pending message and worker before sending more work"
 		if command.Send.Key != "" {
-			help = "assignment is durable; retry the same keyed command after correcting the notification error"
+			help = "assignment is durable; inspect the pending message and worker; retry the same keyed command only while its generation is unchanged"
 		}
 		return fail(output, 1, notificationErr, help)
 	}

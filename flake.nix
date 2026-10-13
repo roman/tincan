@@ -17,7 +17,7 @@
       golinesFlags = "-m 100 --no-reformat-tags --base-formatter=gofmt";
       goSource = pkgs: pkgs.lib.fileset.toSource {
         root = ./.;
-        fileset = pkgs.lib.fileset.unions [ ./go.mod ./go.sum ./cmd ./pkg ];
+        fileset = pkgs.lib.fileset.unions [ ./go.mod ./go.sum ./cmd ./pkg ./internal ];
       };
       goModule = pkgs: {
         version = "0.1.0";
@@ -166,22 +166,32 @@
 
             export SMOKE_WORKTREE="$TMPDIR"
             # Health checks exclude PID 1, which Nix uses for the builder shell.
-            ${pkgs.bash}/bin/bash -e <<'HEALTH'
+            "$TMPDIR/codex" -e <<'HEALTH'
             export SMOKE_SHELL_PID=$$
             (exec -a codex ${pkgs.coreutils}/bin/coreutils --coreutils-prog=sleep 60) &
             agent_pid=$!
-            trap 'kill "$agent_pid" 2>/dev/null || true; wait "$agent_pid" 2>/dev/null || true' EXIT
+            trap 'kill "''${host_pid:-}" "$agent_pid" 2>/dev/null || true; wait "''${host_pid:-}" "$agent_pid" 2>/dev/null || true' EXIT
             ${pkgs.jq}/bin/jq --arg worktree "$TMPDIR" \
               '.state = "in_flight" | .worker = {name:"smoke",harness:"codex",session:"smoke",workspace:"w1",tab:"t1",pane:"p1",project:$worktree,worktree:$worktree,generation:"gen-smoke",agent_args:["resume","smoke"]}' \
               "$TMPDIR/state/records/smoke-a1.json" > record
             ${pkgs.coreutils}/bin/mv record "$TMPDIR/state/records/smoke-a1.json"
-            ${pkgs.coreutils}/bin/timeout --preserve-status --signal=TERM --kill-after=2s 2s \
-              ${packages.concierge}/bin/concierge --root "$TMPDIR/state" --message-root "$TMPDIR/messages" \
-              supervise --herdr ${healthHerdr} task smoke-a1 > supervision || {
-                ${pkgs.coreutils}/bin/cat supervision >&2
-                exit 1
-              }
-            test ! -s supervision
+            ${pkgs.jq}/bin/jq -n --arg cwd "$TMPDIR" \
+              '{cwd:$cwd,session_id:"packaged-health",hook_event_name:"SessionStart"}' | \
+              ${packages.concierge}/bin/concierge --root "$TMPDIR/state" primary claim >/dev/null
+            ${packages.concierge}/bin/concierge --root "$TMPDIR/state" --message-root "$TMPDIR/messages" \
+              host --herdr ${healthHerdr} serve > "$TMPDIR/health-host-output" &
+            host_pid=$!
+            for attempt in {1..100}; do
+              if ${pkgs.gnugrep}/bin/grep -q '^status: ready$' "$TMPDIR/health-host-output"; then break; fi
+              kill -0 "$host_pid"
+              ${pkgs.coreutils}/bin/sleep 0.01
+            done
+            ${pkgs.gnugrep}/bin/grep -q '^status: ready$' "$TMPDIR/health-host-output"
+            ${packages.concierge}/bin/concierge --root "$TMPDIR/state" --message-root "$TMPDIR/messages" \
+              supervise --herdr ${healthHerdr} task smoke-a1 > supervision
+            ${pkgs.gnugrep}/bin/grep -qx 'supervision: active' supervision
+            ${packages.concierge}/bin/concierge --root "$TMPDIR/state" supervise stop task smoke-a1 > stopped
+            ${pkgs.gnugrep}/bin/grep -qx 'supervision: stopped' stopped
             HEALTH
             : > "$out"
           '';

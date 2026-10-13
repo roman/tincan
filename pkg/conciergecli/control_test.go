@@ -89,9 +89,14 @@ func TestControlSessionAndExecutableSelection(t *testing.T) {
 }
 
 func TestControlInterruptAndStartForwarding(t *testing.T) {
+	if runUnderNativeParent(t) {
+		return
+	}
 	for _, action := range []string{"interrupt", "start"} {
 		t.Run(action, func(t *testing.T) {
-			_, record := controlFixture(t)
+			executable, record := controlFixture(t)
+			root := shortTaskRoot(t)
+			serveControlFixture(t, root, executable)
 			args := []string{"control", "--session", "work", action}
 			var commands []string
 			if action == "interrupt" {
@@ -99,16 +104,17 @@ func TestControlInterruptAndStartForwarding(t *testing.T) {
 				args = append(args, "worker")
 				commands = []string{
 					"agent get worker",
-					"agent send-keys worker esc",
-					"agent wait worker --timeout 10000",
-					"agent get worker",
+					"agent get pane-1",
+					"agent send-keys pane-1 esc",
+					"agent wait pane-1 --timeout 10000",
+					"agent get pane-1",
 				}
 			} else {
 				t.Setenv("TEST_CONTROL_START", "1")
 				args = append(args, "--pane", "pane-1", "--name", "worker", "--kind", "codex")
 				commands = []string{"agent get pane-1", "agent start worker --kind codex --pane pane-1", "agent get worker", "agent get pane-1"}
 			}
-			if got := runControlCLI(t, args...); got != "pane_id: \"pane-1\"\nstatus: idle\n" {
+			if got := invoke(t, root, "", args...); got != "pane_id: \"pane-1\"\nstatus: idle\n" {
 				t.Fatalf("action: %s", got)
 			}
 			calls, err := os.ReadFile(record)
@@ -124,7 +130,10 @@ func TestControlInterruptAndStartForwarding(t *testing.T) {
 }
 
 func TestControlRejectsUsageBeforeHerdrAndReportsVerificationFailure(t *testing.T) {
-	_, record := controlFixture(t)
+	if runUnderNativeParent(t) {
+		return
+	}
+	executable, record := controlFixture(t)
 	for _, args := range [][]string{{"control"}, {"control", "status", "worker", "--unknown"}, {"control", "--help"}} {
 		var output bytes.Buffer
 		code := Run(context.Background(), args, strings.NewReader(""), &output, io.Discard)
@@ -139,12 +148,27 @@ func TestControlRejectsUsageBeforeHerdrAndReportsVerificationFailure(t *testing.
 	if _, err := os.Stat(record); !os.IsNotExist(err) {
 		t.Fatalf("usage contacted Herdr: %v", err)
 	}
+	root := shortTaskRoot(t)
+	serveControlFixture(t, root, executable)
 	t.Setenv("TEST_CONTROL_START", "1")
 	t.Setenv("TEST_CONTROL_FAIL_VERIFY", "1")
 	var output bytes.Buffer
 	code := Run(
 		context.Background(),
-		[]string{"control", "start", "--pane", "pane-1", "--name", "worker", "--kind", "codex"},
+		[]string{
+			"--root",
+			root,
+			"control",
+			"--session",
+			"work",
+			"start",
+			"--pane",
+			"pane-1",
+			"--name",
+			"worker",
+			"--kind",
+			"codex",
+		},
 		strings.NewReader(""),
 		&output,
 		io.Discard,

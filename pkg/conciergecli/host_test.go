@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -74,7 +75,21 @@ func TestIntakeNeverFallsBackToLocalWrites(t *testing.T) {
 func serveTaskRoot(t *testing.T, root string) {
 	t.Helper()
 	recipient, _ := inbox.ParseRecipient("concierge")
-	server, err := hostservice.New(root, recipient)
+	executable := unusedHerdr(t)
+	serveConfiguredTaskRoot(
+		t,
+		hostservice.Config{
+			Root:            root,
+			MessageRoot:     filepath.Join(root, "messages"),
+			Recipient:       recipient,
+			HerdrExecutable: executable,
+		},
+	)
+}
+
+func serveConfiguredTaskRoot(t *testing.T, config hostservice.Config) {
+	t.Helper()
+	server, err := hostservice.New(config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +99,11 @@ func serveTaskRoot(t *testing.T, root string) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { defer listener.Close(); done <- server.Serve(ctx, listener.UnixListener) }()
+	ready := make(chan struct{})
+	go func() {
+		defer listener.Close()
+		done <- server.ServeReady(ctx, listener.UnixListener, func() error { close(ready); return nil })
+	}()
 	t.Cleanup(func() {
 		cancel()
 		select {
@@ -96,6 +115,22 @@ func serveTaskRoot(t *testing.T, root string) {
 			t.Error("host did not stop")
 		}
 	})
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatalf("host startup: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("host startup timed out")
+	}
+}
+
+func unusedHerdr(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "herdr")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 72\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 type readyWriter chan string
@@ -110,7 +145,9 @@ func TestHostServeOwnsOneSocketAndStopsCleanly(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	ready, done := make(readyWriter, 1), make(chan int, 1)
-	go func() { done <- Run(ctx, []string{"--root", root, "host", "serve"}, nil, ready, io.Discard) }()
+	go func() {
+		done <- Run(ctx, []string{"--root", root, "host", "--herdr", unusedHerdr(t), "serve"}, nil, ready, io.Discard)
+	}()
 	select {
 	case output := <-ready:
 		if !strings.Contains(output, "status: ready") {
@@ -120,7 +157,7 @@ func TestHostServeOwnsOneSocketAndStopsCleanly(t *testing.T) {
 		t.Fatal("host did not become ready")
 	}
 	var output bytes.Buffer
-	if code := Run(context.Background(), []string{"--root", root, "host", "serve"}, nil, &output, io.Discard); code != 1 ||
+	if code := Run(context.Background(), []string{"--root", root, "host", "--herdr", unusedHerdr(t), "serve"}, nil, &output, io.Discard); code != 1 ||
 		!strings.Contains(output.String(), "already") {
 		t.Fatalf("duplicate code %d output %s", code, &output)
 	}
@@ -147,7 +184,7 @@ func TestHostRequiresInitializedState(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	var output bytes.Buffer
-	if code := Run(ctx, []string{"--root", root, "host", "serve"}, nil, &output, io.Discard); code != 1 {
+	if code := Run(ctx, []string{"--root", root, "host", "--herdr", unusedHerdr(t), "serve"}, nil, &output, io.Discard); code != 1 {
 		t.Fatalf("uninitialized host code %d output %s", code, &output)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".host.lock")); !errors.Is(err, os.ErrNotExist) {
@@ -161,7 +198,15 @@ func TestHostRequiresInitializedState(t *testing.T) {
 func TestHostRetainsMigrationLeaseUntilShutdown(t *testing.T) {
 	root := shortTaskRoot(t)
 	recipient, _ := inbox.ParseRecipient("concierge")
-	server, err := hostservice.New(root, recipient)
+	executable, _ := os.Executable()
+	server, err := hostservice.New(
+		hostservice.Config{
+			Root:            root,
+			MessageRoot:     filepath.Join(root, "messages"),
+			Recipient:       recipient,
+			HerdrExecutable: executable,
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +250,7 @@ func TestHostWaitsForMigrationBeforeCreatingRuntimeFiles(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	var output bytes.Buffer
-	if code := Run(ctx, []string{"--root", root, "host", "serve"}, nil, &output, io.Discard); code != 1 {
+	if code := Run(ctx, []string{"--root", root, "host", "--herdr", unusedHerdr(t), "serve"}, nil, &output, io.Discard); code != 1 {
 		t.Fatalf("migration host code %d output %s", code, &output)
 	}
 	for _, name := range []string{".host.lock", "host.sock"} {
@@ -234,7 +279,7 @@ func TestHostPreservesNonSocketOccupants(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 			defer cancel()
 			var output bytes.Buffer
-			if code := Run(ctx, []string{"--root", root, "host", "serve"}, nil, &output, io.Discard); code != 1 {
+			if code := Run(ctx, []string{"--root", root, "host", "--herdr", unusedHerdr(t), "serve"}, nil, &output, io.Discard); code != 1 {
 				t.Fatalf("occupied socket code %d output %s", code, &output)
 			}
 			info, err := os.Lstat(path)
@@ -264,7 +309,15 @@ func TestHostRebindsAbandonedSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	recipient, _ := inbox.ParseRecipient("concierge")
-	server, err := hostservice.New(root, recipient)
+	executable, _ := os.Executable()
+	server, err := hostservice.New(
+		hostservice.Config{
+			Root:            root,
+			MessageRoot:     filepath.Join(root, "messages"),
+			Recipient:       recipient,
+			HerdrExecutable: executable,
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,4 +331,111 @@ func TestHostRebindsAbandonedSocket(t *testing.T) {
 		t.Fatalf("replacement socket unavailable: %v", err)
 	}
 	connection.Close()
+}
+
+func TestHostHerdrSelectionPrecedence(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, environment, explicit string
+		code                        int
+	}{
+		{"environment", executable, "", 0},
+		{"invalid environment", "/missing/host-herdr", "", 2},
+		{"explicit override", "/missing/host-herdr", executable, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := shortTaskRoot(t)
+			t.Setenv("TINCAN_HERDR", test.environment)
+			args := []string{"--root", root, "host"}
+			if test.explicit != "" {
+				args = append(args, "--herdr", test.explicit)
+			}
+			args = append(args, "serve")
+			if test.code != 0 {
+				var output bytes.Buffer
+				if code := Run(context.Background(), args, nil, &output, io.Discard); code != test.code {
+					t.Fatalf("code %d output %s", code, &output)
+				}
+				return
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ready := make(readyWriter, 1)
+			done := make(chan int, 1)
+			go func() { done <- Run(ctx, args, nil, ready, io.Discard) }()
+			select {
+			case output := <-ready:
+				if !strings.Contains(output, "status: ready") {
+					t.Fatalf("startup %s", output)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("host did not become ready")
+			}
+			cancel()
+			select {
+			case code := <-done:
+				if code != 0 {
+					t.Fatalf("shutdown code %d", code)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("host did not stop")
+			}
+		})
+	}
+}
+
+func serveHerdrFixture(t *testing.T, root, messageRoot string) {
+	t.Helper()
+	executable, err := exec.LookPath("herdr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipient, _ := inbox.ParseRecipient("concierge")
+	claimNativeParent(t, root)
+	serveConfiguredTaskRoot(
+		t,
+		hostservice.Config{
+			Root:            root,
+			MessageRoot:     messageRoot,
+			Recipient:       recipient,
+			HerdrExecutable: executable,
+			Session:         "different-manual",
+		},
+	)
+}
+
+func TestHostRejectsExplicitZeroMonitorConfig(t *testing.T) {
+	root := shortTaskRoot(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var output bytes.Buffer
+	code := Run(
+		ctx,
+		[]string{
+			"--root",
+			root,
+			"host",
+			"--herdr",
+			unusedHerdr(t),
+			"--interval",
+			"0s",
+			"--restart-tolerance",
+			"0",
+			"--restart-window",
+			"0s",
+			"serve",
+		},
+		nil,
+		&output,
+		io.Discard,
+	)
+	if code != 2 {
+		t.Fatalf("zero monitor config: %d %s", code, &output)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".host.lock")); !os.IsNotExist(err) {
+		t.Fatalf("invalid configuration acquired host lock: %v", err)
+	}
 }

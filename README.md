@@ -125,11 +125,12 @@ executable.
 
 ## Local task lifecycle
 
-Task intake requires a running host service and a live primary claim from a
+Task mutations require a running host service and a live primary claim from a
 Claude or Codex SessionStart hook. Start the host outside the model sandbox:
 
 ```sh
-concierge --root /absolute/project/.concierge host serve
+concierge --root /absolute/project/.concierge --message-root /absolute/project/.tincan \
+  host --session work serve
 ```
 
 Initialize or migrate the state before starting the host. Stop the host before
@@ -139,9 +140,21 @@ service and never falls back to a local write. An ordinary Codex tool sandbox
 also blocks the client connection. Run intake and the routed lifecycle commands with explicitly approved
 unsandboxed execution, or a socket permission verified to preserve the caller
 identity. No saved sandbox configuration changes automatically.
-Backlog start, finish, hold, and release use the same authenticated service.
-Cleanup, reply resolution, worker control, and supervision still use their
-existing local paths until their service routing is installed.
+Backlog changes, cleanup, reply resolution, adoption, assignment send, task stop,
+and manual control use the same authenticated service. Worker receive, reply,
+and acknowledgement commands retain their launch-generation checks.
+
+The host fixes its message root, recipient, Herdr executable, manual session,
+and monitor settings at startup. Explicit client settings must match. Omitted
+client settings use the host configuration. Task workers use their recorded
+sessions. A host without a manual session can supervise tasks; manual control
+requires a fixed host session. Use `host --herdr PATH`, `--interval DURATION`,
+`--restart-tolerance N`, and `--restart-window DURATION` to configure the host.
+
+Startup attempts to restore eligible in-flight task residents before reporting
+`status: ready`. Each failed restoration reports a diagnostic and leaves the
+host available for repairs. Retry supervision explicitly after fixing the task.
+Readiness confirms completed restoration attempts and an available host.
 
 Queue a task from the primary session and read its full contents:
 
@@ -232,7 +245,11 @@ For an active accepted generation, stop closes its exact recorded pane. A retry
 for a retired generation can succeed from its receipt and leaves a newer worker
 unchanged. Cleanup verifies pane departure and retires the accepted worker
 binding. Preserve the accepted generation through these
-steps. `task pending` lists unfinished completion work. `task cancel` releases
+steps. Stop and cleanup join the matching resident before their pane operations.
+Their task and endpoint reservations block conflicting operations until they
+finish. Invalid cleanup leaves supervision running. An operation failure after
+resident shutdown reports that supervision is stopped. Inspect the worker before
+restarting its resident. `task pending` lists unfinished completion work. `task cancel` releases
 an unbound adoption reservation; it rejects confirmed bindings.
 
 ## Supervision and root hooks
@@ -244,6 +261,8 @@ concierge control --session work start --pane PANE_ID --name worker-1 --kind cod
 concierge supervise task task-1
 concierge supervise pane --pane PANE_ID --name worker-1 --kind codex \
   --agent-arg resume --agent-arg THREAD_ID
+concierge supervise stop task task-1
+concierge supervise stop pane --pane PANE_ID
 ```
 
 Task supervision holds one controller lease per task. It checks the recorded
@@ -252,12 +271,20 @@ confirmed missing workers with their exact launch arguments. Recovery records
 a new generation and a durable bootstrap message. A registered agent with no
 live process can require Herdr-side repair before a restart succeeds.
 
-Manual pane supervision uses ambient Herdr routing and the supplied launch
-arguments. Task supervision uses the recorded session. Neither supervisor
-creates a pane. Use `--interval`, `--restart-tolerance`, and `--restart-window`
-on the `supervise` group to configure checks. Both modes run until interrupted.
-Restart arguments must include the agent's resume identity when work needs to
-continue after a restart.
+Manual pane supervision uses the host session and the supplied launch arguments.
+Task supervision uses the recorded session. Neither supervisor creates a pane.
+A successful supervise command returns after the resident is ready. The host
+keeps the resident running after the client exits. An identical start request
+returns the active result. Stop cancels and joins the resident without closing
+its worker. Stop forbids monitor flags. Explicit monitor flags on a start request
+assert the corresponding host settings.
+
+Manual supervision and raw Start reject task-bound panes. Control interrupt resolves an
+agent alias to its pane before reserving the endpoint. An active resident blocks
+raw control of its pane. Adoption reserves the task and endpoint. An identical
+adoption retry can verify a matching active task worker without stopping its
+resident. A manual resident blocks adoption. Restart arguments must include the
+agent's resume identity when work needs to continue after a restart.
 
 Lifecycle hooks can call `primary claim`, `primary verify`, and `primary release`
 with hook JSON on stdin. These require SessionStart, Stop, and SessionEnd events,

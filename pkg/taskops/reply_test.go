@@ -376,3 +376,42 @@ func TestResolveRejectsRetainDateAfterRetirement(t *testing.T) {
 		t.Fatalf("retained result accepted a close date: %v", err)
 	}
 }
+
+func TestResolveDoesNotReportUnappliedPartialResult(t *testing.T) {
+	for _, mode := range []string{"disposition conflict", "finish rejection"} {
+		t.Run(mode, func(t *testing.T) {
+			root := testRoot(t)
+			service := runningReplyTask(t, root)
+			messageRoot := t.TempDir()
+			reply := sendBoundReply(t, root, messageRoot, "gen-1")
+			if mode == "disposition conflict" {
+				messages, _ := inbox.New(messageRoot)
+				recipient, _ := inbox.ParseRecipient("concierge")
+				if _, _, err := messages.BeginDisposition(recipient, reply.ID, "finish:task-1:gen-1:close:2026-10-12"); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := messages.CompleteDisposition(recipient, reply.ID, "queued"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			result, err := service.resolve(
+				context.Background(),
+				messageRoot,
+				reply.ID.String(),
+				taskstate.Close,
+				"2026-10-12",
+				func(context.Context, string, string, taskstate.CompletionMode, string) (taskstate.Task, error) {
+					return taskstate.Task{}, taskstate.ErrInvalidTransition
+				},
+			)
+			if err == nil || result.TaskID != "" {
+				t.Fatalf("unapplied result %+v error %v", result, err)
+			}
+			store, _ := taskstate.NewStore(root)
+			current, readErr := store.Read(context.Background(), "task-1")
+			if readErr != nil || current.State() != taskstate.InFlight {
+				t.Fatalf("task changed: %+v %v", current.Snapshot(), readErr)
+			}
+		})
+	}
+}

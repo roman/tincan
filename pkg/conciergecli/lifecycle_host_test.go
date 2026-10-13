@@ -73,3 +73,57 @@ func TestLifecycleNeverFallsBackToLocalWrites(t *testing.T) {
 		}
 	}
 }
+
+func TestCleanupRequiresHostAdmission(t *testing.T) {
+	for _, mode := range []string{"missing", "unauthorized"} {
+		t.Run(mode, func(t *testing.T) {
+			root := shortTaskRoot(t)
+			worker := taskstate.Worker{
+				Name:       "worker",
+				Harness:    "codex",
+				Session:    "work",
+				Workspace:  "workspace-1",
+				Tab:        "tab-1",
+				Pane:       "pane-1",
+				Project:    "/repo",
+				Worktree:   "/worktree",
+				Generation: "gen-1",
+				AgentArgs:  []string{"resume", "thread-1"},
+			}
+			completion := taskstate.Completion{
+				Generation: "gen-1",
+				Mode:       taskstate.Close,
+				Phase:      taskstate.Accepted,
+			}
+			seedViewTask(t, root, "task-1", taskstate.Done, &worker, &completion)
+			directory := t.TempDir()
+			if err := os.WriteFile(filepath.Join(directory, "herdr"), []byte("#!/bin/sh\nprintf '%s\\n' '{\"error\":{\"code\":\"pane_not_found\"}}'\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", directory)
+			if mode == "unauthorized" {
+				serveTaskRoot(t, root)
+			}
+			path := filepath.Join(root, "records", "task-1.json")
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var output bytes.Buffer
+			code := Run(
+				context.Background(),
+				[]string{"--root", root, "backlog", "cleanup", "task-1", "--generation", "gen-1"},
+				nil,
+				&output,
+				io.Discard,
+			)
+			if code != 1 {
+				t.Fatalf("unadmitted cleanup code %d output %s", code, &output)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatalf("unadmitted cleanup changed task: %v", err)
+			}
+		})
+	}
+}

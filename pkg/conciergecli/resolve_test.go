@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/roman/tincan/pkg/hostservice"
 	"github.com/roman/tincan/pkg/inbox"
 	"github.com/roman/tincan/pkg/taskprotocol"
 	"github.com/roman/tincan/pkg/taskstate"
@@ -64,12 +65,16 @@ func boundCLIReply(t *testing.T, root, messageRoot, generation string) inbox.Mes
 }
 
 func TestResolveCommandUsesSelectedMailboxAndRecoversRetiredResults(t *testing.T) {
+	if runUnderNativeParent(t) {
+		return
+	}
 	for _, mode := range []string{"close", "retain"} {
 		t.Run(mode, func(t *testing.T) {
 			root := lifecycleRoot(t)
 			startFixtureTask(t, root)
 			messageRoot := t.TempDir()
 			reply := boundCLIReply(t, root, messageRoot, "gen-1")
+			serveResolveFixture(t, root, messageRoot)
 			args := []string{
 				"--message-root",
 				messageRoot,
@@ -125,10 +130,14 @@ func TestResolveCommandUsesSelectedMailboxAndRecoversRetiredResults(t *testing.T
 }
 
 func TestResolveRejectsInvalidAndStaleInputsWithoutAcknowledgement(t *testing.T) {
+	if runUnderNativeParent(t) {
+		return
+	}
 	root := lifecycleRoot(t)
 	startFixtureTask(t, root)
 	messageRoot := t.TempDir()
 	reply := boundCLIReply(t, root, messageRoot, "old-generation")
+	serveResolveFixture(t, root, messageRoot)
 	base := []string{
 		"--message-root",
 		messageRoot,
@@ -188,5 +197,105 @@ func TestResolveDateValidationPrecedesRootDiscovery(t *testing.T) {
 			stderr.Len() != 0 {
 			t.Fatalf("%v: %d %s %s", args, code, &stdout, &stderr)
 		}
+	}
+}
+
+func TestResolveRequiresHostAdmission(t *testing.T) {
+	for _, mode := range []string{"missing", "unauthorized"} {
+		t.Run(mode, func(t *testing.T) {
+			root := lifecycleRoot(t)
+			startFixtureTask(t, root)
+			messageRoot := t.TempDir()
+			reply := boundCLIReply(t, root, messageRoot, "gen-1")
+			if mode == "unauthorized" {
+				serveTaskRoot(t, root)
+			}
+			path := filepath.Join(root, "records", "task-1.json")
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var output bytes.Buffer
+			code := Run(
+				context.Background(),
+				[]string{
+					"--root",
+					root,
+					"--message-root",
+					messageRoot,
+					"backlog",
+					"resolve",
+					reply.ID.String(),
+					"--closed-on",
+					"2026-10-12",
+				},
+				nil,
+				&output,
+				&output,
+			)
+			if code != 1 {
+				t.Fatalf("unadmitted resolve code %d output %s", code, &output)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatalf("unadmitted resolve changed record: %v", err)
+			}
+			messages, _ := inbox.New(messageRoot)
+			recipient, _ := inbox.ParseRecipient("concierge")
+			if _, err := messages.Read(recipient, reply.ID); err != nil {
+				t.Fatalf("unadmitted resolve acknowledged reply: %v", err)
+			}
+		})
+	}
+}
+
+func serveResolveFixture(t *testing.T, root, messageRoot string) {
+	t.Helper()
+	claimNativeParent(t, root)
+	executable := unusedHerdr(t)
+	recipient, _ := inbox.ParseRecipient("operator")
+	serveConfiguredTaskRoot(
+		t,
+		hostservice.Config{
+			Root:            root,
+			MessageRoot:     messageRoot,
+			Recipient:       recipient,
+			HerdrExecutable: executable,
+		},
+	)
+}
+
+func TestResolveUsesHostMailboxWithoutCallerWorkingDirectory(t *testing.T) {
+	if runUnderNativeParent(t) {
+		return
+	}
+	root := lifecycleRoot(t)
+	startFixtureTask(t, root)
+	messageRoot := t.TempDir()
+	reply := boundCLIReply(t, root, messageRoot, "gen-1")
+	serveResolveFixture(t, root, messageRoot)
+	directory := t.TempDir()
+	t.Chdir(directory)
+	if err := os.Remove(directory); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	code := Run(
+		context.Background(),
+		[]string{
+			"--root",
+			root,
+			"backlog",
+			"resolve",
+			reply.ID.String(),
+			"--closed-on",
+			"2026-10-12",
+		},
+		nil,
+		&output,
+		&output,
+	)
+	if code != 0 {
+		t.Fatalf("host mailbox resolution code %d output %s", code, &output)
 	}
 }

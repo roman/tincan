@@ -2,38 +2,43 @@ package conciergecli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 
 	"github.com/roman/tincan/pkg/firstmate"
+	"github.com/roman/tincan/pkg/hostservice"
 	"github.com/roman/tincan/pkg/inbox"
-	"github.com/roman/tincan/pkg/taskops"
 	"github.com/roman/tincan/pkg/taskstate"
 )
 
 func (command *cli) runResolve(ctx context.Context, root string, output io.Writer) int {
-	recipient, err := inbox.ParseRecipient(command.Recipient)
+	_, err := inbox.ParseRecipient(command.Recipient)
 	if err != nil {
 		return fail(output, 2, err, "use a valid primary --recipient name")
 	}
-	messageRoot, err := rootWithDefault(command.MessageRoot, ".tincan")
-	if err != nil {
-		return fail(output, 1, err, "provide an absolute --message-root path")
+	if command.hostExpectations.MessageRoot != "" {
+		if _, err := firstmate.ParseAbsolutePath(command.hostExpectations.MessageRoot); err != nil {
+			return fail(output, 2, err, "use an absolute, clean --message-root path")
+		}
 	}
-	if _, err := firstmate.ParseAbsolutePath(messageRoot); err != nil {
-		return fail(output, 2, err, "use an absolute, clean --message-root path")
-	}
-	service, err := taskops.NewWithPrimaryRecipient(root, recipient)
-	if err != nil {
-		return fail(output, 2, err, backlogHelp)
-	}
-	result, err := service.Resolve(
+	response, err := hostservice.Call(
 		ctx,
-		messageRoot,
-		command.Backlog.Resolve.ReplyID,
-		taskstate.CompletionMode(command.Backlog.Resolve.Mode),
-		command.Backlog.Resolve.ClosedOn,
+		filepath.Join(root, "host.sock"),
+		hostservice.Request{
+			Operation:    hostservice.Resolve,
+			Expectations: &command.hostExpectations,
+			Resolve: &hostservice.ResolveRequest{
+				ReplyID:  command.Backlog.Resolve.ReplyID,
+				Mode:     taskstate.CompletionMode(command.Backlog.Resolve.Mode),
+				ClosedOn: command.Backlog.Resolve.ClosedOn,
+			},
+		},
 	)
+	if err == nil && response.Outcome != hostservice.Completed {
+		err = errors.New(response.Error)
+	}
 	if err != nil {
 		return fail(
 			output,
@@ -42,7 +47,7 @@ func (command *cli) runResolve(ctx context.Context, root string, output io.Write
 			resolveUsage+"; inspect the bound reply and task; retry the same reply, mode, and closing date after correcting the error",
 		)
 	}
-	if _, err := fmt.Fprintf(output, "task: %s\nstate: %s\nalready: %t\n", quote(result.TaskID), result.State, result.Already); err != nil {
+	if _, err := fmt.Fprintf(output, "task: %s\nstate: %s\nalready: %t\n", quote(response.Resolution.TaskID), response.Resolution.State, response.Resolution.Already); err != nil {
 		return 1
 	}
 	return 0

@@ -24,6 +24,16 @@ func (service *Service) Resolve(
 	ctx context.Context, messageRoot, replyID string,
 	mode taskstate.CompletionMode, closedOn string,
 ) (ReplyResult, error) {
+	return service.resolve(ctx, messageRoot, replyID, mode, closedOn, service.Finish)
+}
+
+func (service *Service) resolve(
+	ctx context.Context,
+	messageRoot, replyID string,
+	mode taskstate.CompletionMode,
+	closedOn string,
+	finish func(context.Context, string, string, taskstate.CompletionMode, string) (taskstate.Task, error),
+) (ReplyResult, error) {
 	state, err := resultState(mode)
 	if err != nil {
 		return ReplyResult{}, err
@@ -101,19 +111,23 @@ func (service *Service) Resolve(
 		result.Already = resultAlreadyApplied(current, reply.SpawnGeneration, mode)
 		if current.HasReceipt(reply.SpawnGeneration, mode) {
 			if err := taskview.Rebuild(ctx, service.root); err != nil {
-				return ReplyResult{}, err
+				return result, err
 			}
 		} else {
-			if _, err := service.Finish(ctx, reply.Task, reply.SpawnGeneration, mode, closedOn); err != nil {
-				return ReplyResult{}, err
+			updated, err := finish(ctx, reply.Task, reply.SpawnGeneration, mode, closedOn)
+			if err != nil {
+				if updated.ID() == "" {
+					return ReplyResult{}, err
+				}
+				return result, err
 			}
 		}
 		if _, err := messages.CompleteDisposition(concierge, id, string(state)); err != nil {
-			return ReplyResult{}, err
+			return result, err
 		}
 	}
 	if err := messages.Acknowledge(concierge, id); err != nil {
-		return ReplyResult{}, err
+		return result, err
 	}
 	return result, nil
 }

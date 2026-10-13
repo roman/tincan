@@ -26,7 +26,18 @@ func fixture(t *testing.T, configure func(*Server)) (*Server, string, string) {
 		t.Fatal(err)
 	}
 	recipient, _ := inbox.ParseRecipient("concierge")
-	server, err := New(root, recipient)
+	executable := filepath.Join(t.TempDir(), "herdr")
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\nexit 72\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(
+		Config{
+			Root:            root,
+			MessageRoot:     filepath.Join(root, "messages"),
+			Recipient:       recipient,
+			HerdrExecutable: executable,
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +56,8 @@ func fixture(t *testing.T, configure func(*Server)) (*Server, string, string) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- server.Serve(ctx, listener) }()
+	ready := make(chan struct{})
+	go func() { done <- server.ServeReady(ctx, listener, func() error { close(ready); return nil }) }()
 	t.Cleanup(func() {
 		cancel()
 		select {
@@ -57,6 +69,13 @@ func fixture(t *testing.T, configure func(*Server)) (*Server, string, string) {
 			t.Error("server did not stop")
 		}
 	})
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatalf("host startup: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("host startup timed out")
+	}
 	return server, root, socket
 }
 

@@ -49,6 +49,9 @@ func (command *cli) runTaskMessages(
 	stdin io.Reader,
 	output io.Writer,
 ) int {
+	if selected == "task send <task-id>" {
+		return command.Task.sendAssignment(ctx, root, command.hostExpectations, stdin, output)
+	}
 	if err := command.validateWorkerLaunch(selected); err != nil {
 		return fail(
 			output,
@@ -84,8 +87,6 @@ func (command *cli) runTaskMessages(
 		return command.Task.Reply.send(ctx, service, messageRoot, stdin, output)
 	case "task reply check <message-id>":
 		return command.Task.Reply.check(ctx, service, messageRoot, output)
-	case "task send <task-id>":
-		return command.Task.sendAssignment(ctx, service, messageRoot, stdin, output)
 	case "task receive <task-id> <message-id>":
 		input := command.Task.Receive
 		result, err = service.ReadAssignment(

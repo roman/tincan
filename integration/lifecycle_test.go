@@ -1,7 +1,9 @@
 package integration
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,19 +11,29 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/roman/tincan/internal/nativetest"
+	"github.com/roman/tincan/pkg/hostservice"
 	"github.com/roman/tincan/pkg/inbox"
 	"github.com/roman/tincan/pkg/taskops"
 	"github.com/roman/tincan/pkg/taskstate"
 )
 
-func TestWorkerReplySurvivesPrimaryRestart(t *testing.T) {
+func TestWorkerReplyResolutionSurvivesClientRestart(t *testing.T) {
+	if nativetest.RunUnderParent(t) {
+		return
+	}
 	workingDirectory, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
 	repositoryRoot := filepath.Dir(workingDirectory)
-	temporaryRoot := t.TempDir()
+	temporaryRoot, err := os.MkdirTemp("", "concierge-integration-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(temporaryRoot)
 	commandDirectory := filepath.Join(temporaryRoot, "commands")
 	if err := os.Mkdir(commandDirectory, 0o700); err != nil {
 		t.Fatal(err)
@@ -66,6 +78,9 @@ func TestWorkerReplySurvivesPrimaryRestart(t *testing.T) {
 		"TINCAN_FAKE_PANE_GONE="+filepath.Join(temporaryRoot, "pane-gone"),
 		"CONCIERGE_SPAWN_GENERATION=gen-1",
 	)
+	t.Setenv("TINCAN_FAKE_HERDR", "1")
+	t.Setenv("TINCAN_FAKE_WORKTREE", worktree)
+	t.Setenv("TINCAN_FAKE_PANE_GONE", filepath.Join(temporaryRoot, "pane-gone"))
 	run := func(arguments ...string) string {
 		t.Helper()
 		command := exec.Command(filepath.Join(commandDirectory, "concierge"), arguments...)
@@ -77,6 +92,56 @@ func TestWorkerReplySurvivesPrimaryRestart(t *testing.T) {
 		return string(output)
 	}
 	run("--root", root, "state", "init")
+	claim := exec.Command(
+		filepath.Join(commandDirectory, "concierge"),
+		"--root",
+		root,
+		"primary",
+		"claim",
+	)
+	payload, _ := json.Marshal(
+		map[string]string{
+			"cwd":             temporaryRoot,
+			"session_id":      "integration-primary",
+			"hook_event_name": "SessionStart",
+		},
+	)
+	claim.Stdin = bytes.NewReader(payload)
+	claim.Env = commandEnvironment
+	if output, err := claim.CombinedOutput(); err != nil {
+		t.Fatalf("claim %v: %s", err, output)
+	}
+	recipient, _ := inbox.ParseRecipient("concierge")
+	host, err := hostservice.New(
+		hostservice.Config{
+			Root:            root,
+			MessageRoot:     messages,
+			Recipient:       recipient,
+			HerdrExecutable: filepath.Join(fakeDirectory, "herdr"),
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := host.Listen(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostContext, stopHost := context.WithCancel(context.Background())
+	hostDone := make(chan error, 1)
+	go func() { defer listener.Close(); hostDone <- host.Serve(hostContext, listener.UnixListener) }()
+	defer func() {
+		stopHost()
+		select {
+		case err := <-hostDone:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("host did not stop")
+		}
+	}()
+
 	service, err := taskops.New(root)
 	if err != nil {
 		t.Fatal(err)
@@ -174,7 +239,7 @@ func TestWorkerReplySurvivesPrimaryRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := store.Read(primary, replyMessageID); err != nil {
-		t.Fatalf("reply was not durable before primary restart: %v", err)
+		t.Fatalf("reply was not durable before client restart: %v", err)
 	}
 	// Keep the durable result and disposition intent across separate CLI processes.
 	if _, _, err := store.BeginDisposition(primary, replyMessageID,

@@ -8,9 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/roman/tincan/pkg/herdr"
 	"github.com/roman/tincan/pkg/hostservice"
-	"github.com/roman/tincan/pkg/taskops"
 	"github.com/roman/tincan/pkg/taskstate"
 )
 
@@ -65,21 +63,14 @@ func (command *backlogCommands) runLifecycle(
 		request.Operation = hostservice.Release
 		input.TaskID = command.Release.TaskID
 	case "backlog cleanup <task-id>":
-		service, setupErr := taskops.New(root)
-		if setupErr != nil {
-			return fail(output, 2, setupErr, backlogHelp)
-		}
-		generation = command.Cleanup.Generation
-		task, err = service.Retire(
-			ctx,
-			command.Cleanup.TaskID,
-			generation,
-			herdr.NewClient("herdr"),
-		)
+		request.Operation = hostservice.Cleanup
+		input.TaskID = command.Cleanup.TaskID
+		input.Generation = command.Cleanup.Generation
+		generation = input.Generation
 	default:
 		return fail(output, 2, fmt.Errorf("unknown command %q", selected), backlogHelp)
 	}
-	if selected != "backlog cleanup <task-id>" {
+	{
 		response, callErr := hostservice.Call(ctx, filepath.Join(root, "host.sock"), request)
 		if callErr != nil {
 			return fail(

@@ -5,97 +5,70 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 
-	"github.com/roman/tincan/pkg/firstmate"
-	"github.com/roman/tincan/pkg/herdr"
-	"github.com/roman/tincan/pkg/inbox"
-	"github.com/roman/tincan/pkg/resident"
-	"github.com/roman/tincan/pkg/supervise"
-	"github.com/roman/tincan/pkg/taskops"
+	"github.com/roman/tincan/pkg/hostservice"
 )
 
-func (command *cli) runTaskSupervision(ctx context.Context, root string, output io.Writer) int {
-	config, err := command.Supervise.config()
-	if err != nil {
+func (command *cli) runSupervision(
+	ctx context.Context,
+	root, selected string,
+	output io.Writer,
+) int {
+	if _, err := command.Supervise.config(); err != nil {
 		return fail(output, 2, err, supervisionHelp)
 	}
-	messageRoot, err := rootWithDefault(command.MessageRoot, ".tincan")
-	if err != nil {
-		return fail(output, 1, err, "provide an absolute --message-root path")
+	input := &hostservice.SupervisionRequest{}
+	operation := hostservice.Supervise
+	switch selected {
+	case "supervise task <task-id>":
+		input.TaskID = command.Supervise.Task.TaskID
+	case "supervise pane":
+		pane := command.Supervise.Pane
+		input.Pane = &hostservice.PaneSupervision{
+			Pane:      pane.Pane,
+			Name:      pane.Name,
+			Kind:      pane.Kind,
+			AgentArgs: pane.AgentArgs,
+		}
+	case "supervise stop task <task-id>":
+		operation = hostservice.StopSupervision
+		input.TaskID = command.Supervise.Stop.Task.TaskID
+	case "supervise stop pane":
+		operation = hostservice.StopSupervision
+		input.Pane = &hostservice.PaneSupervision{Pane: command.Supervise.Stop.Pane.Pane}
 	}
-	if _, err := firstmate.ParseAbsolutePath(messageRoot); err != nil {
-		return fail(output, 2, err, "use an absolute, clean --message-root path")
+	if operation == hostservice.Supervise {
+		input.Settings = command.supervisionExpectations
+	} else if settings := command.supervisionExpectations; settings != nil && (settings.Interval != nil || settings.RestartTolerance != nil || settings.RestartWindow != nil) {
+		return fail(output, 2, errors.New("stopping supervision forbids monitor settings"), supervisionHelp)
 	}
-	service, err := taskops.New(root)
-	if err != nil {
-		return fail(output, 2, err, supervisionHelp)
-	}
-	taskID := command.Supervise.Task.TaskID
-	worker, err := service.SupervisedWorker(
-		taskID,
-		messageRoot,
-		herdr.NewClient(command.Supervise.Herdr),
+	response, err := hostservice.Call(
+		ctx,
+		filepath.Join(root, "host.sock"),
+		hostservice.Request{
+			Operation:    operation,
+			Expectations: &command.hostExpectations,
+			Supervision:  input,
+		},
 	)
 	if err != nil {
-		return fail(output, 2, err, supervisionHelp)
+		return fail(output, 1, err, supervisionHelp+"; inspect host diagnostics before retrying")
 	}
-	messages, err := inbox.New(messageRoot)
-	if err != nil {
-		return fail(output, 2, err, supervisionHelp)
+	if response.Outcome != hostservice.Completed {
+		code := 1
+		if response.Outcome == hostservice.Invalid {
+			code = 2
+		}
+		return fail(output, code, errors.New(response.Error), supervisionHelp)
 	}
-	if err := runTaskResident(ctx, root, taskID, worker, messages, config, output); err != nil {
-		return fail(
-			output,
-			1,
-			err,
-			supervisionHelp+"; inspect the task and worker binding before restarting supervision",
-		)
+	result := response.Supervision
+	identity, value := "task", result.TaskID
+	if result.PaneID != "" {
+		identity, value = "pane", result.PaneID
+	}
+	if _, err := fmt.Fprintf(output, "%s: %s\nsupervision: %s\n", identity, quote(value), result.State); err != nil {
+		return 1
 	}
 	return 0
-}
-
-func runTaskResident(
-	ctx context.Context,
-	root, taskID string,
-	worker *taskops.SupervisedWorker,
-	messages *inbox.Store,
-	config supervise.Config,
-	output io.Writer,
-) (runErr error) {
-	if ctx.Err() != nil {
-		return nil
-	}
-	lease, err := resident.AcquireTaskLease(root, taskID)
-	if err != nil {
-		return err
-	}
-	defer func() { runErr = errors.Join(runErr, lease.Close()) }()
-	if err := supervise.Check(ctx, worker); err != nil && !errors.Is(err, supervise.ErrRestarted) {
-		if ctx.Err() != nil {
-			return nil
-		}
-		return err
-	}
-	recipient, err := inbox.ParseRecipient(taskID)
-	if err != nil {
-		return err
-	}
-	childContext, cancel := context.WithCancel(ctx)
-	defer cancel()
-	var reportError error
-	controller := resident.Controller{
-		Worker: worker, Supervision: config,
-		Watcher: resident.Watcher{
-			Store: messages, Recipient: recipient, Target: taskID, Doorbell: worker,
-			Report: func(deliveryError error) {
-				if _, err := fmt.Fprintf(output, "delivery_error: %s\n", quote(deliveryError.Error())); err != nil {
-					reportError = err
-					cancel()
-				}
-			},
-		},
-	}
-	// Controller.Run joins its watcher before returning, including report writes.
-	controllerError := controller.Run(childContext, nil)
-	return errors.Join(controllerError, reportError)
 }
