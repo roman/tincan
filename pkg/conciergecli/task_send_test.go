@@ -105,8 +105,12 @@ func TestTaskSendPreservesDeliveryOnNotificationFailureAndRetry(t *testing.T) {
 	}
 	prompt, err := os.ReadFile(record)
 	if err != nil || !strings.HasPrefix(string(prompt), "pane-1\n") ||
-		!strings.Contains(string(prompt), "task receive 'task-1'") ||
-		!strings.Contains(string(prompt), `--generation "$CONCIERGE_SPAWN_GENERATION"`) ||
+		!strings.Contains(string(prompt), "Process pending assignments for 'task-1'") ||
+		!strings.Contains(
+			string(prompt),
+			`test -n "${CONCIERGE_SPAWN_GENERATION:-}" && test "$CONCIERGE_SPAWN_GENERATION" = 'gen-1'`,
+		) ||
+		strings.Contains(string(prompt), "task receive") ||
 		strings.Contains(string(prompt), body) {
 		t.Fatalf("prompt: %q %v", prompt, err)
 	}

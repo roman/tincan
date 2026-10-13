@@ -26,6 +26,11 @@ func ValidateInitialLaunch(harness string, arguments []string, body string) erro
 	if strings.TrimSpace(body) == "" {
 		return inbox.ErrBlankBody
 	}
+	if len(arguments) != 0 && !strings.HasPrefix(arguments[0], "-") {
+		return fmt.Errorf(
+			"initial worker arguments must start with an option; Concierge supplies the protocol prompt",
+		)
+	}
 	return validateNativeLaunch(harness, arguments)
 }
 
@@ -54,7 +59,11 @@ func (service *Service) ContinueInitialLaunch(
 			return taskstate.Task{}, err
 		}
 	}
-	arguments, err := nativeLaunchArguments(intent.Harness, intent.AgentArgs, generation)
+	protocol, err := service.workerProtocol(taskID, config.MessageRoot)
+	if err != nil {
+		return taskstate.Task{}, err
+	}
+	arguments, err := nativeLaunchArguments(intent.Harness, intent.AgentArgs, generation, protocol)
 	if err != nil {
 		return taskstate.Task{}, err
 	}

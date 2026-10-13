@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/roman/tincan/pkg/herdr"
@@ -100,8 +101,16 @@ func TestWorkerRestartRecoversFailedBootstrapPublication(t *testing.T) {
 		"resume",
 		"thread-1",
 	}
-	if !reflect.DeepEqual(runner.startArgs, wantArgs) {
+	if len(runner.startArgs) != len(wantArgs)+1 ||
+		!reflect.DeepEqual(runner.startArgs[:len(wantArgs)], wantArgs) {
 		t.Fatalf("launch args = %v", runner.startArgs)
+	}
+	protocol := runner.startArgs[len(wantArgs)]
+	if !strings.Contains(protocol, "You are a Concierge worker") ||
+		!strings.Contains(protocol, "CONCIERGE_SPAWN_GENERATION") ||
+		strings.Contains(protocol, generation) ||
+		strings.ContainsAny(protocol, "\r\n") {
+		t.Fatalf("resume protocol = %q", protocol)
 	}
 }
 

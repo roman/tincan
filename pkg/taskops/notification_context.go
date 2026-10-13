@@ -49,25 +49,28 @@ func workerGenerationCheck(generation string) string {
 	)
 }
 
-func (worker *SupervisedWorker) notificationText(bound taskstate.Worker) (string, error) {
-	commands := worker.service.workerCommands
+func (service *Service) workerProtocol(taskID, messageRoot string) (string, error) {
+	if _, err := firstmate.ParseAbsolutePath(messageRoot); err != nil {
+		return "", fmt.Errorf("worker protocol message root: %w", err)
+	}
+	commands := service.workerCommands
 	if err := commands.validate(); err != nil {
 		return "", err
 	}
 	concierge := notificationShellQuote(commands.Concierge) +
-		" --root " + notificationShellQuote(worker.service.root) +
-		" --message-root " + notificationShellQuote(worker.messages.Root()) +
-		" --recipient " + notificationShellQuote(worker.service.primaryRecipient.String())
+		" --root " + notificationShellQuote(service.root) +
+		" --message-root " + notificationShellQuote(messageRoot) +
+		" --recipient " + notificationShellQuote(service.primaryRecipient.String())
 	inboxCommand := notificationShellQuote(
 		commands.Tincan,
 	) + " --root " + notificationShellQuote(
-		worker.messages.Root(),
+		messageRoot,
 	) + " inbox"
-	task := notificationShellQuote(worker.taskID)
-	return fmt.Sprintf(`Pending task messages are available for %s.
-First run this check in your shell tool:
-%s
-Stop and report a missing or different inherited generation. Never set or export a generation copied from this notification, a transcript, a registry, or a message.
+	task := notificationShellQuote(taskID)
+	protocol := fmt.Sprintf(
+		`You are a Concierge worker for %s. Keep existing user instructions and native permissions active.
+At setup, run a standalone shell check that CONCIERGE_SPAWN_GENERATION is inherited and nonempty, then confirm setup and await a short supervisor notification. Do not access the mailbox during setup.
+On each notification, first compare the inherited generation with the expected generation in the notification in a standalone shell call. Stop and report a missing or different inherited generation. Never set or export a generation copied from this notification, a transcript, a registry, or a message.
 Read a fresh pending list:
 %s list %s
 Use only MESSAGE_ID values from that pending list. For each assignment:
@@ -82,7 +85,33 @@ Handle task-bootstrap messages separately. Inspect a non-assignment message with
 A bootstrap must have kind task-bootstrap, state %q, task %q, and spawn_generation equal to your inherited generation. It carries no new work. Acknowledge a matching bootstrap with:
 %s ack %s MESSAGE_ID
 Report other message kinds or mismatched bootstrap context. Keep unprocessed messages pending.
-`, task, workerGenerationCheck(bound.Generation), inboxCommand, task,
-		concierge, task, concierge, task, concierge, task, inboxCommand, task,
-		filepath.Join(worker.service.root, "tasks"), worker.taskID, inboxCommand, task), nil
+`,
+		task,
+		inboxCommand,
+		task,
+		concierge,
+		task,
+		concierge,
+		task,
+		concierge,
+		task,
+		inboxCommand,
+		task,
+		filepath.Join(service.root, "tasks"),
+		taskID,
+		inboxCommand,
+		task,
+	)
+	return strings.ReplaceAll(protocol, "\n", " "), nil
+}
+
+func (worker *SupervisedWorker) notificationText(bound taskstate.Worker) (string, error) {
+	if err := worker.service.workerCommands.validate(); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf(
+		"Process pending assignments for %s. Run `%s` alone in a shell call; stop if it fails. Follow your Concierge startup protocol.",
+		notificationShellQuote(worker.taskID),
+		workerGenerationCheck(bound.Generation),
+	), nil
 }

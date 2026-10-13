@@ -38,8 +38,11 @@ func nativeResumeArguments(harness string, reference *herdr.SessionReference) ([
 func nativeLaunchArguments(
 	harness string,
 	arguments []string,
-	generation string,
+	generation, protocol string,
 ) ([]string, error) {
+	if strings.TrimSpace(protocol) == "" || strings.IndexFunc(protocol, unicode.IsControl) >= 0 {
+		return nil, fmt.Errorf("worker protocol must be a nonempty shell-safe native argument")
+	}
 	if err := firstmate.ValidateSpawnGeneration(generation); err != nil {
 		return nil, fmt.Errorf("invalid launch generation: %w", err)
 	}
@@ -59,7 +62,7 @@ func nativeLaunchArguments(
 			fmt.Sprintf(`{"env":{"CONCIERGE_SPAWN_GENERATION":%q}}`, generation),
 		}
 	}
-	return append(prefix, arguments...), nil
+	return append(append(prefix, arguments...), protocol), nil
 }
 
 func validateNativeLaunch(harness string, arguments []string) error {
@@ -69,7 +72,9 @@ func validateNativeLaunch(harness string, arguments []string) error {
 	for index := 0; index < len(arguments); index++ {
 		argument := arguments[index]
 		if argument == "--" {
-			break
+			return fmt.Errorf(
+				"Concierge owns the native protocol prompt; caller arguments cannot contain --",
+			)
 		}
 		if harness == "claude" {
 			if argument == "--settings" || strings.HasPrefix(argument, "--settings=") {

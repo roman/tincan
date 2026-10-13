@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -22,6 +23,7 @@ type initialLaunchRunner struct {
 	created, started bool
 	creates, starts  int
 	failure          string
+	startArgs        []string
 }
 
 func (runner *initialLaunchRunner) RunSession(
@@ -83,6 +85,7 @@ func (runner *initialLaunchRunner) RunSession(
 			),
 		), nil, nil
 	case "agent start":
+		runner.startArgs = append([]string(nil), args...)
 		task, err := runner.service.store.Read(ctx, "task-1")
 		if err != nil || task.Snapshot().LaunchIntent.Phase != taskstate.LaunchAgentRequested {
 			return nil, nil, errors.New("agent effect precedes durable phase")
@@ -385,6 +388,55 @@ func TestInitialLaunchRecordsExistingEffectsWhileHeld(t *testing.T) {
 				runner.creates != creates ||
 				runner.starts != starts {
 				t.Fatalf("held launch performed another effect: %+v", snapshot)
+			}
+		})
+	}
+}
+
+func TestInitialLaunchSuppliesStaticWorkerProtocol(t *testing.T) {
+	for _, harness := range []string{"codex", "claude"} {
+		t.Run(harness, func(t *testing.T) {
+			service, runner, config := initialLaunchFixture(t)
+			ctx := context.Background()
+			if _, err := service.store.Update(ctx, "task-1", func(task taskstate.Task) (taskstate.Task, error) { return task.CancelInitialLaunch("gen-1") }); err != nil {
+				t.Fatal(err)
+			}
+			runner.intent.Harness = harness
+			runner.intent.AgentArgs = []string{"--model", "custom-model"}
+			runner.intent.Body = "private-assignment-canary"
+			if _, err := service.store.ReserveInitialLaunch(ctx, "task-1", runner.intent); err != nil {
+				t.Fatal(err)
+			}
+			task, err := service.ContinueInitialLaunch(ctx, "task-1", "gen-1", config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			protocol := runner.startArgs[len(runner.startArgs)-1]
+			for _, required := range []string{"Concierge worker", "await", "/tools/concierge", "/tools/tincan", "task receive", "task reply send", "CONCIERGE_SPAWN_GENERATION", "standalone"} {
+				if !strings.Contains(protocol, required) {
+					t.Errorf("native protocol lacks %q: %s", required, protocol)
+				}
+			}
+			if strings.ContainsAny(protocol, "\r\n") || strings.Contains(protocol, "gen-1") ||
+				strings.Contains(protocol, runner.intent.Body) {
+				t.Fatalf(
+					"protocol contains transport-unsafe or generation/assignment text: %q",
+					protocol,
+				)
+			}
+			resume := "resume"
+			if harness == "claude" {
+				resume = "--resume"
+			}
+			want := []string{resume, "native-session"}
+			if got := runner.startArgs[len(runner.startArgs)-3 : len(runner.startArgs)-1]; !reflect.DeepEqual(
+				got,
+				[]string{"--model", "custom-model"},
+			) {
+				t.Fatalf("launch options changed: %v", got)
+			}
+			if got := task.Snapshot().Worker.AgentArgs; !reflect.DeepEqual(got, want) {
+				t.Fatalf("reusable arguments changed: %v", got)
 			}
 		})
 	}

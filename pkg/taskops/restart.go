@@ -15,7 +15,11 @@ import (
 
 // Restart resumes one durable launch reservation after rechecking task eligibility.
 func (worker *SupervisedWorker) Restart(ctx context.Context) error {
-	_, err := worker.service.store.WithTask(
+	protocol, err := worker.service.workerProtocol(worker.taskID, worker.messages.Root())
+	if err != nil {
+		return err
+	}
+	_, err = worker.service.store.WithTask(
 		ctx,
 		worker.taskID,
 		func(task *taskstate.LockedTask) error {
@@ -45,7 +49,12 @@ func (worker *SupervisedWorker) Restart(ctx context.Context) error {
 				}
 				generation = "s" + hex.EncodeToString(random)
 			}
-			arguments, err := nativeLaunchArguments(bound.Harness, bound.AgentArgs, generation)
+			arguments, err := nativeLaunchArguments(
+				bound.Harness,
+				bound.AgentArgs,
+				generation,
+				protocol,
+			)
 			if err != nil {
 				return err
 			}

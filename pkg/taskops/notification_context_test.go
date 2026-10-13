@@ -12,7 +12,7 @@ import (
 	"github.com/roman/tincan/pkg/notify"
 )
 
-func TestTaskNotificationsIncludeConfiguredWorkerCommands(t *testing.T) {
+func TestWorkerProtocolIncludesConfiguredCommands(t *testing.T) {
 	for _, caller := range []string{"assignment", "resident"} {
 		t.Run(caller, func(t *testing.T) {
 			service, runner, messageRoot := runningWorkerService(t)
@@ -51,7 +51,14 @@ func TestTaskNotificationsIncludeConfiguredWorkerCommands(t *testing.T) {
 			if len(runner.promptTexts) != 1 {
 				t.Fatalf("prompts = %v", runner.promptTexts)
 			}
-			text := runner.promptTexts[0]
+			notification := runner.promptTexts[0]
+			if !strings.Contains(notification, workerGenerationCheck("gen-1")) {
+				t.Fatalf("notification lacks standalone guard: %q", notification)
+			}
+			text, err := service.workerProtocol("task-1", messageRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
 			for _, fragment := range []string{
 				`'/tools/owner'"'"'s commands/concierge'`, `'/tools/transport commands/tincan'`,
 				"--root '" + service.root + "'", "--root '" + messageRoot + "'", "--message-root '" + messageRoot + "'", "--recipient 'custom-primary'",
@@ -60,7 +67,7 @@ func TestTaskNotificationsIncludeConfiguredWorkerCommands(t *testing.T) {
 				"Never set or export", "pending list", "missing or different",
 			} {
 				if !strings.Contains(text, fragment) {
-					t.Errorf("notification lacks %q:\n%s", fragment, text)
+					t.Errorf("protocol lacks %q:\n%s", fragment, text)
 				}
 			}
 			if strings.Contains(text, "Private assignment body") {
@@ -138,5 +145,36 @@ func TestWorkerCommandPathsRequireCleanAbsolutePaths(t *testing.T) {
 		if _, err := NewWithWorkerCommands(testRoot(t), recipient, paths); err == nil {
 			t.Fatalf("invalid paths accepted: %+v", paths)
 		}
+	}
+}
+
+func TestTaskNotificationIsShortExplicitRequest(t *testing.T) {
+	service, runner, messageRoot := runningWorkerService(t)
+	runner.agentStatus = herdr.Idle
+	worker, err := service.SupervisedWorker(
+		"task-1",
+		messageRoot,
+		herdr.Client{SessionRunner: runner},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := worker.Prompt(context.Background(), "task-1", notify.DoorbellText); err != nil {
+		t.Fatal(err)
+	}
+	text := runner.promptTexts[0]
+	if strings.ContainsAny(text, "\r\n") || strings.Contains(text, "task receive") ||
+		!strings.HasPrefix(text, "Process pending assignments") ||
+		!strings.Contains(text, "task-1") ||
+		!strings.Contains(text, "gen-1") ||
+		!strings.Contains(text, workerGenerationCheck("gen-1")) {
+		t.Fatalf("notification is not a short generation-bound request: %q", text)
+	}
+}
+
+func TestWorkerProtocolRejectsControlMessageRoot(t *testing.T) {
+	service, _, messageRoot := runningWorkerService(t)
+	if _, err := service.workerProtocol("task-1", messageRoot+"\nwrong"); err == nil {
+		t.Fatal("native protocol silently changed a message root containing a line break")
 	}
 }

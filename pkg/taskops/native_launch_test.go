@@ -23,7 +23,12 @@ func TestNativeLaunchArgumentsPreserveResumeAndReplaceGeneration(t *testing.T) {
 		t.Run(test.harness, func(t *testing.T) {
 			original := append([]string{}, test.args...)
 			for _, generation := range []string{"gen-old", "gen-new", "gen-new"} {
-				got, err := nativeLaunchArguments(test.harness, test.args, generation)
+				got, err := nativeLaunchArguments(
+					test.harness,
+					test.args,
+					generation,
+					"static protocol",
+				)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -31,7 +36,7 @@ func TestNativeLaunchArgumentsPreserveResumeAndReplaceGeneration(t *testing.T) {
 					test.prefix[0],
 					strings.ReplaceAll(test.prefix[1], "gen-new", generation),
 				}
-				if !reflect.DeepEqual(got, append(prefix, original...)) {
+				if !reflect.DeepEqual(got, append(append(prefix, original...), "static protocol")) {
 					t.Fatalf("launch arguments: %v", got)
 				}
 				if !reflect.DeepEqual(test.args, original) {
@@ -106,13 +111,13 @@ func TestNativeLaunchRejectsConflictingSettings(t *testing.T) {
 		{"other", []string{"resume", "thread-1"}},
 	} {
 		t.Run(test.harness+"/"+test.args[0], func(t *testing.T) {
-			if _, err := nativeLaunchArguments(test.harness, test.args, "gen-new"); err == nil {
+			if _, err := nativeLaunchArguments(test.harness, test.args, "gen-new", "static protocol"); err == nil {
 				t.Fatal("conflicting launch accepted")
 			}
 		})
 	}
 	for _, generation := range []string{"", "bad generation"} {
-		if _, err := nativeLaunchArguments("codex", []string{"resume", "thread-1"}, generation); err == nil {
+		if _, err := nativeLaunchArguments("codex", []string{"resume", "thread-1"}, generation, "static protocol"); err == nil {
 			t.Fatal("invalid generation accepted")
 		}
 	}
@@ -169,5 +174,15 @@ func TestRestartRejectsConflictingSettingsBeforeMutation(t *testing.T) {
 				t.Fatalf("created bootstrap storage: %v", err)
 			}
 		})
+	}
+}
+
+func TestInitialLaunchRejectsReservedPromptArguments(t *testing.T) {
+	for _, harness := range []string{"codex", "claude"} {
+		for _, args := range [][]string{{"caller prompt"}, {"--model", "example", "--", "caller prompt"}} {
+			if err := ValidateInitialLaunch(harness, args, "assigned work"); err == nil {
+				t.Errorf("accepted reserved native prompt for %s: %v", harness, args)
+			}
+		}
 	}
 }
