@@ -68,7 +68,7 @@ func validateLaunchInput(input *LaunchRequest) error {
 
 func (input LaunchRequest) intent(session, generation string) taskstate.LaunchIntent {
 	return taskstate.LaunchIntent{
-		Generation: generation, Name: "concierge-" + generation, Label: "concierge-" + generation,
+		Generation: generation, Name: "c-" + strings.ToLower(generation), Label: "concierge-" + generation,
 		Harness: input.Harness, Session: session,
 		Project: input.Project, Worktree: input.Worktree, Branch: input.Branch,
 		BaseCommit: input.BaseCommit, Workspace: input.Workspace,
@@ -234,9 +234,10 @@ func (server *Server) reserveInitialLaunch(
 		if err := completedLaunchConflict(snapshot); err != nil {
 			return taskstate.Task{}, err
 		}
-		intent.Generation = "s" + rand.Text()
-		intent.Name = "concierge-" + intent.Generation
-		intent.Label = intent.Name
+		intent = input.intent(server.config.Session, "s"+rand.Text())
+	}
+	if err := herdr.ValidateAgentName(intent.Name); err != nil {
+		return taskstate.Task{}, err
 	}
 	return server.reserveLaunchIntent(ctx, input.TaskID, intent)
 }

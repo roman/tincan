@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -224,6 +225,12 @@ func TestLaunchRequestRetryPreservesIdentityAndProgress(t *testing.T) {
 		intent.Label == "" {
 		t.Fatalf("reservation: %+v", intent)
 	}
+	if !regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`).MatchString(intent.Name) {
+		t.Fatalf("reserved agent name violates Herdr contract: %q", intent.Name)
+	}
+	if !strings.HasSuffix(intent.Name, strings.ToLower(intent.Generation)) {
+		t.Fatalf("agent name lost generation characters: %+v", intent)
+	}
 	if intent.Body != input.Body || !reflect.DeepEqual(intent.AgentArgs, input.AgentArgs) {
 		t.Fatal("reservation changed the valid assignment body or arguments")
 	}
@@ -429,5 +436,37 @@ func TestManualControlRejectsInitialLaunchEndpoint(t *testing.T) {
 	}
 	if err := server.rejectTaskBoundPane(ctx, endpoint); err == nil {
 		t.Fatal("manual control accepted an initial launch endpoint")
+	}
+}
+
+func TestLaunchRejectsInvalidReservedNameBeforePublication(t *testing.T) {
+	for _, name := range []string{"Worker", "concierge-" + strings.Repeat("a", 33)} {
+		t.Run(name, func(t *testing.T) {
+			server, input := launchRequestFixture(t)
+			ctx := context.Background()
+			intent := input.intent(server.config.Session, "generation")
+			intent.Name = name
+			before, err := server.store.ReserveInitialLaunch(ctx, input.TaskID, intent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			published := false
+			server.reserveLaunchIntent = func(context.Context, string, taskstate.LaunchIntent) (taskstate.Task, error) {
+				published = true
+				return before, nil
+			}
+			if _, err := server.reserveInitialLaunch(ctx, input); err == nil || published {
+				t.Fatalf(
+					"invalid Herdr name reached publication: name=%q published=%v err=%v",
+					name,
+					published,
+					err,
+				)
+			}
+			after, err := server.store.Read(ctx, input.TaskID)
+			if err != nil || !reflect.DeepEqual(before.Snapshot(), after.Snapshot()) {
+				t.Fatalf("changed invalid stored identity: %v", err)
+			}
+		})
 	}
 }
