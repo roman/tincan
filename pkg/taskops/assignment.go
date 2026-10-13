@@ -9,7 +9,6 @@ import (
 
 	"github.com/roman/tincan/pkg/herdr"
 	"github.com/roman/tincan/pkg/inbox"
-	"github.com/roman/tincan/pkg/notify"
 	"github.com/roman/tincan/pkg/taskprotocol"
 	"github.com/roman/tincan/pkg/taskstate"
 )
@@ -113,5 +112,9 @@ func (worker *SupervisedWorker) promptBoundWorker(
 	if err != nil {
 		return err
 	}
-	return client.Prompt(ctx, agent.PaneID, notify.DoorbellText)
+	text, err := worker.notificationText(*task.Current().Snapshot().Worker)
+	if err != nil {
+		return err
+	}
+	return client.Prompt(ctx, agent.PaneID, text)
 }

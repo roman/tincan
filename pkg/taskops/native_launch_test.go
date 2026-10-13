@@ -42,6 +42,54 @@ func TestNativeLaunchArgumentsPreserveResumeAndReplaceGeneration(t *testing.T) {
 	}
 }
 
+func TestNativeResumeArgumentsRequireMatchingIDReference(t *testing.T) {
+	for _, harness := range []string{"codex", "claude"} {
+		t.Run(harness, func(t *testing.T) {
+			reference := herdr.SessionReference{
+				Source: "herdr:" + harness,
+				Agent:  harness,
+				Kind:   "id",
+				Value:  "actual-native-id",
+			}
+			arguments, err := nativeResumeArguments(harness, &reference)
+			flag := "resume"
+			if harness == "claude" {
+				flag = "--resume"
+			}
+			if err != nil || !reflect.DeepEqual(arguments, []string{flag, reference.Value}) {
+				t.Fatalf("resume arguments = %v, %v", arguments, err)
+			}
+			for _, test := range []struct {
+				name   string
+				change func(*herdr.SessionReference)
+			}{
+				{"wrong source", func(r *herdr.SessionReference) { r.Source = "other" }},
+				{"wrong harness", func(r *herdr.SessionReference) { r.Agent = "other" }},
+				{"path reference", func(r *herdr.SessionReference) { r.Kind = "path" }},
+				{"empty ID", func(r *herdr.SessionReference) { r.Value = "" }},
+				{"blank ID", func(r *herdr.SessionReference) { r.Value = "  " }},
+				{"option ID", func(r *herdr.SessionReference) { r.Value = "--last" }},
+				{"control ID", func(r *herdr.SessionReference) { r.Value = "id\nother" }},
+				{"oversized ID", func(r *herdr.SessionReference) { r.Value = strings.Repeat("a", 513) }},
+			} {
+				t.Run(test.name, func(t *testing.T) {
+					invalid := reference
+					test.change(&invalid)
+					if _, err := nativeResumeArguments(harness, &invalid); err == nil {
+						t.Fatal("unsafe resume identity accepted")
+					}
+				})
+			}
+			if _, err := nativeResumeArguments(harness, nil); err == nil {
+				t.Fatal("missing native identity accepted")
+			}
+		})
+	}
+	if _, err := nativeResumeArguments("other", &herdr.SessionReference{Source: "herdr:other", Agent: "other", Kind: "id", Value: "native-id"}); err == nil {
+		t.Fatal("unsupported harness accepted")
+	}
+}
+
 func TestNativeLaunchRejectsConflictingSettings(t *testing.T) {
 	for _, test := range []struct {
 		harness string

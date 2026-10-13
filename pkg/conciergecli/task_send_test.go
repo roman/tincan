@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/roman/tincan/pkg/inbox"
-	"github.com/roman/tincan/pkg/notify"
 	"github.com/roman/tincan/pkg/taskprotocol"
 	"github.com/roman/tincan/pkg/taskstate"
 )
@@ -105,7 +104,10 @@ func TestTaskSendPreservesDeliveryOnNotificationFailureAndRetry(t *testing.T) {
 		t.Fatalf("duplicate retry: %v %v", pending, err)
 	}
 	prompt, err := os.ReadFile(record)
-	if err != nil || string(prompt) != "pane-1\n"+notify.DoorbellText+"\n" {
+	if err != nil || !strings.HasPrefix(string(prompt), "pane-1\n") ||
+		!strings.Contains(string(prompt), "task receive 'task-1'") ||
+		!strings.Contains(string(prompt), `--generation "$CONCIERGE_SPAWN_GENERATION"`) ||
+		strings.Contains(string(prompt), body) {
 		t.Fatalf("prompt: %q %v", prompt, err)
 	}
 	invoke(

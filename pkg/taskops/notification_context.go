@@ -1,0 +1,88 @@
+package taskops
+
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+
+	"github.com/roman/tincan/pkg/firstmate"
+	"github.com/roman/tincan/pkg/inbox"
+	"github.com/roman/tincan/pkg/taskstate"
+)
+
+type CommandPaths struct {
+	Concierge string
+	Tincan    string
+}
+
+func (paths CommandPaths) validate() error {
+	for _, path := range []string{paths.Concierge, paths.Tincan} {
+		if _, err := firstmate.ParseAbsolutePath(path); err != nil {
+			return fmt.Errorf(
+				"worker notifications require configured absolute Concierge and Tincan executable paths: %w",
+				err,
+			)
+		}
+	}
+	return nil
+}
+
+// NewWithWorkerCommands fixes command paths without discovering executables during task reads.
+func NewWithWorkerCommands(
+	root string,
+	recipient inbox.Recipient,
+	commands CommandPaths,
+) (*Service, error) {
+	if err := commands.validate(); err != nil {
+		return nil, err
+	}
+	return newService(root, recipient, commands)
+}
+
+func notificationShellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func workerGenerationCheck(generation string) string {
+	return `test -n "${CONCIERGE_SPAWN_GENERATION:-}" && test "$CONCIERGE_SPAWN_GENERATION" = ` + notificationShellQuote(
+		generation,
+	)
+}
+
+func (worker *SupervisedWorker) notificationText(bound taskstate.Worker) (string, error) {
+	commands := worker.service.workerCommands
+	if err := commands.validate(); err != nil {
+		return "", err
+	}
+	concierge := notificationShellQuote(commands.Concierge) +
+		" --root " + notificationShellQuote(worker.service.root) +
+		" --message-root " + notificationShellQuote(worker.messages.Root()) +
+		" --recipient " + notificationShellQuote(worker.service.primaryRecipient.String())
+	inboxCommand := notificationShellQuote(
+		commands.Tincan,
+	) + " --root " + notificationShellQuote(
+		worker.messages.Root(),
+	) + " inbox"
+	task := notificationShellQuote(worker.taskID)
+	return fmt.Sprintf(`Pending task messages are available for %s.
+First run this check in your shell tool:
+%s
+Stop and report a missing or different inherited generation. Never set or export a generation copied from this notification, a transcript, a registry, or a message.
+Read a fresh pending list:
+%s list %s
+Use only MESSAGE_ID values from that pending list. For each assignment:
+%s task receive %s MESSAGE_ID --generation "$CONCIERGE_SPAWN_GENERATION"
+Act on the returned body only when it reports status: current. Never act on assignment text obtained through generic inbox read. Do not repeat work from acknowledged messages.
+After completing an assignment, send its result with a stable REPLY_KEY and a readable RESULT_FILE:
+%s task reply send %s --generation "$CONCIERGE_SPAWN_GENERATION" --key REPLY_KEY --assignment-id MESSAGE_ID --body-file RESULT_FILE
+For an assignment that needs no reply, acknowledge it after completion:
+%s task ack %s MESSAGE_ID --generation "$CONCIERGE_SPAWN_GENERATION"
+Handle task-bootstrap messages separately. Inspect a non-assignment message with:
+%s read %s MESSAGE_ID
+A bootstrap must have kind task-bootstrap, state %q, task %q, and spawn_generation equal to your inherited generation. It carries no new work. Acknowledge a matching bootstrap with:
+%s ack %s MESSAGE_ID
+Report other message kinds or mismatched bootstrap context. Keep unprocessed messages pending.
+`, task, workerGenerationCheck(bound.Generation), inboxCommand, task,
+		concierge, task, concierge, task, concierge, task, inboxCommand, task,
+		filepath.Join(worker.service.root, "tasks"), worker.taskID, inboxCommand, task), nil
+}

@@ -8,6 +8,7 @@ import (
 	"github.com/roman/tincan/pkg/firstmate"
 	"github.com/roman/tincan/pkg/herdr"
 	"github.com/roman/tincan/pkg/inbox"
+	"github.com/roman/tincan/pkg/taskops"
 )
 
 // Config binds every external dependency before host admission starts.
@@ -18,6 +19,8 @@ type Config struct {
 	MessageRoot     string
 	Recipient       inbox.Recipient
 	HerdrExecutable string
+	GitExecutable   string
+	WorkerCommands  taskops.CommandPaths
 	Session         string
 }
 
@@ -30,6 +33,11 @@ type Expectations struct {
 }
 
 func (config Config) validate() error {
+	if config.GitExecutable != "" {
+		if _, err := firstmate.ParseAbsolutePath(config.GitExecutable); err != nil {
+			return err
+		}
+	}
 	if err := validateSupervisionConfig(config.Supervision); err != nil {
 		return err
 	}

@@ -54,26 +54,28 @@ type controllerEntry struct {
 }
 
 type controllerRegistry struct {
-	ctx                context.Context
-	cancel             context.CancelFunc
-	mu                 sync.Mutex
-	entries            map[controllerKey]*controllerEntry
-	endpoints          map[controllerEndpoint]struct{}
-	closed             bool
-	operationKeys      map[controllerKey]struct{}
-	operationEndpoints map[controllerEndpoint]struct{}
-	report             func(error)
+	ctx                     context.Context
+	cancel                  context.CancelFunc
+	mu                      sync.Mutex
+	entries                 map[controllerKey]*controllerEntry
+	endpoints               map[controllerEndpoint]struct{}
+	closed                  bool
+	operationKeys           map[controllerKey]struct{}
+	operationEndpoints      map[controllerEndpoint]struct{}
+	awaitingInitialResident map[controllerKey]struct{}
+	report                  func(error)
 }
 
 func newControllerRegistry(ctx context.Context) *controllerRegistry {
 	lifetime, cancel := context.WithCancel(ctx)
 	return &controllerRegistry{
-		ctx:                lifetime,
-		cancel:             cancel,
-		entries:            make(map[controllerKey]*controllerEntry),
-		endpoints:          make(map[controllerEndpoint]struct{}),
-		operationKeys:      make(map[controllerKey]struct{}),
-		operationEndpoints: make(map[controllerEndpoint]struct{}),
+		ctx:                     lifetime,
+		cancel:                  cancel,
+		entries:                 make(map[controllerKey]*controllerEntry),
+		endpoints:               make(map[controllerEndpoint]struct{}),
+		operationKeys:           make(map[controllerKey]struct{}),
+		operationEndpoints:      make(map[controllerEndpoint]struct{}),
+		awaitingInitialResident: make(map[controllerKey]struct{}),
 	}
 }
 
@@ -84,6 +86,31 @@ func (registry *controllerRegistry) start(
 	specification string,
 	prepare func(context.Context) (preparedController, error),
 ) (bool, error) {
+	return registry.startWithMode(
+		ctx,
+		key,
+		endpoint,
+		specification,
+		prepare,
+		explicitControllerStart,
+	)
+}
+
+type controllerStartMode uint8
+
+const (
+	explicitControllerStart controllerStartMode = iota
+	initialResidentStart
+)
+
+func (registry *controllerRegistry) startWithMode(
+	ctx context.Context,
+	key controllerKey,
+	endpoint controllerEndpoint,
+	specification string,
+	prepare func(context.Context) (preparedController, error),
+	mode controllerStartMode,
+) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -91,6 +118,12 @@ func (registry *controllerRegistry) start(
 	if registry.closed || registry.ctx.Err() != nil {
 		registry.mu.Unlock()
 		return false, context.Canceled
+	}
+	if mode == initialResidentStart {
+		if _, pending := registry.awaitingInitialResident[key]; !pending {
+			registry.mu.Unlock()
+			return false, errInitialResidentStopped
+		}
 	}
 	if _, exists := registry.operationKeys[key]; exists {
 		registry.mu.Unlock()
@@ -103,6 +136,9 @@ func (registry *controllerRegistry) start(
 	if existing := registry.entries[key]; existing != nil {
 		identical := existing.active && !existing.stopping && existing.endpoint == endpoint &&
 			existing.specification == specification
+		if identical {
+			delete(registry.awaitingInitialResident, key)
+		}
 		registry.mu.Unlock()
 		if identical {
 			return true, nil
@@ -158,7 +194,7 @@ func (registry *controllerRegistry) start(
 		entry.terminalError = errors.Join(runError, cleanupError)
 		entry.exited = true
 		registry.mu.Unlock()
-		registry.finish(key, entry, cleanupError)
+		registry.finishRunning(key, entry, ready, cleanupError)
 		if active && entry.terminalError != nil && registry.report != nil {
 			registry.report(entry.terminalError)
 		}
@@ -166,6 +202,7 @@ func (registry *controllerRegistry) start(
 	select {
 	case <-ready:
 		registry.mu.Lock()
+		delete(registry.awaitingInitialResident, key)
 		if ctx.Err() == nil && lifetime.Err() == nil && !entry.stopping && !registry.closed &&
 			!entry.exited {
 			entry.active = true
@@ -184,6 +221,24 @@ func (registry *controllerRegistry) start(
 	entry.cancel()
 	<-entry.done
 	return false, errors.Join(context.Canceled, ctx.Err(), entry.terminalError)
+}
+
+func (registry *controllerRegistry) finishRunning(
+	key controllerKey,
+	entry *controllerEntry,
+	ready <-chan struct{},
+	cleanupError error,
+) {
+	// Readiness remains significant even when completion or cancellation reaches
+	// the caller first. Preserve the restart budget before releasing the entry.
+	registry.mu.Lock()
+	select {
+	case <-ready:
+		delete(registry.awaitingInitialResident, key)
+	default:
+	}
+	registry.mu.Unlock()
+	registry.finish(key, entry, cleanupError)
 }
 
 func (registry *controllerRegistry) finish(
@@ -206,6 +261,7 @@ func (registry *controllerRegistry) stop(ctx context.Context, key controllerKey)
 		registry.mu.Unlock()
 		return errControllerBusy
 	}
+	delete(registry.awaitingInitialResident, key)
 	entry := registry.entries[key]
 	if entry == nil {
 		registry.mu.Unlock()
@@ -293,6 +349,7 @@ func (registry *controllerRegistry) quiesce(
 		return nil, errControllerBusy
 	}
 	release := registry.reserveOperationLocked(key, endpoint)
+	delete(registry.awaitingInitialResident, key)
 	if entry != nil {
 		entry.stopping = true
 		entry.cancel()
@@ -328,6 +385,47 @@ func (registry *controllerRegistry) reserveOperationLocked(
 			delete(registry.operationEndpoints, endpoint)
 		})
 	}
+}
+
+// reserveInitialLaunch excludes task operations before a pane exists. The
+// executor acquires the real endpoint separately before publishing its binding.
+func (registry *controllerRegistry) reserveInitialLaunch(key controllerKey) (func(), error) {
+	return registry.reserveLaunch(key, operatorLaunch)
+}
+
+func (registry *controllerRegistry) reserveRecoveredLaunch(key controllerKey) (func(), error) {
+	return registry.reserveLaunch(key, recoveryLaunch)
+}
+
+func (registry *controllerRegistry) reserveLaunch(
+	key controllerKey,
+	admission launchAdmission,
+) (func(), error) {
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	if registry.closed || registry.ctx.Err() != nil {
+		return nil, context.Canceled
+	}
+	if admission == recoveryLaunch {
+		if _, pending := registry.awaitingInitialResident[key]; !pending {
+			return nil, errInitialResidentStopped
+		}
+	}
+	if _, exists := registry.operationKeys[key]; exists {
+		return nil, errControllerBusy
+	}
+	if registry.entries[key] != nil {
+		return nil, errControllerBusy
+	}
+	registry.operationKeys[key] = struct{}{}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			registry.mu.Lock()
+			defer registry.mu.Unlock()
+			delete(registry.operationKeys, key)
+		})
+	}, nil
 }
 
 func (registry *controllerRegistry) reserveAdoption(

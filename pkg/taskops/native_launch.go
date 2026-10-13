@@ -3,9 +3,37 @@ package taskops
 import (
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/roman/tincan/pkg/firstmate"
+	"github.com/roman/tincan/pkg/herdr"
 )
+
+func nativeResumeArguments(harness string, reference *herdr.SessionReference) ([]string, error) {
+	if harness != "codex" && harness != "claude" {
+		return nil, fmt.Errorf("unsupported resume harness %q", harness)
+	}
+	if reference == nil || reference.Source != "herdr:"+harness ||
+		reference.Agent != harness || reference.Kind != "id" {
+		return nil, fmt.Errorf(
+			"native %s session ID is unavailable from its Herdr integration",
+			harness,
+		)
+	}
+	id := reference.Value
+	if strings.TrimSpace(id) == "" || len(id) > 512 || !utf8.ValidString(id) ||
+		strings.IndexFunc(
+			id,
+			unicode.IsControl,
+		) >= 0 || strings.HasPrefix(strings.TrimSpace(id), "-") {
+		return nil, fmt.Errorf("native %s session ID cannot be used as a resume argument", harness)
+	}
+	if harness == "claude" {
+		return []string{"--resume", id}, nil
+	}
+	return []string{"resume", id}, nil
+}
 
 func nativeLaunchArguments(
 	harness string,

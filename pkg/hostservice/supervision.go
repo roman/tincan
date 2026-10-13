@@ -119,6 +119,15 @@ func (server *Server) supervision(
 	operation Operation,
 	input SupervisionRequest,
 ) (Response, error) {
+	return server.supervisionWithMode(ctx, operation, input, explicitControllerStart)
+}
+
+func (server *Server) supervisionWithMode(
+	ctx context.Context,
+	operation Operation,
+	input SupervisionRequest,
+	mode controllerStartMode,
+) (Response, error) {
 	key := controllerKey{kind: taskController, id: input.TaskID}
 	result := SupervisionResult{TaskID: input.TaskID, State: "active"}
 	if input.Pane != nil {
@@ -144,7 +153,7 @@ func (server *Server) supervision(
 		}
 		worker := task.Snapshot().Worker
 		if task.State() != taskstate.InFlight || worker == nil || worker.PendingAdoption ||
-			task.Snapshot().Completion != nil {
+			task.Snapshot().Completion != nil || task.Snapshot().LaunchIntent != nil {
 			return Response{}, taskstate.ErrInvalidTransition
 		}
 		endpoint = controllerEndpoint{session: worker.Session, pane: worker.Pane}
@@ -165,7 +174,11 @@ func (server *Server) supervision(
 		Pane   *PaneSupervision
 		Config supervise.Config
 	}{input.TaskID, input.Pane, server.config.Supervision})
-	if _, err := server.controllers.start(ctx, key, endpoint, string(specification), prepare); err != nil {
+	start := server.controllers.start
+	if mode == initialResidentStart {
+		start = server.controllers.startInitialResident
+	}
+	if _, err := start(ctx, key, endpoint, string(specification), prepare); err != nil {
 		return Response{}, err
 	}
 	return Response{Supervision: &result}, nil
@@ -189,6 +202,7 @@ func (server *Server) prepareTaskController(
 	}
 	binding := task.Snapshot().Worker
 	if task.State() != taskstate.InFlight || task.Snapshot().Completion != nil || binding == nil ||
+		task.Snapshot().LaunchIntent != nil ||
 		binding.PendingAdoption ||
 		binding.Session != endpoint.session ||
 		binding.Pane != endpoint.pane {
@@ -283,21 +297,15 @@ func (server *Server) restoreTaskControllers(ctx context.Context) error {
 	}
 	for _, task := range tasks {
 		snapshot := task.Snapshot()
-		if snapshot.State != taskstate.InFlight || snapshot.Worker == nil ||
-			snapshot.Completion != nil {
+		if snapshot.LaunchIntent == nil && !initialResidentEligible(snapshot) {
 			continue
 		}
-		attempt, cancel := context.WithTimeout(ctx, operationTimeout)
-		_, err := server.supervision(attempt, Supervise, SupervisionRequest{TaskID: task.ID()})
-		cancel()
-		if err != nil {
-			server.report(fmt.Errorf("restore task %s: %w", task.ID(), err))
-		}
-		if ctx.Err() != nil {
-			return ctx.Err()
+		if err := server.controllers.awaitInitialResident(controllerKey{kind: taskController, id: task.ID()}); err != nil {
+			return err
 		}
 	}
-	return nil
+	server.reconcileInitialTasks(ctx)
+	return ctx.Err()
 }
 
 func validateSupervisionResponse(response Response, request Request) error {

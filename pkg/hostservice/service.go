@@ -31,6 +31,7 @@ const Intake Operation = "intake"
 
 // Request never carries caller identity or a selectable state root.
 type Request struct {
+	Launch       *LaunchRequest         `json:"launch,omitempty"`
 	Supervision  *SupervisionRequest    `json:"supervision,omitempty"`
 	Control      *ControlRequest        `json:"control,omitempty"`
 	Adoption     *taskops.AdoptionInput `json:"adoption,omitempty"`
@@ -77,13 +78,14 @@ type Response struct {
 
 // Server binds operations to roots selected by the host process.
 type Server struct {
-	store         *taskstate.Store
-	controllers   *controllerRegistry
-	diagnosticsMu sync.Mutex
-	config        Config
-	service       *taskops.Service
-	authorize     func(primary.Caller) error
-	create        func(context.Context, taskstate.Definition) (taskstate.Task, error)
+	store               *taskstate.Store
+	controllers         *controllerRegistry
+	diagnosticsMu       sync.Mutex
+	config              Config
+	service             *taskops.Service
+	authorize           func(primary.Caller) error
+	create              func(context.Context, taskstate.Definition) (taskstate.Task, error)
+	reserveLaunchIntent func(context.Context, string, taskstate.LaunchIntent) (taskstate.Task, error)
 }
 
 func New(config Config) (*Server, error) {
@@ -101,16 +103,17 @@ func New(config Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	service, err := taskops.NewWithPrimaryRecipient(root, recipient)
+	service, err := taskops.NewWithWorkerCommands(root, recipient, config.WorkerCommands)
 	if err != nil {
 		return nil, err
 	}
 	return &Server{
-		config:    config,
-		store:     store,
-		service:   service,
-		authorize: func(caller primary.Caller) error { return primary.AuthorizeCaller(config.Root, caller) },
-		create:    service.Create,
+		config:              config,
+		store:               store,
+		service:             service,
+		authorize:           func(caller primary.Caller) error { return primary.AuthorizeCaller(config.Root, caller) },
+		create:              service.Create,
+		reserveLaunchIntent: store.ReserveInitialLaunch,
 	}, nil
 }
 
@@ -143,6 +146,11 @@ func (server *Server) ServeReady(
 			return err
 		}
 	}
+	running.Add(1)
+	go func() {
+		defer running.Done()
+		server.runInitialReconciliation(ctx)
+	}()
 	slots := make(chan struct{}, maxConnections)
 	for {
 		connection, err := listener.AcceptUnix()
@@ -321,6 +329,9 @@ func validateResponse(response Response, request Request) error {
 		if request.Operation == Adopt {
 			return validateAdoptionResponse(response, request)
 		}
+		if request.Operation == Launch {
+			return validateLaunchResponse(response, request)
+		}
 		if request.Operation == SendAssignment {
 			return validateAssignmentResponse(response, request)
 		}
@@ -384,6 +395,9 @@ func validateResponse(response Response, request Request) error {
 		}
 		if request.Operation == Adopt && response.Transition != nil {
 			return errors.New("host returned adoption success data for a failed operation")
+		}
+		if request.Operation == Launch && response.Transition != nil {
+			return errors.New("host returned launch success data for a failed operation")
 		}
 		if response.Stopped != nil {
 			return errors.New("host returned stop success data for a failed operation")

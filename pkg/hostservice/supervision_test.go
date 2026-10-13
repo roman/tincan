@@ -13,6 +13,7 @@ import (
 	"github.com/roman/tincan/pkg/inbox"
 	"github.com/roman/tincan/pkg/resident"
 	"github.com/roman/tincan/pkg/supervise"
+	"github.com/roman/tincan/pkg/taskops"
 	"github.com/roman/tincan/pkg/taskstate"
 )
 
@@ -51,6 +52,7 @@ func TestServeReadyCallbackFailureJoinsControllers(t *testing.T) {
 			MessageRoot:     filepath.Join(root, "messages"),
 			Recipient:       recipient,
 			HerdrExecutable: executable,
+			WorkerCommands:  taskops.CommandPaths{Concierge: executable, Tincan: executable},
 			Diagnostics:     &diagnostics,
 		},
 	)

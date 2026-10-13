@@ -29,7 +29,11 @@ func (worker *SupervisedWorker) Prompt(ctx context.Context, target, text string)
 				!(agent.Kind == "codex" && agent.Status == herdr.Unknown && agent.InteractiveReady) {
 				return nil
 			}
-			return client.Prompt(ctx, agent.PaneID, notify.DoorbellText)
+			text, err := worker.notificationText(*task.Current().Snapshot().Worker)
+			if err != nil {
+				return err
+			}
+			return client.Prompt(ctx, agent.PaneID, text)
 		},
 	)
 	return err

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/roman/tincan/pkg/primary"
+	"github.com/roman/tincan/pkg/taskops"
 	"github.com/roman/tincan/pkg/taskstate"
 	"os"
 	"path/filepath"
@@ -24,6 +25,7 @@ func TestHostConfigurationBindsExternalDependencies(t *testing.T) {
 		MessageRoot:     filepath.Join(root, "messages"),
 		Recipient:       recipient,
 		HerdrExecutable: executable,
+		WorkerCommands:  taskops.CommandPaths{Concierge: executable, Tincan: executable},
 		Session:         "work",
 	}
 	server, err := New(config)
@@ -54,12 +56,15 @@ func TestHostConfigurationRejectsUnboundDependencies(t *testing.T) {
 		MessageRoot:     filepath.Join(root, "messages"),
 		Recipient:       recipient,
 		HerdrExecutable: executable,
+		WorkerCommands:  taskops.CommandPaths{Concierge: executable, Tincan: executable},
 	}
 	for _, change := range []func(*Config){
 		func(c *Config) { c.Root = "relative" },
 		func(c *Config) { c.MessageRoot = "relative" },
 		func(c *Config) { c.HerdrExecutable = "herdr" },
 		func(c *Config) { c.Session = "invalid/session" },
+		func(c *Config) { c.WorkerCommands.Concierge = "relative" },
+		func(c *Config) { c.WorkerCommands.Tincan = "" },
 	} {
 		candidate := config
 		change(&candidate)

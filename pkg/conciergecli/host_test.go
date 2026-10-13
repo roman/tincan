@@ -16,6 +16,7 @@ import (
 	"github.com/roman/tincan/pkg/hostservice"
 	"github.com/roman/tincan/pkg/inbox"
 	"github.com/roman/tincan/pkg/stateversion"
+	"github.com/roman/tincan/pkg/taskops"
 	"github.com/roman/tincan/pkg/taskstate"
 )
 
@@ -83,12 +84,20 @@ func serveTaskRoot(t *testing.T, root string) {
 			MessageRoot:     filepath.Join(root, "messages"),
 			Recipient:       recipient,
 			HerdrExecutable: executable,
+			WorkerCommands:  taskops.CommandPaths{Concierge: executable, Tincan: executable},
 		},
 	)
 }
 
 func serveConfiguredTaskRoot(t *testing.T, config hostservice.Config) {
 	t.Helper()
+	if config.WorkerCommands == (taskops.CommandPaths{}) {
+		executable, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		config.WorkerCommands = taskops.CommandPaths{Concierge: executable, Tincan: executable}
+	}
 	server, err := hostservice.New(config)
 	if err != nil {
 		t.Fatal(err)
@@ -124,8 +133,18 @@ func serveConfiguredTaskRoot(t *testing.T, config hostservice.Config) {
 	}
 }
 
+func fixtureTincanOnPath(t *testing.T) {
+	t.Helper()
+	tools := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tools, "tincan"), []byte("#!/bin/sh\nexit 72\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 func unusedHerdr(t *testing.T) string {
 	t.Helper()
+	fixtureTincanOnPath(t)
 	path := filepath.Join(t.TempDir(), "herdr")
 	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 72\n"), 0700); err != nil {
 		t.Fatal(err)
@@ -195,6 +214,51 @@ func TestHostRequiresInitializedState(t *testing.T) {
 	}
 }
 
+func TestHostRequiresTincanBeforeOpeningSocket(t *testing.T) {
+	root := shortTaskRoot(t)
+	executable := unusedHerdr(t)
+	t.Setenv("PATH", t.TempDir())
+	var output bytes.Buffer
+	code := Run(
+		context.Background(),
+		[]string{"--root", root, "host", "--herdr", executable, "serve"},
+		nil,
+		&output,
+		io.Discard,
+	)
+	if code != 2 || !strings.Contains(output.String(), "install Tincan") {
+		t.Fatalf("missing Tincan code %d: %s", code, &output)
+	}
+	for _, path := range []string{"host.sock", ".host.lock"} {
+		if _, err := os.Lstat(filepath.Join(root, path)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("host opened %s before dependency validation: %v", path, err)
+		}
+	}
+}
+
+func TestHostRequiresGitBeforeOpeningSocket(t *testing.T) {
+	root := shortTaskRoot(t)
+	executable := unusedHerdr(t)
+	t.Setenv("PATH", t.TempDir())
+	fixtureTincanOnPath(t)
+	var output bytes.Buffer
+	code := Run(
+		context.Background(),
+		[]string{"--root", root, "host", "--herdr", executable, "serve"},
+		nil,
+		&output,
+		io.Discard,
+	)
+	if code != 2 || !strings.Contains(output.String(), "install Git") {
+		t.Fatalf("missing Git code %d: %s", code, &output)
+	}
+	for _, path := range []string{"host.sock", ".host.lock"} {
+		if _, err := os.Lstat(filepath.Join(root, path)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("host opened %s before dependency validation: %v", path, err)
+		}
+	}
+}
+
 func TestHostRetainsMigrationLeaseUntilShutdown(t *testing.T) {
 	root := shortTaskRoot(t)
 	recipient, _ := inbox.ParseRecipient("concierge")
@@ -205,6 +269,7 @@ func TestHostRetainsMigrationLeaseUntilShutdown(t *testing.T) {
 			MessageRoot:     filepath.Join(root, "messages"),
 			Recipient:       recipient,
 			HerdrExecutable: executable,
+			WorkerCommands:  taskops.CommandPaths{Concierge: executable, Tincan: executable},
 		},
 	)
 	if err != nil {
@@ -316,6 +381,7 @@ func TestHostRebindsAbandonedSocket(t *testing.T) {
 			MessageRoot:     filepath.Join(root, "messages"),
 			Recipient:       recipient,
 			HerdrExecutable: executable,
+			WorkerCommands:  taskops.CommandPaths{Concierge: executable, Tincan: executable},
 		},
 	)
 	if err != nil {
@@ -348,6 +414,7 @@ func TestHostHerdrSelectionPrecedence(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := shortTaskRoot(t)
+			fixtureTincanOnPath(t)
 			t.Setenv("TINCAN_HERDR", test.environment)
 			args := []string{"--root", root, "host"}
 			if test.explicit != "" {
@@ -402,6 +469,7 @@ func serveHerdrFixture(t *testing.T, root, messageRoot string) {
 			MessageRoot:     messageRoot,
 			Recipient:       recipient,
 			HerdrExecutable: executable,
+			WorkerCommands:  taskops.CommandPaths{Concierge: executable, Tincan: executable},
 			Session:         "different-manual",
 		},
 	)

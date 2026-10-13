@@ -25,6 +25,7 @@ type workerRunner struct {
 	interactiveReady  bool
 	pane              string
 	promptTargets     []string
+	promptTexts       []string
 	onAgentRead       func()
 	absent            bool
 	unreadable        bool
@@ -94,6 +95,7 @@ func (runner *workerRunner) RunSession(
 	case "agent prompt":
 		runner.prompts++
 		runner.promptTargets = append(runner.promptTargets, args[2])
+		runner.promptTexts = append(runner.promptTexts, args[3])
 		if runner.onPrompt != nil {
 			runner.onPrompt()
 		}
@@ -116,7 +118,12 @@ func (runner *workerRunner) RunSession(
 func runningWorkerService(t *testing.T) (*Service, *workerRunner, string) {
 	t.Helper()
 	ctx := context.Background()
-	service, err := New(testRoot(t))
+	recipient, _ := inbox.ParseRecipient(DefaultPrimaryRecipient)
+	service, err := NewWithWorkerCommands(
+		testRoot(t),
+		recipient,
+		CommandPaths{Concierge: "/tools/concierge", Tincan: "/tools/tincan"},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

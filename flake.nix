@@ -29,6 +29,7 @@
         pkgs.buildGoModule ((goModule pkgs) // {
           pname = "tincan-commands";
           subPackages = [ "cmd/..." ];
+          nativeCheckInputs = [ pkgs.git ];
           checkPhase = ''
             runHook preCheck
             go list -deps ./cmd/tincan > tincan-dependencies
@@ -68,7 +69,7 @@
             '';
           conciergeRuntime = pkgs.symlinkJoin {
             name = "concierge-runtime";
-            paths = [ herdrPackage processTools ];
+            paths = [ herdrPackage processTools pkgs.git tincan ];
           };
           concierge = mkProgram { name = "concierge"; runtime = conciergeRuntime; };
         in

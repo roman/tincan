@@ -22,6 +22,7 @@ type Service struct {
 	root             string
 	store            *taskstate.Store
 	primaryRecipient inbox.Recipient
+	workerCommands   CommandPaths
 }
 
 // New prepares backlog operations for the selected task root.
@@ -32,6 +33,10 @@ func New(root string) (*Service, error) {
 
 // NewWithPrimaryRecipient directs supervisor messages to one selected mailbox.
 func NewWithPrimaryRecipient(root string, recipient inbox.Recipient) (*Service, error) {
+	return newService(root, recipient, CommandPaths{})
+}
+
+func newService(root string, recipient inbox.Recipient, commands CommandPaths) (*Service, error) {
 	if _, err := inbox.ParseRecipient(recipient.String()); err != nil {
 		return nil, err
 	}
@@ -39,7 +44,12 @@ func NewWithPrimaryRecipient(root string, recipient inbox.Recipient) (*Service, 
 	if err != nil {
 		return nil, err
 	}
-	return &Service{root: root, store: store, primaryRecipient: recipient}, nil
+	return &Service{
+		root:             root,
+		store:            store,
+		primaryRecipient: recipient,
+		workerCommands:   commands,
+	}, nil
 }
 
 // Create adds a queued task and refreshes the backlog view.

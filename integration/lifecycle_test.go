@@ -44,6 +44,7 @@ func TestWorkerReplyResolutionSurvivesClientRestart(t *testing.T) {
 		"-o",
 		commandDirectory,
 		"./cmd/concierge",
+		"./cmd/tincan",
 	}
 	build := exec.Command("go", buildArguments...)
 	build.Dir = repositoryRoot
@@ -118,6 +119,10 @@ func TestWorkerReplyResolutionSurvivesClientRestart(t *testing.T) {
 			MessageRoot:     messages,
 			Recipient:       recipient,
 			HerdrExecutable: filepath.Join(fakeDirectory, "herdr"),
+			WorkerCommands: taskops.CommandPaths{
+				Concierge: filepath.Join(commandDirectory, "concierge"),
+				Tincan:    filepath.Join(commandDirectory, "tincan"),
+			},
 		},
 	)
 	if err != nil {

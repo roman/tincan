@@ -21,11 +21,21 @@ const (
 	Unknown AgentState = "unknown"
 )
 
+// SessionReference preserves Herdr's optional native identity metadata.
+// The reference alone does not establish a live binding or a fresh launch.
+type SessionReference struct {
+	Source string `json:"source"`
+	Agent  string `json:"agent"`
+	Kind   string `json:"kind"`
+	Value  string `json:"value"`
+}
+
 type Agent struct {
 	PaneID           string
 	Status           AgentState
 	Kind             string
 	InteractiveReady bool
+	Session          *SessionReference `json:"-"`
 }
 
 var (
@@ -103,10 +113,11 @@ func (r commandRunner) RunSession(
 type responseEnvelope struct {
 	Result struct {
 		Agent struct {
-			PaneID           string     `json:"pane_id"`
-			Status           AgentState `json:"agent_status"`
-			Kind             string     `json:"agent"`
-			InteractiveReady bool       `json:"interactive_ready"`
+			PaneID           string            `json:"pane_id"`
+			Status           AgentState        `json:"agent_status"`
+			Kind             string            `json:"agent"`
+			InteractiveReady bool              `json:"interactive_ready"`
+			Session          *SessionReference `json:"agent_session"`
 		} `json:"agent"`
 	} `json:"result"`
 	Error struct {
@@ -163,6 +174,7 @@ func (c Client) Get(ctx context.Context, target string) (Agent, error) {
 		Status:           response.Result.Agent.Status,
 		Kind:             response.Result.Agent.Kind,
 		InteractiveReady: response.Result.Agent.InteractiveReady,
+		Session:          response.Result.Agent.Session,
 	}
 	if agent.PaneID == "" || !validState(agent.Status) {
 		return Agent{}, fmt.Errorf("%w: missing pane or state", ErrResponse)

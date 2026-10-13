@@ -1,0 +1,391 @@
+package taskops
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/roman/tincan/pkg/herdr"
+	"github.com/roman/tincan/pkg/inbox"
+	"github.com/roman/tincan/pkg/taskstate"
+	"github.com/roman/tincan/pkg/worktree"
+)
+
+type initialLaunchRunner struct {
+	service          *Service
+	intent           taskstate.LaunchIntent
+	created, started bool
+	creates, starts  int
+	failure          string
+}
+
+func (runner *initialLaunchRunner) RunSession(
+	ctx context.Context,
+	session string,
+	args ...string,
+) ([]byte, []byte, error) {
+	if session != runner.intent.Session {
+		return nil, nil, fmt.Errorf("wrong session: %s", session)
+	}
+	switch strings.Join(args[:2], " ") {
+	case "tab create":
+		task, err := runner.service.store.Read(ctx, "task-1")
+		if err != nil || task.Snapshot().LaunchIntent.Phase != taskstate.LaunchPaneRequested {
+			return nil, nil, errors.New("pane effect precedes durable phase")
+		}
+		runner.creates++
+		runner.created = runner.failure != "pane absent"
+		if strings.HasPrefix(runner.failure, "pane") {
+			return nil, nil, errors.New("creation response lost")
+		}
+		return []byte(
+			fmt.Sprintf(
+				`{"result":{"tab":{"workspace_id":"w1","tab_id":"w1:t2","label":%q},"root_pane":{"pane_id":"w1:p2"}}}`,
+				runner.intent.Label,
+			),
+		), nil, nil
+	case "tab list":
+		if !runner.created {
+			return []byte(`{"result":{"tabs":[]}}`), nil, nil
+		}
+		return []byte(
+			fmt.Sprintf(
+				`{"result":{"tabs":[{"workspace_id":"w1","tab_id":"w1:t2","label":%q}]}}`,
+				runner.intent.Label,
+			),
+		), nil, nil
+	case "pane list":
+		return []byte(
+			`{"result":{"panes":[{"workspace_id":"w1","tab_id":"w1:t2","pane_id":"w1:p2"}]}}`,
+		), nil, nil
+	case "pane get":
+		return []byte(
+			fmt.Sprintf(
+				`{"result":{"pane":{"pane_id":"w1:p2","workspace_id":"w1","tab_id":"w1:t2","foreground_cwd":%q}}}`,
+				runner.intent.Worktree,
+			),
+		), nil, nil
+	case "agent get":
+		if !runner.started {
+			return nil, []byte(`{"error":{"code":"agent_not_found"}}`), errors.New("exit 1")
+		}
+		return []byte(
+			fmt.Sprintf(
+				`{"result":{"agent":{"pane_id":"w1:p2","agent_status":"idle","agent":%q,"agent_session":{"source":%q,"agent":%q,"kind":"id","value":"native-session"}}}}`,
+				runner.intent.Harness,
+				"herdr:"+runner.intent.Harness,
+				runner.intent.Harness,
+			),
+		), nil, nil
+	case "agent start":
+		task, err := runner.service.store.Read(ctx, "task-1")
+		if err != nil || task.Snapshot().LaunchIntent.Phase != taskstate.LaunchAgentRequested {
+			return nil, nil, errors.New("agent effect precedes durable phase")
+		}
+		runner.starts++
+		runner.started = runner.failure != "agent absent"
+		if strings.HasPrefix(runner.failure, "agent") {
+			return nil, nil, errors.New("startup response lost")
+		}
+		return []byte(`{"result":{}}`), nil, nil
+	case "pane process-info":
+		return []byte(
+			fmt.Sprintf(
+				`{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p2","shell_pid":100,"foreground_processes":[{"pid":101,"name":%q,"argv0":%q}]}}}`,
+				runner.intent.Harness,
+				runner.intent.Harness,
+			),
+		), nil, nil
+	case "agent prompt":
+		return []byte(`{"result":{}}`), nil, nil
+	default:
+		return nil, nil, fmt.Errorf("unexpected command: %v", args)
+	}
+}
+
+func initialLaunchFixture(t *testing.T) (*Service, *initialLaunchRunner, InitialLaunchConfig) {
+	t.Helper()
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	if err := os.Mkdir(project, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	git := func(args ...string) string {
+		t.Helper()
+		output, err := exec.Command("git", append([]string{"-C", project}, args...)...).
+			CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+		return strings.TrimSpace(string(output))
+	}
+	git("init", "-b", "main")
+	git(
+		"-c",
+		"user.name=Test",
+		"-c",
+		"user.email=test@example.invalid",
+		"commit",
+		"--allow-empty",
+		"-m",
+		"Initial",
+	)
+	recipient, _ := inbox.ParseRecipient(DefaultPrimaryRecipient)
+	service, err := NewWithWorkerCommands(
+		testRoot(t),
+		recipient,
+		CommandPaths{Concierge: "/tools/concierge", Tincan: "/tools/tincan"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Create(context.Background(), taskstate.Definition{ID: "task-1", Title: "Work", Repo: "project", Kind: "ship"}); err != nil {
+		t.Fatal(err)
+	}
+	intent := taskstate.LaunchIntent{
+		Generation: "gen-1",
+		Harness:    "codex",
+		Name:       "worker-1",
+		Session:    "work",
+		Project:    project,
+		Worktree:   filepath.Join(root, "worker"),
+		Branch:     "task/work",
+		BaseCommit: git("rev-parse", "HEAD"),
+		Workspace:  "w1",
+		Label:      "concierge-gen-1",
+		Body:       "Do the requested work.",
+	}
+	if _, err := service.store.ReserveInitialLaunch(context.Background(), "task-1", intent); err != nil {
+		t.Fatal(err)
+	}
+	runner := &initialLaunchRunner{service: service, intent: intent}
+	executable, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service, runner, InitialLaunchConfig{
+		ReserveEndpoint: func(taskstate.LaunchEndpoint) error { return nil },
+		Git:             worktree.Client{Executable: executable},
+		Herdr:           herdr.Client{SessionRunner: runner},
+		MessageRoot:     filepath.Join(root, "messages"),
+	}
+}
+
+func TestInitialLaunchPublishesAssignmentBeforeClearingIntent(t *testing.T) {
+	service, runner, config := initialLaunchFixture(t)
+	task, err := service.ContinueInitialLaunch(context.Background(), "task-1", "gen-1", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := task.Snapshot()
+	if snapshot.State != taskstate.InFlight || snapshot.LaunchIntent != nil ||
+		snapshot.Worker == nil ||
+		snapshot.Worker.PendingAdoption {
+		t.Fatalf("launch = %+v", snapshot)
+	}
+	if strings.Join(snapshot.Worker.AgentArgs, " ") != "resume native-session" {
+		t.Fatalf("resume = %v", snapshot.Worker.AgentArgs)
+	}
+	if runner.creates != 1 || runner.starts != 1 {
+		t.Fatalf("effects = %d, %d", runner.creates, runner.starts)
+	}
+	messages, err := inbox.New(config.MessageRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipient, _ := inbox.ParseRecipient("task-1")
+	pending, err := messages.List(recipient)
+	if err != nil || len(pending) != 1 || !strings.Contains(pending[0].Body, runner.intent.Body) {
+		t.Fatalf("assignment = %+v, %v", pending, err)
+	}
+}
+
+func TestInitialLaunchCapturesClaudeResumeIdentity(t *testing.T) {
+	service, runner, config := initialLaunchFixture(t)
+	ctx := context.Background()
+	if _, err := service.store.Update(ctx, "task-1", func(task taskstate.Task) (taskstate.Task, error) { return task.CancelInitialLaunch("gen-1") }); err != nil {
+		t.Fatal(err)
+	}
+	runner.intent.Harness = "claude"
+	if _, err := service.store.ReserveInitialLaunch(ctx, "task-1", runner.intent); err != nil {
+		t.Fatal(err)
+	}
+	task, err := service.ContinueInitialLaunch(ctx, "task-1", "gen-1", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := task.Snapshot().Worker
+	if task.State() != taskstate.InFlight || task.Snapshot().LaunchIntent != nil || worker == nil ||
+		worker.Harness != "claude" ||
+		strings.Join(worker.AgentArgs, " ") != "--resume native-session" {
+		t.Fatalf("Claude launch: %+v", task.Snapshot())
+	}
+}
+
+func TestInitialLaunchRequiresEndpointReservation(t *testing.T) {
+	service, runner, config := initialLaunchFixture(t)
+	config.ReserveEndpoint = nil
+	if _, err := service.ContinueInitialLaunch(context.Background(), "task-1", "gen-1", config); err == nil {
+		t.Fatal("launch accepted a missing endpoint reservation")
+	}
+	if runner.creates != 0 || runner.starts != 0 {
+		t.Fatal("launch performed an effect without a reservation provider")
+	}
+}
+
+func TestInitialLaunchRejectsInvalidStoredIntentBeforeEffects(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		change func(*taskstate.LaunchIntent)
+	}{
+		{"blank body", func(intent *taskstate.LaunchIntent) { intent.Body = " \t\n" }},
+		{"conflicting arguments", func(intent *taskstate.LaunchIntent) {
+			intent.AgentArgs = []string{"-c", "shell_environment_policy.inherit=all"}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service, runner, config := initialLaunchFixture(t)
+			ctx := context.Background()
+			if _, err := service.store.Update(ctx, "task-1", func(task taskstate.Task) (taskstate.Task, error) { return task.CancelInitialLaunch("gen-1") }); err != nil {
+				t.Fatal(err)
+			}
+			intent := runner.intent
+			test.change(&intent)
+			if _, err := service.store.ReserveInitialLaunch(ctx, "task-1", intent); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := service.ContinueInitialLaunch(ctx, "task-1", "gen-1", config); err == nil {
+				t.Fatal("invalid stored intent executed")
+			}
+			task, err := service.store.Read(ctx, "task-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if task.Snapshot().LaunchIntent.Phase != taskstate.LaunchReserved ||
+				runner.creates != 0 ||
+				runner.starts != 0 {
+				t.Fatal("invalid intent advanced")
+			}
+		})
+	}
+}
+
+func TestInitialLaunchEndpointContentionPreventsAgentStart(t *testing.T) {
+	service, runner, config := initialLaunchFixture(t)
+	ctx := context.Background()
+	busy := errors.New("endpoint reserved by manual control")
+	config.ReserveEndpoint = func(endpoint taskstate.LaunchEndpoint) error { return busy }
+	if _, err := service.ContinueInitialLaunch(ctx, "task-1", "gen-1", config); !errors.Is(
+		err,
+		busy,
+	) {
+		t.Fatalf("contention: %v", err)
+	}
+	task, err := service.store.Read(ctx, "task-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Snapshot().LaunchIntent.Endpoint != nil || runner.creates != 1 || runner.starts != 0 {
+		t.Fatal("launch published or started a contested endpoint")
+	}
+	config.ReserveEndpoint = func(endpoint taskstate.LaunchEndpoint) error { return nil }
+	if _, err := service.ContinueInitialLaunch(ctx, "task-1", "gen-1", config); err != nil {
+		t.Fatal(err)
+	}
+	if runner.creates != 1 || runner.starts != 1 {
+		t.Fatal("retry repeated pane creation")
+	}
+}
+
+func TestInitialLaunchReservesRecordedEndpointBeforeInspection(t *testing.T) {
+	service, runner, config := initialLaunchFixture(t)
+	ctx := context.Background()
+	runner.failure = "agent response"
+	if _, err := service.ContinueInitialLaunch(ctx, "task-1", "gen-1", config); err == nil {
+		t.Fatal("lost response reported success")
+	}
+	busy := errors.New("endpoint busy")
+	config.ReserveEndpoint = func(endpoint taskstate.LaunchEndpoint) error { return busy }
+	if _, err := service.ContinueInitialLaunch(ctx, "task-1", "gen-1", config); !errors.Is(
+		err,
+		busy,
+	) {
+		t.Fatalf("recorded endpoint bypassed reservation: %v", err)
+	}
+	task, err := service.store.Read(ctx, "task-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(task.Snapshot().LaunchIntent.ResumeArgs) != 0 || runner.starts != 1 {
+		t.Fatal("contested endpoint advanced")
+	}
+}
+
+func TestInitialLaunchRecoversUncertainEffectsWithoutRepeatingThem(t *testing.T) {
+	for _, failure := range []string{"pane response", "pane absent", "agent response", "agent absent"} {
+		t.Run(failure, func(t *testing.T) {
+			service, runner, config := initialLaunchFixture(t)
+			runner.failure = failure
+			if _, err := service.ContinueInitialLaunch(context.Background(), "task-1", "gen-1", config); err == nil {
+				t.Fatal("uncertain effect reported success")
+			}
+			runner.failure = ""
+			_, err := service.ContinueInitialLaunch(context.Background(), "task-1", "gen-1", config)
+			if strings.HasSuffix(failure, "absent") && err == nil {
+				t.Fatal("missing uncertain effect was recreated")
+			}
+			if strings.HasSuffix(failure, "response") && err != nil {
+				t.Fatal(err)
+			}
+			if runner.creates != 1 || runner.starts > 1 {
+				t.Fatalf("effects repeated: %d, %d", runner.creates, runner.starts)
+			}
+		})
+	}
+}
+
+func TestInitialLaunchRecordsExistingEffectsWhileHeld(t *testing.T) {
+	for _, failure := range []string{"pane response", "agent response"} {
+		t.Run(failure, func(t *testing.T) {
+			service, runner, config := initialLaunchFixture(t)
+			runner.failure = failure
+			ctx := context.Background()
+			if _, err := service.ContinueInitialLaunch(ctx, "task-1", "gen-1", config); err == nil {
+				t.Fatal("lost response reported success")
+			}
+			if _, err := service.store.Update(ctx, "task-1", func(task taskstate.Task) (taskstate.Task, error) {
+				return task.PlaceHold(taskstate.Hold{Reason: "Wait"})
+			}); err != nil {
+				t.Fatal(err)
+			}
+			runner.failure = ""
+			creates, starts := runner.creates, runner.starts
+			if _, err := service.ContinueInitialLaunch(ctx, "task-1", "gen-1", config); err == nil {
+				t.Fatal("held launch advanced to dispatch")
+			}
+			task, err := service.store.Read(ctx, "task-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot := task.Snapshot()
+			if snapshot.LaunchIntent.Endpoint == nil {
+				t.Fatal("existing endpoint was not recorded under hold")
+			}
+			if failure == "agent response" && len(snapshot.LaunchIntent.ResumeArgs) == 0 {
+				t.Fatal("existing native identity was not recorded under hold")
+			}
+			if snapshot.State != taskstate.Queued || snapshot.Worker != nil ||
+				runner.creates != creates ||
+				runner.starts != starts {
+				t.Fatalf("held launch performed another effect: %+v", snapshot)
+			}
+		})
+	}
+}

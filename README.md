@@ -293,6 +293,43 @@ Concierge state root. One live session owns the primary role. Repository skills
 instruct secondary sessions to leave shared task supervision to that owner.
 The default `concierge` command renders the root brief after state setup.
 
+## Automated worker launch
+
+Queue the task first, then ask the host to prepare an isolated worktree and
+launch its worker:
+
+```sh
+concierge launch task-1 --harness codex \
+  --project /repo --worktree /worktrees/task-1 --branch task/task-1 \
+  --base-commit FULL_COMMIT_ID --workspace w1 --body-file brief.txt
+```
+
+Use a full commit ID from the project and a new branch name. The host must have
+an explicit Herdr session. `--harness claude` selects Claude. Repeat
+`--agent-arg=VALUE` for optional launch arguments in their original order.
+`--body-file -` reads the assignment from stdin. Claude arguments must not contain
+`--settings`. Codex arguments must not override `shell_environment_policy`.
+Configure other harness settings through the harness's user or project settings.
+
+The host validates the request before reserving it. It captures the native
+session ID from Herdr, adopts the worker, publishes its assignment, and registers
+the task resident. Missing native session metadata leaves the launch unresolved.
+Worker prompts contain the captured command paths, roots, recipient, and a check
+of the inherited generation. They contain no assignment body.
+
+The host continues tracked initial launches and retries the first resident
+registration without a model request. A host restart reconstructs this work from
+task records. A supervision stop removes the task from periodic recovery for the
+current host lifetime. A later explicit retry can resume the same pending launch.
+An active resident's failure does not create a fresh automatic restart budget.
+
+Exact pending retries must preserve every request field. A completed or retired
+launch requires inspection instead of another launch. A disconnected client
+cannot establish whether launch completed. Inspect `backlog show TASK_ID` and
+`worker show TASK_ID` before issuing another launch. The client never retries
+automatically. Uncertain pane or agent creation is discovered without submitting
+another creation attempt.
+
 ## Initial launch state
 
 The task-state API preserves an initial launch request inside its authoritative

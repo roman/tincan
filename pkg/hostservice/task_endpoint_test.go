@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/roman/tincan/pkg/inbox"
+	"github.com/roman/tincan/pkg/taskops"
 	"github.com/roman/tincan/pkg/taskstate"
 )
 
@@ -29,6 +30,7 @@ func taskEndpointFixture(t *testing.T) (*Server, controllerKey, controllerEndpoi
 			MessageRoot:     filepath.Join(root, "messages"),
 			Recipient:       recipient,
 			HerdrExecutable: executable,
+			WorkerCommands:  taskops.CommandPaths{Concierge: executable, Tincan: executable},
 		},
 	)
 	if err != nil {

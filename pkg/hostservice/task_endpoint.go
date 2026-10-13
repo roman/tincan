@@ -97,9 +97,15 @@ func (server *Server) rejectTaskBoundPane(ctx context.Context, endpoint controll
 		return err
 	}
 	for _, task := range tasks {
-		worker := task.Snapshot().Worker
+		snapshot := task.Snapshot()
+		worker := snapshot.Worker
 		if worker != nil && worker.Session == endpoint.session && worker.Pane == endpoint.pane {
 			return fmt.Errorf("task-bound pane belongs to %s", task.ID())
+		}
+		intent := snapshot.LaunchIntent
+		if intent != nil && intent.Endpoint != nil && intent.Session == endpoint.session &&
+			intent.Endpoint.Pane == endpoint.pane {
+			return fmt.Errorf("initial launch pane belongs to %s", task.ID())
 		}
 	}
 	return nil

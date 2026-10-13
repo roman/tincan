@@ -99,6 +99,29 @@ func TestGet(t *testing.T) {
 	}
 }
 
+func TestGetPreservesNativeSessionReference(t *testing.T) {
+	for _, harness := range []string{"codex", "claude"} {
+		t.Run(harness, func(t *testing.T) {
+			reference := SessionReference{
+				Source: "herdr:" + harness, Agent: harness, Kind: "id",
+				Value: "c9363be1-e485-4798-b633-3a6e75506704",
+			}
+			response := fmt.Sprintf(
+				`{"result":{"agent":{"agent":%q,"agent_status":"idle","pane_id":"w1:p2","agent_session":{"source":%q,"agent":%q,"kind":"id","value":%q}}}}`,
+				harness,
+				reference.Source,
+				harness,
+				reference.Value,
+			)
+			runner := &fakeRunner{responses: []runResponse{{stdout: []byte(response)}}}
+			agent, err := (Client{Runner: runner}).Get(context.Background(), "worker")
+			if err != nil || !reflect.DeepEqual(agent.Session, &reference) {
+				t.Fatalf("native session = %#v, %v", agent.Session, err)
+			}
+		})
+	}
+}
+
 func TestStartRequiresMissingAgent(t *testing.T) {
 	missing := runResponse{
 		stderr: []byte(`{"error":{"code":"agent_not_found"}}`),

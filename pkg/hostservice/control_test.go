@@ -1,10 +1,34 @@
 package hostservice
 
 import (
+	"bytes"
+	"encoding/json"
 	"testing"
 
 	"github.com/roman/tincan/pkg/herdr"
 )
+
+func TestControlResponseOmitsNativeSessionMetadata(t *testing.T) {
+	agent := herdr.Agent{PaneID: "pane-1", Kind: "codex", Status: herdr.Idle,
+		Session: &herdr.SessionReference{
+			Source: "herdr:codex",
+			Agent:  "codex",
+			Kind:   "id",
+			Value:  "private-native-session",
+		}}
+	response := Response{
+		Outcome: Completed,
+		Control: &ControlResult{Target: "pane-1", Agent: agent},
+	}
+	data, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(data, []byte("Session")) ||
+		bytes.Contains(data, []byte("private-native-session")) {
+		t.Fatalf("control response exposed internal metadata: %s", data)
+	}
+}
 
 func TestControlResponsesRequireVerifiedEndpoint(t *testing.T) {
 	start := Request{
