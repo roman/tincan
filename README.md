@@ -45,8 +45,7 @@ The development shell provides Go 1.25, golines, and Herdr. `nix fmt` formats Go
 at 100 columns. The Linux flake gate builds command packages, checks formatting,
 runs the Go suite, and tests installed commands with an empty caller `PATH`.
 A dependency check keeps Concierge task packages out of the generic Tincan
-binary. Individual standalone package outputs remain available while consumers
-complete their command migration.
+binary.
 
 ## State roots
 
@@ -155,6 +154,29 @@ Startup attempts to restore eligible in-flight task residents before reporting
 `status: ready`. Each failed restoration reports a diagnostic and leaves the
 host available for repairs. Retry supervision explicitly after fixing the task.
 Readiness confirms completed restoration attempts and an available host.
+
+Inspect readiness without a primary claim:
+
+```sh
+concierge --root /absolute/project/.concierge --message-root /absolute/project/.tincan \
+  host --session work status --timeout 1s
+```
+
+The probe verifies the state root, message root, recipient, installed package,
+and an explicitly selected session. Without a session expectation, it can reuse
+the host's fixed session. Explicit Herdr settings must also match. The response
+contains no task or message bodies. Only the host's user can inspect it.
+
+| Exit | Status | Meaning |
+| --- | --- | --- |
+| 0 | ready | The compatible host accepts requests. Worker recovery can still need attention. |
+| 1 | unavailable | The socket is missing or refuses a connection. |
+| 2 | incompatible or error | Inspect a package/configuration mismatch, permission denial, unsupported probe, or protocol error. |
+| 3 | unresponsive | The bounded request timed out. Startup, overload, or a stuck host can cause this. |
+
+An automatic startup attempt requires an unavailable result. A timeout does not
+establish that the host is starting. Do not replace an incompatible or unresponsive
+host automatically. The probe does not start, stop, or modify a host.
 
 Queue a task from the primary session and read its full contents:
 

@@ -32,13 +32,22 @@ type TransitionRequest struct {
 
 func validateRequest(request Request) error {
 	payloads := 0
-	for _, present := range []bool{request.Intake != nil, request.Transition != nil, request.Resolve != nil, request.Adoption != nil, request.Assignment != nil, request.Control != nil, request.Supervision != nil, request.Launch != nil} {
+	for _, present := range []bool{request.Intake != nil, request.Transition != nil, request.Resolve != nil, request.Adoption != nil, request.Assignment != nil, request.Control != nil, request.Supervision != nil, request.Launch != nil, request.Status != nil} {
 		if present {
 			payloads++
 		}
 	}
 	if payloads != 1 {
 		return errors.New("host operation requires exactly one payload")
+	}
+	if request.Operation == HostStatus {
+		if request.Status == nil {
+			return errors.New("status requires a status payload")
+		}
+		return nil
+	}
+	if request.Status != nil {
+		return errors.New("unrelated status payload")
 	}
 	if request.Operation == Launch {
 		return validateLaunchInput(request.Launch)

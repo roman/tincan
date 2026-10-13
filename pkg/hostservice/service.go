@@ -31,6 +31,7 @@ const Intake Operation = "intake"
 
 // Request never carries caller identity or a selectable state root.
 type Request struct {
+	Status       *StatusRequest         `json:"status,omitempty"`
 	Launch       *LaunchRequest         `json:"launch,omitempty"`
 	Supervision  *SupervisionRequest    `json:"supervision,omitempty"`
 	Control      *ControlRequest        `json:"control,omitempty"`
@@ -65,6 +66,7 @@ type StopResult struct {
 }
 
 type Response struct {
+	Status      *StatusResult        `json:"status,omitempty"`
 	Supervision *SupervisionResult   `json:"supervision,omitempty"`
 	Control     *ControlResult       `json:"control,omitempty"`
 	Assignment  *AssignmentResult    `json:"assignment,omitempty"`
@@ -228,7 +230,15 @@ func (server *Server) handle(ctx context.Context, connection *net.UnixConn) {
 		server.respond(connection, Response{Outcome: Invalid, Error: err.Error()})
 		return
 	}
-	if err := errors.Join(validateRequest(request), server.checkExpectations(request.Expectations), server.checkSupervisionSettings(request.Supervision)); err != nil {
+	if err := validateRequest(request); err != nil {
+		server.respond(connection, Response{Outcome: Invalid, Error: err.Error()})
+		return
+	}
+	if request.Operation == HostStatus {
+		server.respond(connection, server.statusResponse(caller, request))
+		return
+	}
+	if err := errors.Join(server.checkExpectations(request.Expectations), server.checkSupervisionSettings(request.Supervision)); err != nil {
 		server.respond(connection, Response{Outcome: Invalid, Error: err.Error()})
 		return
 	}
@@ -306,6 +316,15 @@ func Call(ctx context.Context, socket string, request Request) (Response, error)
 }
 
 func validateResponse(response Response, request Request) error {
+	if request.Operation == HostStatus && response.Outcome == Completed {
+		if err := validateRequest(request); err != nil {
+			return err
+		}
+		return validateStatusResponse(response)
+	}
+	if response.Status != nil {
+		return errors.New("host returned unrelated or contradictory status data")
+	}
 	switch response.Outcome {
 	case Completed:
 		if request.Operation == Supervise || request.Operation == StopSupervision {

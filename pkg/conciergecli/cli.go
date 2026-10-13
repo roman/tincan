@@ -20,7 +20,7 @@ import (
 
 const version = "0.1.0"
 
-const cliHelp = "commands: host serve, launch TASK_ID, state init|backup|migrate|recover, brief [--limit N], primary claim|verify|release, control status|interrupt|start, supervise pane|task|stop, backlog, worker list|show, task list|pending|send|receive|ack|reply|adopt|stop|cancel; global flags: --root, --message-root, --recipient, --help; run concierge COMMAND --help for arguments"
+const cliHelp = "commands: host serve|status, launch TASK_ID, state init|backup|migrate|recover, brief [--limit N], primary claim|verify|release, control status|interrupt|start, supervise pane|task|stop, backlog, worker list|show, task list|pending|send|receive|ack|reply|adopt|stop|cancel; global flags: --root, --message-root, --recipient, --help; run concierge COMMAND --help for arguments"
 
 type cli struct {
 	hostExpectations        hostservice.Expectations
@@ -32,6 +32,9 @@ type cli struct {
 		RestartTolerance int           `help:"Host failed checks tolerated per window." default:"5"`
 		RestartWindow    time.Duration `help:"Host failed-check window." default:"1m"`
 		Serve            struct{}      `cmd:"" help:"Serve primary-owned operations until interrupted; run outside the model sandbox."`
+		Status           struct {
+			Timeout time.Duration `default:"1s" help:"Maximum time for the readiness request."`
+		} `cmd:"" help:"Inspect host readiness and verify package and configuration without primary ownership."`
 	} `cmd:"" help:"Run the host service for this state root."`
 	State       stateCommands       `cmd:"" help:"Initialize, back up, and migrate task state with all writers stopped."`
 	Launch      launchCommand       `cmd:"" help:"Launch an isolated worker and dispatch its assignment through the host."`
@@ -183,6 +186,8 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		)
 	case "launch <task-id>":
 		return command.Launch.run(ctx, root, command.hostExpectations, stdin, stdout)
+	case "host status":
+		return command.runHostStatus(ctx, root, stdout)
 	case "host serve":
 		return command.runHost(ctx, root, stdout)
 	case "state init":
