@@ -185,7 +185,7 @@ func TestTaskDoorbellUsesReplacementWorkersCurrentEndpoint(t *testing.T) {
 	if err := worker.Prompt(ctx, "task-1", notify.DoorbellText); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(runner.promptTargets, []string{"pane-1", "pane-1", "pane-2"}) {
+	if !reflect.DeepEqual(runner.promptTargets, []string{"pane-1", "pane-2"}) {
 		t.Fatalf("targets = %v", runner.promptTargets)
 	}
 	pending, err := worker.messages.Read(worker.recipient, assignment.Message.ID)
@@ -360,6 +360,7 @@ func TestTaskDoorbellDefersUntilWorkerCanAcceptInput(t *testing.T) {
 
 func TestRestartBootstrapWatcherDefersUntilIdleAndStopsAfterAcknowledgement(t *testing.T) {
 	service, runner, root := runningWorkerService(t)
+	runner.agentStatus = herdr.Working
 	runner.absent = true
 	worker, err := service.SupervisedWorker("task-1", root, herdr.Client{SessionRunner: runner})
 	if err != nil {

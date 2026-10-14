@@ -38,7 +38,7 @@ func assignmentSendFixture(t *testing.T) (string, string, string) {
 [ "$TEST_NOTIFY_FAILURE" = 1 ] && exit 72
 case "$1 $2" in
  'pane get') printf '{"result":{"pane":{"pane_id":"pane-1","foreground_cwd":"%s"}}}\n' "$TEST_WORKTREE" ;;
- 'agent get') printf '%s\n' '{"result":{"agent":{"pane_id":"pane-1","agent_status":"working","agent":"codex"}}}' ;;
+ 'agent get') printf '%s\n' '{"result":{"agent":{"pane_id":"pane-1","agent_status":"idle","agent":"codex"}}}' ;;
  'agent prompt') printf '%s\n' "$3" "$4" >> "$PROMPT_RECORD"; printf '%s\n' '{"result":{}}' ;;
  *) exit 73 ;;
 esac

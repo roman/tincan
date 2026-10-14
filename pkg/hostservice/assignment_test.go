@@ -80,3 +80,25 @@ func TestCompletedResponseRejectsMixedRequestPayloads(t *testing.T) {
 		t.Fatal("accepted completed response for mixed request")
 	}
 }
+
+func TestDeferredAssignmentResponseConfirmsDelivery(t *testing.T) {
+	request := Request{
+		Operation:  SendAssignment,
+		Assignment: &AssignmentRequest{TaskID: "task-1", Body: "Work"},
+	}
+	response := Response{
+		Outcome: Completed,
+		Assignment: &AssignmentResult{
+			TaskID:       "task-1",
+			MessageID:    "k-" + strings.Repeat("a", 64),
+			Notification: taskops.NotificationDeferred,
+		},
+	}
+	if err := validateResponse(response, request); err != nil {
+		t.Fatal(err)
+	}
+	response.Assignment.NotificationError = "unexpected failure"
+	if err := validateResponse(response, request); err == nil {
+		t.Fatal("deferred delivery accepted an error")
+	}
+}

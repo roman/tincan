@@ -32,7 +32,9 @@ func TestSendAssignmentRecordsBoundMessageAndRetries(t *testing.T) {
 		t.Fatalf("assignment = %#v, %v", envelope, err)
 	}
 	retry, err := service.SendAssignment(ctx, root, "task-1", "brief", "Do the work", client)
-	if err != nil || retry.Message.ID != first.Message.ID || runner.prompts != 2 {
+	if err != nil || retry.Message.ID != first.Message.ID ||
+		retry.Notification != NotificationDeferred ||
+		runner.prompts != 1 {
 		t.Fatalf("retry = %#v, %v; prompts = %d", retry, err, runner.prompts)
 	}
 	store, _ := inbox.New(root)
@@ -42,7 +44,7 @@ func TestSendAssignmentRecordsBoundMessageAndRetries(t *testing.T) {
 	handled, err := service.SendAssignment(ctx, root, "task-1", "brief", "Do the work", client)
 	if err != nil || handled.Message.ID != first.Message.ID ||
 		handled.Notification != NotificationAcknowledged ||
-		runner.prompts != 2 {
+		runner.prompts != 1 {
 		t.Fatalf("handled retry = %#v, %v", handled, err)
 	}
 	if _, err := service.SendAssignment(ctx, root, "task-1", "brief", "Different work", client); !errors.Is(

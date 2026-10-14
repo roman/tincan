@@ -71,20 +71,21 @@ type RestartPlan struct {
 
 // Worker preserves the exact launch and endpoint identity for recovery.
 type Worker struct {
-	Restarts          []RestartPlan `json:"restarts,omitempty"`
-	Name              string        `json:"name"`
-	Harness           string        `json:"harness"`
-	Session           string        `json:"session"`
-	Workspace         string        `json:"workspace,omitempty"`
-	Tab               string        `json:"tab,omitempty"`
-	Pane              string        `json:"pane"`
-	Project           string        `json:"project"`
-	Worktree          string        `json:"worktree"`
-	Generation        string        `json:"generation"`
-	PendingGeneration string        `json:"pending_generation,omitempty"`
-	PendingLaunch     string        `json:"pending_launch,omitempty"`
-	PendingAdoption   bool          `json:"pending_adoption,omitempty"`
-	AgentArgs         []string      `json:"agent_args"`
+	PromptProgress    *PromptProgress `json:"prompt_progress,omitempty"`
+	Restarts          []RestartPlan   `json:"restarts,omitempty"`
+	Name              string          `json:"name"`
+	Harness           string          `json:"harness"`
+	Session           string          `json:"session"`
+	Workspace         string          `json:"workspace,omitempty"`
+	Tab               string          `json:"tab,omitempty"`
+	Pane              string          `json:"pane"`
+	Project           string          `json:"project"`
+	Worktree          string          `json:"worktree"`
+	Generation        string          `json:"generation"`
+	PendingGeneration string          `json:"pending_generation,omitempty"`
+	PendingLaunch     string          `json:"pending_launch,omitempty"`
+	PendingAdoption   bool            `json:"pending_adoption,omitempty"`
+	AgentArgs         []string        `json:"agent_args"`
 }
 
 // CompletionMode selects the queue state after a worker result.
@@ -266,6 +267,7 @@ func cloneWorker(input *Worker) *Worker {
 		return nil
 	}
 	selected := *input
+	selected.PromptProgress = clonePromptProgress(input.PromptProgress)
 	selected.AgentArgs = slices.Clone(input.AgentArgs)
 	selected.Restarts = slices.Clone(input.Restarts)
 	for index := range selected.Restarts {
@@ -431,6 +433,9 @@ func validDefinition(input Definition) bool {
 }
 
 func validWorker(worker Worker) bool {
+	if !validPromptProgress(worker.PromptProgress) {
+		return false
+	}
 	seen := map[string]bool{}
 	for index, plan := range worker.Restarts {
 		if index == 0 {

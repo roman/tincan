@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/roman/tincan/pkg/firstmate"
 	"github.com/roman/tincan/pkg/herdr"
@@ -16,6 +17,7 @@ import (
 
 // SupervisedWorker revalidates a task's endpoint under its task lock.
 type SupervisedWorker struct {
+	now       func() time.Time
 	service   *Service
 	taskID    string
 	messages  *inbox.Store
@@ -50,6 +52,7 @@ func (service *Service) SupervisedWorker(
 		return nil, err
 	}
 	return &SupervisedWorker{
+		now:       time.Now,
 		service:   service,
 		taskID:    taskID,
 		messages:  messages,

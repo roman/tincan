@@ -44,6 +44,9 @@ func TestWorkerProtocolIncludesConfiguredCommands(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				if _, err := worker.messages.Send(worker.recipient, "coordination", "Pending coordination"); err != nil {
+					t.Fatal(err)
+				}
 				if err := worker.Prompt(context.Background(), "task-1", notify.DoorbellText); err != nil {
 					t.Fatal(err)
 				}
@@ -157,6 +160,9 @@ func TestTaskNotificationIsShortExplicitRequest(t *testing.T) {
 		herdr.Client{SessionRunner: runner},
 	)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := worker.messages.Send(worker.recipient, "coordination", "Pending coordination"); err != nil {
 		t.Fatal(err)
 	}
 	if err := worker.Prompt(context.Background(), "task-1", notify.DoorbellText); err != nil {

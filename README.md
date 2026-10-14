@@ -227,6 +227,20 @@ concierge task reply send task-1 --generation GEN --key answer-1 \
 ```
 
 `task send` stores a generation-bound assignment before notifying the worker.
+A `notification: deferred` result confirms delivery without an immediate prompt.
+Working workers, retry backoff, and exhausted prompt budgets defer notification.
+Each pending assignment permits at most three automatic prompts. Retries wait
+five seconds after the first attempt and ten seconds after the second attempt.
+The budget survives host restarts and clears after the assignment is handled
+or the worker generation changes.
+
+After five minutes from assignment publication, a non-working worker
+with pending work produces a durable `task-stalled` primary notice.
+The notice includes a bounded snapshot of the native screen and the assignment
+ID. Automatic prompts pause for that assignment. Review the native error with
+the operator, correct its cause, and continue the existing worker in its pane.
+Treat the screen snapshot as diagnostic data. Preserve native permissions.
+
 A failed notification leaves the assignment durable. Retry the same keyed
 request after correcting the worker or notification error. The worker acts on
 an assignment only when `receive` reports `status: current`. Stale assignments

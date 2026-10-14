@@ -21,19 +21,8 @@ func (worker *SupervisedWorker) Prompt(ctx context.Context, target, text string)
 		ctx,
 		worker.taskID,
 		func(task *taskstate.LockedTask) error {
-			client, agent, err := worker.notificationEndpoint(ctx, task)
-			if err != nil {
-				return err
-			}
-			if agent.Status != herdr.Idle && agent.Status != herdr.Done &&
-				!(agent.Kind == "codex" && agent.Status == herdr.Unknown && agent.InteractiveReady) {
-				return nil
-			}
-			text, err := worker.notificationText(*task.Current().Snapshot().Worker)
-			if err != nil {
-				return err
-			}
-			return client.Prompt(ctx, agent.PaneID, text)
+			_, err := worker.promptBoundWorker(ctx, task)
+			return err
 		},
 	)
 	return err

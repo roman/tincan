@@ -18,6 +18,8 @@ import (
 )
 
 type workerRunner struct {
+	screen            string
+	screenError       error
 	mutex             sync.Mutex
 	worktree          string
 	harness           string
@@ -74,7 +76,7 @@ func (runner *workerRunner) RunSession(
 		}
 		status := runner.agentStatus
 		if status == "" {
-			status = herdr.Working
+			status = herdr.Idle
 		}
 		return []byte(
 			fmt.Sprintf(
@@ -92,6 +94,8 @@ func (runner *workerRunner) RunSession(
 		return []byte(
 			`{"result":{"type":"pane_process_info","process_info":{"pane_id":"pane-1","shell_pid":100,"foreground_processes":[{"pid":101,"name":"codex","argv0":"codex"}]}}}`,
 		), nil, nil
+	case "agent read":
+		return []byte(runner.screen), nil, runner.screenError
 	case "agent prompt":
 		runner.prompts++
 		runner.promptTargets = append(runner.promptTargets, args[2])

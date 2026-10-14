@@ -108,6 +108,9 @@ func (service *Service) receiveAssignment(
 			if err := messages.Acknowledge(recipient, id); err != nil {
 				return err
 			}
+			if err := clearHandledPromptProgress(task, messageID); err != nil {
+				return err
+			}
 			if handled || assignment.SpawnGeneration == generation {
 				result.State = AssignmentAcknowledged
 			} else {
@@ -123,4 +126,16 @@ func (service *Service) receiveAssignment(
 		return nil
 	})
 	return result, err
+}
+
+func clearHandledPromptProgress(task *taskstate.LockedTask, assignmentID string) error {
+	bound := task.Current().Snapshot().Worker
+	if bound == nil || bound.PromptProgress == nil ||
+		bound.PromptProgress.AssignmentID != assignmentID {
+		return nil
+	}
+	_, err := task.Apply(
+		func(current taskstate.Task) (taskstate.Task, error) { return current.ClearPromptProgress(assignmentID) },
+	)
+	return err
 }

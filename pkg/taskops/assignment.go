@@ -18,6 +18,7 @@ type Notification string
 
 const (
 	NotificationSent         Notification = "sent"
+	NotificationDeferred     Notification = "deferred"
 	NotificationAcknowledged Notification = "acknowledged"
 	NotificationFailed       Notification = "failed"
 )
@@ -92,10 +93,7 @@ func (worker *SupervisedWorker) sendAssignment(
 			result.Notification = NotificationAcknowledged
 			return nil
 		}
-		result.NotificationError = worker.promptBoundWorker(ctx, task)
-		if result.NotificationError == nil {
-			result.Notification = NotificationSent
-		}
+		result.Notification, result.NotificationError = worker.promptBoundWorker(ctx, task)
 		return nil
 	})
 	return result, err
@@ -109,19 +107,4 @@ func assignmentWorker(task taskstate.Task) (taskstate.Worker, error) {
 		return taskstate.Worker{}, taskstate.ErrInvalidTransition
 	}
 	return *bound, nil
-}
-
-func (worker *SupervisedWorker) promptBoundWorker(
-	ctx context.Context,
-	task *taskstate.LockedTask,
-) error {
-	client, agent, err := worker.notificationEndpoint(ctx, task)
-	if err != nil {
-		return err
-	}
-	text, err := worker.notificationText(*task.Current().Snapshot().Worker)
-	if err != nil {
-		return err
-	}
-	return client.Prompt(ctx, agent.PaneID, text)
 }

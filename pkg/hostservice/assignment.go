@@ -87,7 +87,7 @@ func validateAssignmentResponse(response Response, request Request) error {
 		if result.NotificationError == "" {
 			return errors.New("failed notification requires an error")
 		}
-	case taskops.NotificationSent, taskops.NotificationAcknowledged:
+	case taskops.NotificationSent, taskops.NotificationAcknowledged, taskops.NotificationDeferred:
 		if result.NotificationError != "" {
 			return errors.New("successful notification forbids an error")
 		}

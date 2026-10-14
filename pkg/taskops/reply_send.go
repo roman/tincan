@@ -105,6 +105,9 @@ func (service *Service) SendReply(
 			return nil
 		}
 		result.Assignment = ReplyAcknowledgementUnconfirmed
+		if err := clearHandledPromptProgress(task, input.AssignmentID); err != nil {
+			return err
+		}
 		if err := messages.Acknowledge(worker, assignmentID); err != nil {
 			return err
 		}
