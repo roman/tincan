@@ -10,7 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/roman/tincan/pkg/herdr"
+	"github.com/roman/tincan/internal/herdr"
 )
 
 type closeJournal struct {

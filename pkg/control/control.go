@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/roman/tincan/pkg/herdr"
+	"github.com/roman/tincan/internal/herdr"
 )
 
 var (

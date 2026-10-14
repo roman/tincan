@@ -11,8 +11,8 @@ import (
 	"slices"
 	"syscall"
 
+	"github.com/roman/tincan/internal/herdr"
 	"github.com/roman/tincan/pkg/firstmate"
-	"github.com/roman/tincan/pkg/herdr"
 )
 
 // Adoption names a live worker and the exact launch details needed for recovery.

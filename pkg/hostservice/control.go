@@ -5,8 +5,8 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/roman/tincan/internal/herdr"
 	"github.com/roman/tincan/pkg/control"
-	"github.com/roman/tincan/pkg/herdr"
 )
 
 const (

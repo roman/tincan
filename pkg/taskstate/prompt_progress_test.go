@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/roman/tincan/pkg/herdr"
+	"github.com/roman/tincan/internal/herdr"
 )
 
 func TestPromptBudgetRequiresMatchingAssignmentAndSurvivesSnapshots(t *testing.T) {

@@ -18,8 +18,8 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/roman/tincan/internal/herdr"
 	"github.com/roman/tincan/pkg/firstmate"
-	"github.com/roman/tincan/pkg/herdr"
 )
 
 var (

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/roman/tincan/pkg/herdr"
+	"github.com/roman/tincan/internal/herdr"
 	"github.com/roman/tincan/pkg/notify"
 	"github.com/roman/tincan/pkg/taskstate"
 )

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/roman/tincan/pkg/herdr"
+	"github.com/roman/tincan/internal/herdr"
 )
 
 var ErrFocusUnsafe = errors.New("pane close would change a live viewer's focus")

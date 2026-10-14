@@ -3,8 +3,8 @@ package taskops
 import (
 	"context"
 
+	"github.com/roman/tincan/internal/herdr"
 	"github.com/roman/tincan/pkg/firstmate"
-	"github.com/roman/tincan/pkg/herdr"
 	"github.com/roman/tincan/pkg/presentation"
 	"github.com/roman/tincan/pkg/taskstate"
 )

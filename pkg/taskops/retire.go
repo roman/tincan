@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/roman/tincan/pkg/herdr"
+	"github.com/roman/tincan/internal/herdr"
 	"github.com/roman/tincan/pkg/taskstate"
 	"github.com/roman/tincan/pkg/taskview"
 )

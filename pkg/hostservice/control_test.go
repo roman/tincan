@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/roman/tincan/pkg/herdr"
+	"github.com/roman/tincan/internal/herdr"
 )
 
 func TestControlResponseOmitsNativeSessionMetadata(t *testing.T) {

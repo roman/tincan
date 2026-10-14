@@ -6,8 +6,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/roman/tincan/internal/herdr"
 	"github.com/roman/tincan/pkg/firstmate"
-	"github.com/roman/tincan/pkg/herdr"
 )
 
 func nativeResumeArguments(harness string, reference *herdr.SessionReference) ([]string, error) {

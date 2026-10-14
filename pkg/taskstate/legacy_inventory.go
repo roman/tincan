@@ -9,9 +9,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/roman/tincan/internal/herdr"
 	"github.com/roman/tincan/pkg/crew"
 	"github.com/roman/tincan/pkg/firstmate"
-	"github.com/roman/tincan/pkg/herdr"
 )
 
 type legacyParts struct {

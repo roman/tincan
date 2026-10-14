@@ -7,8 +7,8 @@ import (
 	"os"
 	"reflect"
 
+	"github.com/roman/tincan/internal/herdr"
 	"github.com/roman/tincan/pkg/firstmate"
-	"github.com/roman/tincan/pkg/herdr"
 	"github.com/roman/tincan/pkg/taskstate"
 	"github.com/roman/tincan/pkg/taskview"
 )

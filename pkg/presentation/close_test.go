@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/roman/tincan/pkg/herdr"
+	"github.com/roman/tincan/internal/herdr"
 )
 
 type closeRunner struct {

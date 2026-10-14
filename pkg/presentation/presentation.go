@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/roman/tincan/internal/herdr"
 	"github.com/roman/tincan/pkg/firstmate"
-	"github.com/roman/tincan/pkg/herdr"
 )
 
 // Native build gates override this path at link time to isolate build users.

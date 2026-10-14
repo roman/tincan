@@ -7,8 +7,8 @@ import (
 	"io"
 	"path/filepath"
 
+	"github.com/roman/tincan/internal/herdr"
 	"github.com/roman/tincan/pkg/control"
-	"github.com/roman/tincan/pkg/herdr"
 	"github.com/roman/tincan/pkg/hostservice"
 )
 

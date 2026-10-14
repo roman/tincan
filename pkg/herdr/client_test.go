@@ -3,7 +3,8 @@ package herdr
 import (
 	"context"
 	"errors"
-	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -29,264 +30,6 @@ func (r *fakeRunner) Run(_ context.Context, args ...string) ([]byte, []byte, err
 	return response.stdout, response.stderr, response.err
 }
 
-func TestGet(t *testing.T) {
-	tests := []struct {
-		name      string
-		response  runResponse
-		want      Agent
-		wantError error
-	}{
-		{
-			name: "working agent",
-			response: runResponse{
-				stdout: []byte(
-					`{"result":{"agent":{"agent":"codex","agent_status":"working","pane_id":"w1:p2"}}}`,
-				),
-			},
-			want: Agent{PaneID: "w1:p2", Status: Working, Kind: "codex"},
-		},
-		{
-			name: "unknown is present",
-			response: runResponse{
-				stdout: []byte(`{"result":{"agent":{"agent_status":"unknown","pane_id":"w1:p2"}}}`),
-			},
-			want: Agent{PaneID: "w1:p2", Status: Unknown},
-		},
-		{
-			name: "missing agent on stdout",
-			response: runResponse{
-				stdout: []byte(`{"error":{"code":"agent_not_found","message":"not found"}}`),
-				err:    errors.New("exit status 1"),
-			},
-			wantError: ErrNotFound,
-		},
-		{
-			name: "missing agent",
-			response: runResponse{
-				stderr: []byte(`{"error":{"code":"agent_not_found","message":"not found"}}`),
-				err:    errors.New("exit status 1"),
-			},
-			wantError: ErrNotFound,
-		},
-		{
-			name: "server error",
-			response: runResponse{
-				stderr: []byte(`{"error":{"code":"server_unavailable","message":"offline"}}`),
-				err:    errors.New("exit status 1"),
-			},
-			wantError: ErrCommand,
-		},
-		{
-			name:      "malformed success",
-			response:  runResponse{stdout: []byte(`{"result":{}}`)},
-			wantError: ErrResponse,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			runner := &fakeRunner{responses: []runResponse{tt.response}}
-			got, err := (Client{Runner: runner}).Get(context.Background(), "worker")
-			if !errors.Is(err, tt.wantError) {
-				t.Fatalf("Get error = %v, want %v", err, tt.wantError)
-			}
-			if err == nil && got != tt.want {
-				t.Fatalf("Get = %+v, want %+v", got, tt.want)
-			}
-			if !reflect.DeepEqual(runner.calls, [][]string{{"agent", "get", "worker"}}) {
-				t.Fatalf("calls = %v", runner.calls)
-			}
-		})
-	}
-}
-
-func TestGetPreservesNativeSessionReference(t *testing.T) {
-	for _, harness := range []string{"codex", "claude"} {
-		t.Run(harness, func(t *testing.T) {
-			reference := SessionReference{
-				Source: "herdr:" + harness, Agent: harness, Kind: "id",
-				Value: "c9363be1-e485-4798-b633-3a6e75506704",
-			}
-			response := fmt.Sprintf(
-				`{"result":{"agent":{"agent":%q,"agent_status":"idle","pane_id":"w1:p2","agent_session":{"source":%q,"agent":%q,"kind":"id","value":%q}}}}`,
-				harness,
-				reference.Source,
-				harness,
-				reference.Value,
-			)
-			runner := &fakeRunner{responses: []runResponse{{stdout: []byte(response)}}}
-			agent, err := (Client{Runner: runner}).Get(context.Background(), "worker")
-			if err != nil || !reflect.DeepEqual(agent.Session, &reference) {
-				t.Fatalf("native session = %#v, %v", agent.Session, err)
-			}
-		})
-	}
-}
-
-func TestStartRequiresMissingAgent(t *testing.T) {
-	missing := runResponse{
-		stderr: []byte(`{"error":{"code":"agent_not_found"}}`),
-		err:    errors.New("exit status 1"),
-	}
-	valid := runResponse{
-		stdout: []byte(
-			`{"result":{"agent":{"agent":"codex","agent_status":"idle","pane_id":"w1:p2"}}}`,
-		),
-	}
-	tests := []struct {
-		name      string
-		get       runResponse
-		verify    runResponse
-		wantError error
-		wantCalls int
-	}{
-		{name: "missing then start", get: missing, verify: valid, wantCalls: 3},
-		{
-			name:      "name lookup missing",
-			get:       missing,
-			verify:    missing,
-			wantCalls: 3,
-			wantError: ErrNotFound,
-		},
-		{
-			name: "different pane after start",
-			get:  missing,
-			verify: runResponse{
-				stdout: []byte(
-					`{"result":{"agent":{"agent":"codex","agent_status":"idle","pane_id":"w1:p3"}}}`,
-				),
-			},
-			wantCalls: 3,
-			wantError: ErrResponse,
-		},
-		{
-			name: "different kind after start",
-			get:  missing,
-			verify: runResponse{
-				stdout: []byte(
-					`{"result":{"agent":{"agent":"claude","agent_status":"idle","pane_id":"w1:p2"}}}`,
-				),
-			},
-			wantCalls: 3,
-			wantError: ErrResponse,
-		},
-		{
-			name: "unknown after start",
-			get:  missing,
-			verify: runResponse{
-				stdout: []byte(
-					`{"result":{"agent":{"agent":"codex","agent_status":"unknown","pane_id":"w1:p2"}}}`,
-				),
-			},
-			wantCalls: 3,
-			wantError: ErrResponse,
-		},
-		{
-			name: "missing kind after start",
-			get:  missing,
-			verify: runResponse{
-				stdout: []byte(`{"result":{"agent":{"agent_status":"idle","pane_id":"w1:p2"}}}`),
-			},
-			wantCalls: 3,
-			wantError: ErrResponse,
-		},
-		{
-			name: "unknown agent",
-			get: runResponse{
-				stdout: []byte(`{"result":{"agent":{"agent_status":"unknown","pane_id":"w1:p2"}}}`),
-			},
-			wantCalls: 1,
-			wantError: ErrAgentPresent,
-		},
-		{
-			name: "transient error",
-			get: runResponse{
-				stderr: []byte(`{"error":{"code":"server_unavailable"}}`),
-				err:    errors.New("exit status 1"),
-			},
-			wantCalls: 1,
-			wantError: ErrCommand,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			responses := []runResponse{tt.get}
-			if tt.wantCalls == 3 {
-				responses = append(
-					responses,
-					runResponse{stdout: []byte(`{"result":{}}`)},
-					tt.verify,
-				)
-			}
-			runner := &fakeRunner{responses: responses}
-			err := (Client{Runner: runner}).Start(context.Background(), "w1:p2", "worker", "codex")
-			if !errors.Is(err, tt.wantError) {
-				t.Fatalf("Start error = %v, want %v", err, tt.wantError)
-			}
-			if len(runner.calls) != tt.wantCalls {
-				t.Fatalf("calls = %v, want %d", runner.calls, tt.wantCalls)
-			}
-			if tt.wantCalls == 3 {
-				if fmt.Sprint(runner.calls[1]) != "[agent start worker --kind codex --pane w1:p2]" {
-					t.Fatalf("start call = %v", runner.calls[1])
-				}
-				if !reflect.DeepEqual(runner.calls[2], []string{"agent", "get", "worker"}) {
-					t.Fatalf("verification lookup = %v", runner.calls[2])
-				}
-			}
-		})
-	}
-}
-
-func TestStartUnknownInteractiveReadiness(t *testing.T) {
-	tests := []struct {
-		name      string
-		kind      string
-		ready     bool
-		wantError error
-	}{
-		{name: "Codex ready", kind: "codex", ready: true},
-		{name: "Codex not ready", kind: "codex", ready: false, wantError: ErrResponse},
-		{name: "other agent ready", kind: "claude", ready: true, wantError: ErrResponse},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			runner := &fakeRunner{responses: []runResponse{
-				{
-					stderr: []byte(`{"error":{"code":"agent_not_found"}}`),
-					err:    errors.New("exit status 1"),
-				},
-				{stdout: []byte(`{"result":{}}`)},
-				{stdout: []byte(fmt.Sprintf(
-					`{"result":{"agent":{"agent":%q,"agent_status":"unknown","pane_id":"w1:p2","interactive_ready":%t}}}`,
-					tt.kind,
-					tt.ready,
-				))},
-			}}
-			err := (Client{Runner: runner}).Start(context.Background(), "w1:p2", "worker", tt.kind)
-			if !errors.Is(err, tt.wantError) {
-				t.Fatalf("Start error = %v, want %v", err, tt.wantError)
-			}
-		})
-	}
-}
-
-func TestWaitSettled(t *testing.T) {
-	runner := &fakeRunner{responses: []runResponse{
-		{stdout: []byte(`{"result":{}}`)},
-		{stdout: []byte(`{"result":{"agent":{"agent_status":"done","pane_id":"w1:p2"}}}`)},
-	}}
-	agent, err := (Client{Runner: runner}).WaitSettled(context.Background(), "worker")
-	if err != nil || agent.Status != Done {
-		t.Fatalf("WaitSettled = %+v, %v", agent, err)
-	}
-	if !reflect.DeepEqual(
-		runner.calls[0],
-		[]string{"agent", "wait", "worker", "--timeout", "10000"},
-	) {
-		t.Fatalf("wait call = %v", runner.calls[0])
-	}
-}
-
 func TestPrompt(t *testing.T) {
 	runner := &fakeRunner{responses: []runResponse{{stdout: []byte(`{"result":{}}`)}}}
 	err := (Client{Runner: runner}).Prompt(context.Background(), "worker", "Inbox has messages.")
@@ -299,63 +42,49 @@ func TestPrompt(t *testing.T) {
 	}
 }
 
-func TestStartWithArgs(t *testing.T) {
-	runner := &fakeRunner{responses: []runResponse{
-		{stderr: []byte(`{"error":{"code":"agent_not_found"}}`), err: errors.New("exit status 1")},
-		{stdout: []byte(`{"result":{}}`)},
-		{
-			stdout: []byte(
-				`{"result":{"agent":{"agent":"codex","agent_status":"idle","pane_id":"w1:p2"}}}`,
-			),
-		},
-	}}
-	err := (Client{Runner: runner}).StartWithArgs(
-		context.Background(),
-		"w1:p2",
-		"worker",
-		"codex",
-		[]string{"--model", "gpt-6", "resume"},
-	)
-	if err != nil {
+func TestCommandRunnerSessionEnvironment(t *testing.T) {
+	t.Setenv("HERDR_SOCKET_PATH", "/wrong/herdr.sock")
+	t.Setenv("HERDR_WORKSPACE_ID", "w99")
+	t.Setenv("HERDR_TAB_ID", "w99:t1")
+	t.Setenv("HERDR_PANE_ID", "w99:p1")
+	executable := filepath.Join(t.TempDir(), "herdr-probe")
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\nprintf '%s\n' \"$HERDR_SESSION\" \"$HERDR_SOCKET_PATH\" \"$HERDR_WORKSPACE_ID\" \"$HERDR_TAB_ID\" \"$HERDR_PANE_ID\" \"$@\"\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if runner.calls[2][2] != "worker" {
-		t.Fatalf("verification lookup = %v, want worker name", runner.calls[2])
-	}
-	want := []string{
-		"agent",
-		"start",
-		"worker",
-		"--kind",
-		"codex",
-		"--pane",
-		"w1:p2",
-		"--",
-		"--model",
-		"gpt-6",
-		"resume",
-	}
-	if !reflect.DeepEqual(runner.calls[1], want) {
-		t.Fatalf("start call = %v, want %v", runner.calls[1], want)
+	stdout, _, err := (commandRunner{executable: executable}).RunSession(
+		context.Background(),
+		"crew",
+		"pane",
+		"get",
+		"pane-1",
+		"--session",
+		"crew",
+	)
+	if err != nil || string(stdout) != "crew\n\n\n\n\npane\nget\npane-1\n--session\ncrew\n" {
+		t.Fatalf("session command = %q, %v", stdout, err)
 	}
 }
 
-func TestAgentNotReadyPreservesTypedCause(t *testing.T) {
-	for _, channel := range []string{"stdout", "stderr"} {
-		t.Run(channel, func(t *testing.T) {
-			result := runResponse{err: errors.New("exit 1")}
-			body := []byte(
-				`{"error":{"code":"agent_not_ready","message":"agent requires interactive input"}}`,
-			)
-			if channel == "stdout" {
-				result.stdout = body
-			} else {
-				result.stderr = body
+func TestPromptPreservesTypedAdapterFailures(t *testing.T) {
+	for _, check := range []struct {
+		code string
+		want error
+	}{
+		{"agent_not_found", ErrNotFound}, {"agent_not_ready", ErrAgentNotReady},
+		{"workspace_not_found", ErrWorkspaceNotFound}, {"server_unavailable", ErrCommand},
+	} {
+		t.Run(check.code, func(t *testing.T) {
+			runner := &fakeRunner{
+				responses: []runResponse{
+					{
+						stderr: []byte(`{"error":{"code":"` + check.code + `"}}`),
+						err:    errors.New("exit 1"),
+					},
+				},
 			}
-			client := Client{Runner: &fakeRunner{responses: []runResponse{result}}}
-			_, err := client.Get(context.Background(), "worker")
-			if !errors.Is(err, ErrAgentNotReady) || !errors.Is(err, ErrCommand) {
-				t.Fatalf("native readiness cause lost: %v", err)
+			err := (Client{Runner: runner}).Prompt(context.Background(), "worker", "Inbox pending")
+			if !errors.Is(err, check.want) {
+				t.Fatalf("prompt error=%v, want %v", err, check.want)
 			}
 		})
 	}

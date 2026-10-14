@@ -10,7 +10,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/roman/tincan/pkg/herdr"
+	"github.com/roman/tincan/internal/herdr"
 	"github.com/roman/tincan/pkg/inbox"
 	"github.com/roman/tincan/pkg/taskprotocol"
 	"github.com/roman/tincan/pkg/taskstate"
