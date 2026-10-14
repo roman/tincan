@@ -130,6 +130,16 @@ func (server *Server) executeInitialLaunch(
 	}); err != nil {
 		return Response{}, err
 	}
+	if existing.Snapshot().LaunchIntent == nil {
+		client, err := herdr.NewClient(server.config.HerdrExecutable).
+			ForSession(server.config.Session)
+		if err != nil {
+			return Response{}, err
+		}
+		if err := client.ValidateWorkspace(ctx, input.Workspace); err != nil {
+			return Response{}, err
+		}
+	}
 	if admission == operatorLaunch {
 		if err := server.controllers.awaitInitialResident(controllerKey{kind: taskController, id: input.TaskID}); err != nil {
 			return Response{}, err

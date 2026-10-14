@@ -3,6 +3,7 @@ package hostservice
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -189,6 +190,14 @@ func launchRequestFixture(t *testing.T) (*Server, LaunchRequest) {
 	t.Helper()
 	server, _, _ := taskEndpointFixture(t)
 	server.config.Session = "work"
+	if err := os.WriteFile(server.config.HerdrExecutable, []byte(`#!/bin/sh
+case "$1 $2" in
+'workspace get') printf '%s\n' '{"result":{"workspace":{"workspace_id":"workspace-1"}}}' ;;
+*) exit 72 ;;
+esac
+`), 0700); err != nil {
+		t.Fatal(err)
+	}
 	task, err := taskstate.NewQueued(
 		taskstate.Definition{ID: "task-2", Title: "Launch", Repo: "repo", Kind: "ship"},
 	)
@@ -466,6 +475,50 @@ func TestLaunchRejectsInvalidReservedNameBeforePublication(t *testing.T) {
 			after, err := server.store.Read(ctx, input.TaskID)
 			if err != nil || !reflect.DeepEqual(before.Snapshot(), after.Snapshot()) {
 				t.Fatalf("changed invalid stored identity: %v", err)
+			}
+		})
+	}
+}
+
+func TestHostLaunchRejectsInvalidWorkspaceBeforeReservation(t *testing.T) {
+	for _, test := range []struct {
+		name, response string
+		exitCode       int
+	}{
+		{"missing workspace", `{"error":{"code":"workspace_not_found","message":"workspace review-rcl not found"}}`, 1},
+		{"resolved label", `{"result":{"workspace":{"workspace_id":"w19","label":"review-rcl"}}}`, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server, input := launchRequestFixture(t)
+			ctx := context.Background()
+			git := filepath.Join(t.TempDir(), "git")
+			script := "#!/bin/sh\ncase \"$3\" in\ncheck-ref-format) exit 0 ;;\ncat-file) printf 'commit\\n'; exit 0 ;;\nesac\nexit 72\n"
+			if err := os.WriteFile(git, []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			server.config.GitExecutable = git
+			input.Workspace = "review-rcl"
+			script = fmt.Sprintf(
+				"#!/bin/sh\nprintf '%%s\\n' '%s'\nexit %d\n",
+				test.response,
+				test.exitCode,
+			)
+			if err := os.WriteFile(server.config.HerdrExecutable, []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			before, err := server.store.Read(ctx, input.TaskID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := server.launch(ctx, input); err == nil {
+				t.Fatal("invalid workspace accepted")
+			}
+			after, err := server.store.Read(ctx, input.TaskID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(before.Snapshot(), after.Snapshot()) {
+				t.Fatal("invalid workspace reserved or advanced the task")
 			}
 		})
 	}
