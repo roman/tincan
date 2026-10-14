@@ -28,12 +28,10 @@
         go = pkgs.go_1_25;
         vendorHash = "sha256-dnZtAeufL7NxseT95FGiPCvq6oGp6eUO7/sIQEHNRa0=";
       };
-      buildCommands = pkgs:
+      buildTransport = pkgs:
         pkgs.buildGoModule ((goModule pkgs) // {
-          pname = "tincan-commands";
-          subPackages = [ "cmd/..." ];
-          nativeCheckInputs = [ pkgs.git treehouse.packages.${pkgs.stdenv.hostPlatform.system}.default ];
-          TREEHOUSE_TEST_EXECUTABLE = "${treehouse.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/treehouse";
+          pname = "tincan-command";
+          subPackages = [ "cmd/tincan" ];
           checkPhase = ''
             runHook preCheck
             go list -deps ./cmd/tincan > tincan-dependencies
@@ -46,6 +44,18 @@
                   ;;
               esac
             done < tincan-dependencies
+            go test ./cmd/tincan ./pkg/tincancli ./pkg/inbox ./pkg/notify ./pkg/herdr
+            runHook postCheck
+          '';
+        });
+      buildCommands = pkgs:
+        pkgs.buildGoModule ((goModule pkgs) // {
+          pname = "tincan-commands";
+          subPackages = [ "cmd/concierge" ];
+          nativeCheckInputs = [ pkgs.git treehouse.packages.${pkgs.stdenv.hostPlatform.system}.default ];
+          TREEHOUSE_TEST_EXECUTABLE = "${treehouse.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/treehouse";
+          checkPhase = ''
+            runHook preCheck
             go test ./...
             runHook postCheck
           '';
@@ -56,17 +66,18 @@
         let
           system = pkgs.stdenv.hostPlatform.system;
           herdrPackage = herdr.packages.${system}.default;
-          allCommands = buildCommands pkgs;
-          mkProgram = { name, runtime ? null }: pkgs.runCommand "${name}-0.1.0" {
+          transportCommand = buildTransport pkgs;
+          supervisorCommand = buildCommands pkgs;
+          mkProgram = { name, command, runtime ? null }: pkgs.runCommand "${name}-0.1.0" {
             nativeBuildInputs = pkgs.lib.optionals (runtime != null) [ pkgs.makeWrapper ];
             disallowedRequisites = pkgs.lib.optionals (runtime == null) [ herdrPackage ];
           } ''
-            install -Dm755 ${allCommands}/bin/${name} "$out/bin/${name}"
+            install -Dm755 ${command}/bin/${name} "$out/bin/${name}"
             ${pkgs.lib.optionalString (runtime != null) ''
               wrapProgram "$out/bin/${name}" --prefix PATH : ${runtime}/bin
             ''}
           '';
-          tincan = mkProgram { name = "tincan"; runtime = herdrPackage; };
+          tincan = mkProgram { name = "tincan"; command = transportCommand; runtime = herdrPackage; };
           processTools = if pkgs.stdenv.isLinux then pkgs.procps else
             pkgs.writeShellScriptBin "ps" ''
               exec /bin/ps "$@"
@@ -75,7 +86,7 @@
             name = "concierge-runtime";
             paths = [ herdrPackage processTools pkgs.git tincan treehouse.packages.${system}.default ];
           };
-          concierge = mkProgram { name = "concierge"; runtime = conciergeRuntime; };
+          concierge = mkProgram { name = "concierge"; command = supervisorCommand; runtime = conciergeRuntime; };
         in
         {
           default = tincan;
