@@ -4,7 +4,10 @@
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/release-25.11";
   inputs.herdr.url = "github:herdrdev/herdr/v0.9.3";
 
-  outputs = { self, nixpkgs, herdr }:
+  inputs.treehouse.url = "github:kunchenguid/treehouse/v3.1.1";
+  inputs.treehouse.inputs.nixpkgs.follows = "nixpkgs";
+
+  outputs = { self, nixpkgs, herdr, treehouse }:
     let
       systems = [
         "x86_64-linux"
@@ -30,6 +33,7 @@
           pname = "tincan-commands";
           subPackages = [ "cmd/..." ];
           nativeCheckInputs = [ pkgs.git ];
+          TREEHOUSE_TEST_EXECUTABLE = "${treehouse.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/treehouse";
           checkPhase = ''
             runHook preCheck
             go list -deps ./cmd/tincan > tincan-dependencies
@@ -69,7 +73,7 @@
             '';
           conciergeRuntime = pkgs.symlinkJoin {
             name = "concierge-runtime";
-            paths = [ herdrPackage processTools pkgs.git tincan ];
+            paths = [ herdrPackage processTools pkgs.git tincan treehouse.packages.${system}.default ];
           };
           concierge = mkProgram { name = "concierge"; runtime = conciergeRuntime; };
         in
