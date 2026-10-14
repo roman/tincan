@@ -17,6 +17,8 @@ type LaunchPhase string
 const (
 	LaunchReserved       LaunchPhase = "reserved"
 	LaunchPreparing      LaunchPhase = "preparing"
+	LaunchLeaseRequested LaunchPhase = "lease_requested"
+	LaunchLeaseReady     LaunchPhase = "lease_ready"
 	LaunchPaneRequested  LaunchPhase = "pane_requested"
 	LaunchAgentRequested LaunchPhase = "agent_requested"
 )
@@ -30,21 +32,23 @@ type LaunchEndpoint struct {
 
 // LaunchIntent keeps initial launch recovery independent of the primary session.
 type LaunchIntent struct {
-	Generation string          `json:"generation"`
-	Harness    string          `json:"harness"`
-	Name       string          `json:"name"`
-	Session    string          `json:"session"`
-	Project    string          `json:"project"`
-	Worktree   string          `json:"worktree"`
-	Branch     string          `json:"branch"`
-	BaseCommit string          `json:"base_commit"`
-	Workspace  string          `json:"workspace"`
-	Label      string          `json:"label"`
-	AgentArgs  []string        `json:"agent_args,omitempty"`
-	Body       string          `json:"body"`
-	Phase      LaunchPhase     `json:"phase"`
-	Endpoint   *LaunchEndpoint `json:"endpoint,omitempty"`
-	ResumeArgs []string        `json:"resume_args,omitempty"`
+	Lease       WorktreeLease   `json:"lease,omitzero"`
+	LeaseHolder string          `json:"lease_holder,omitempty"`
+	Generation  string          `json:"generation"`
+	Harness     string          `json:"harness"`
+	Name        string          `json:"name"`
+	Session     string          `json:"session"`
+	Project     string          `json:"project"`
+	Worktree    string          `json:"worktree"`
+	Branch      string          `json:"branch"`
+	BaseCommit  string          `json:"base_commit"`
+	Workspace   string          `json:"workspace"`
+	Label       string          `json:"label"`
+	AgentArgs   []string        `json:"agent_args,omitempty"`
+	Body        string          `json:"body"`
+	Phase       LaunchPhase     `json:"phase"`
+	Endpoint    *LaunchEndpoint `json:"endpoint,omitempty"`
+	ResumeArgs  []string        `json:"resume_args,omitempty"`
 }
 
 func cloneLaunchIntent(input *LaunchIntent) *LaunchIntent {
@@ -63,13 +67,19 @@ func cloneLaunchIntent(input *LaunchIntent) *LaunchIntent {
 
 // ReserveInitialLaunch fixes the request before any Git or Herdr effect.
 func (task Task) ReserveInitialLaunch(input LaunchIntent) (Task, error) {
-	if input.Phase != "" || input.Endpoint != nil || len(input.ResumeArgs) != 0 {
+	if input.Phase != "" || input.Endpoint != nil || len(input.ResumeArgs) != 0 ||
+		input.Lease != (WorktreeLease{}) ||
+		input.LeaseHolder != "" {
 		return Task{}, ErrInvalidTransition
 	}
 	input.Phase = LaunchReserved
 	if task.record.LaunchIntent != nil {
 		current := *cloneLaunchIntent(task.record.LaunchIntent)
 		current.Phase, current.Endpoint, current.ResumeArgs = LaunchReserved, nil, nil
+		if current.LeaseHolder != "" {
+			current.Worktree = ""
+		}
+		current.Lease, current.LeaseHolder = WorktreeLease{}, ""
 		if reflect.DeepEqual(current, input) {
 			return task, nil
 		}
@@ -91,7 +101,15 @@ func (task Task) BeginLaunchPreparation(generation string) (Task, error) {
 
 // RequestLaunchPane records a potentially ambiguous pane creation attempt.
 func (task Task) RequestLaunchPane(generation string) (Task, error) {
-	return task.advanceInitialLaunch(generation, LaunchPreparing, LaunchPaneRequested)
+	intent := task.record.LaunchIntent
+	if intent == nil || intent.Worktree == "" {
+		return Task{}, ErrInvalidTransition
+	}
+	previous := LaunchPreparing
+	if intent.Lease != (WorktreeLease{}) {
+		previous = LaunchLeaseReady
+	}
+	return task.advanceInitialLaunch(generation, previous, LaunchPaneRequested)
 }
 
 // RecordLaunchEndpoint stores a verified location without replacing prior identity.
@@ -176,8 +194,11 @@ func (task Task) CompleteInitialLaunch(generation string) (Task, error) {
 		return Task{}, ErrInvalidTransition
 	}
 	snapshot := task.Snapshot()
-	if intent := snapshot.LaunchIntent; intent != nil && intent.Workspace == "" {
-		snapshot.Worker.OwnedWorkspaceLabel = intent.Label
+	if intent := snapshot.LaunchIntent; intent != nil {
+		snapshot.Worker.Lease = intent.Lease
+		if intent.Workspace == "" {
+			snapshot.Worker.OwnedWorkspaceLabel = intent.Label
+		}
 	}
 	snapshot.LaunchIntent = nil
 	return newTransition(snapshot)
@@ -210,9 +231,20 @@ func (task Task) AbandonInitialLaunch(generation string) (Task, error) {
 		return Task{}, ErrInvalidTransition
 	}
 	snapshot := task.Snapshot()
+	project := ""
+	if intent.LeaseHolder != "" || intent.Worktree == "" {
+		project = intent.Project
+	}
 	snapshot.AbandonedLaunches = append(
 		snapshot.AbandonedLaunches,
-		LaunchAbandonment{Generation: generation, Worktree: intent.Worktree, Branch: intent.Branch},
+		LaunchAbandonment{
+			Generation:  generation,
+			Worktree:    intent.Worktree,
+			Branch:      intent.Branch,
+			Lease:       intent.Lease,
+			LeaseHolder: intent.LeaseHolder,
+			Project:     project,
+		},
 	)
 	snapshot.LaunchIntent = nil
 	return newTransition(snapshot)
@@ -247,7 +279,20 @@ func validLaunchIntent(selected record) bool {
 	if _, err := herdr.ParseTarget(intent.Session, "pane"); err != nil {
 		return false
 	}
-	for _, path := range []string{intent.Project, intent.Worktree} {
+	if !validWorktreeLease(intent.Lease) || !optionalLine(intent.LeaseHolder) {
+		return false
+	}
+	if intent.Lease != (WorktreeLease{}) &&
+		(intent.Lease.State != LeaseHeld || intent.Lease.Holder != intent.LeaseHolder || intent.Lease.Project != intent.Project || intent.Lease.Path != intent.Worktree || intent.Lease.Branch != intent.Branch || intent.Lease.BaseCommit != intent.BaseCommit) {
+		return false
+	}
+	paths := []string{intent.Project}
+	if intent.Worktree != "" {
+		paths = append(paths, intent.Worktree)
+	} else if intent.Phase != LaunchReserved && intent.Phase != LaunchPreparing && intent.Phase != LaunchLeaseRequested {
+		return false
+	}
+	for _, path := range paths {
 		if _, err := firstmate.ParseAbsolutePath(path); err != nil {
 			return false
 		}
@@ -265,7 +310,16 @@ func validLaunchIntent(selected record) bool {
 	}
 	switch intent.Phase {
 	case LaunchReserved, LaunchPreparing:
-		if intent.Endpoint != nil {
+		if intent.Endpoint != nil || intent.Lease != (WorktreeLease{}) || intent.LeaseHolder != "" {
+			return false
+		}
+	case LaunchLeaseRequested:
+		if intent.Endpoint != nil || intent.Worktree != "" || intent.Lease != (WorktreeLease{}) ||
+			intent.LeaseHolder == "" {
+			return false
+		}
+	case LaunchLeaseReady:
+		if intent.Endpoint != nil || intent.Lease == (WorktreeLease{}) {
 			return false
 		}
 	case LaunchPaneRequested:
@@ -274,6 +328,10 @@ func validLaunchIntent(selected record) bool {
 			return false
 		}
 	default:
+		return false
+	}
+	if intent.Phase != LaunchLeaseRequested && intent.Lease == (WorktreeLease{}) &&
+		intent.LeaseHolder != "" {
 		return false
 	}
 	if len(intent.ResumeArgs) != 0 && intent.Phase != LaunchAgentRequested {
@@ -322,7 +380,22 @@ func validLaunchAbandonments(selected record) bool {
 			strings.HasPrefix(receipt.Branch, "-") {
 			return false
 		}
-		if _, err := firstmate.ParseAbsolutePath(receipt.Worktree); err != nil {
+		if !validWorktreeLease(receipt.Lease) || !optionalLine(receipt.LeaseHolder) {
+			return false
+		}
+		if receipt.Lease == (WorktreeLease{}) && receipt.Worktree != "" &&
+			(receipt.Project != "" || receipt.LeaseHolder != "") {
+			return false
+		}
+		if receipt.Worktree != "" {
+			if _, err := firstmate.ParseAbsolutePath(receipt.Worktree); err != nil {
+				return false
+			}
+		} else if _, err := firstmate.ParseAbsolutePath(receipt.Project); err != nil {
+			return false
+		}
+		if receipt.Lease != (WorktreeLease{}) &&
+			(receipt.Lease.Project != receipt.Project || receipt.Lease.Path != receipt.Worktree || receipt.Lease.Holder != receipt.LeaseHolder || receipt.Lease.Branch != receipt.Branch) {
 			return false
 		}
 		seen[receipt.Generation] = true

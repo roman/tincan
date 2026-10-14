@@ -52,13 +52,22 @@ func (command *cli) runHost(ctx context.Context, root string, output io.Writer) 
 	if err != nil {
 		return fail(output, 2, err, hostHelp)
 	}
+	treehouseExecutable, err := exec.LookPath("treehouse")
+	if err != nil {
+		return fail(output, 2, err, "install treehouse beside Concierge before starting the host")
+	}
+	treehouseExecutable, err = filepath.Abs(treehouseExecutable)
+	if err != nil {
+		return fail(output, 2, err, hostHelp)
+	}
 	server, err := hostservice.New(
 		hostservice.Config{
-			Root:            root,
-			MessageRoot:     messageRoot,
-			Recipient:       recipient,
-			HerdrExecutable: executable,
-			GitExecutable:   gitExecutable,
+			Root:                root,
+			MessageRoot:         messageRoot,
+			Recipient:           recipient,
+			HerdrExecutable:     executable,
+			GitExecutable:       gitExecutable,
+			TreehouseExecutable: treehouseExecutable,
 			WorkerCommands: taskops.CommandPaths{
 				Concierge: conciergeExecutable,
 				Tincan:    tincanExecutable,

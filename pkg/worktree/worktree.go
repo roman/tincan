@@ -145,6 +145,10 @@ func (client Client) Prepare(ctx context.Context, specification Specification) e
 			return err
 		}
 	}
+	return client.verifyPrepared(ctx, specification)
+}
+
+func (client Client) verifyPrepared(ctx context.Context, specification Specification) error {
 	if err := client.VerifyIdentity(ctx, specification); err != nil {
 		return err
 	}
@@ -176,18 +180,8 @@ func (client Client) Prepare(ctx context.Context, specification Specification) e
 			ErrIdentity,
 		)
 	}
-	index, err := client.git(ctx, specification.Path, "ls-files", "-v", "-z")
-	if err != nil {
+	if err := client.checkCheckoutIndex(ctx, specification); err != nil {
 		return err
-	}
-	// Skip-worktree and assume-unchanged flags can hide missing or modified files from status.
-	for _, entry := range strings.Split(index, "\x00") {
-		if entry != "" && !strings.HasPrefix(entry, "H ") {
-			return fmt.Errorf(
-				"%w: initial worktree index can hide tracked checkout differences",
-				ErrIdentity,
-			)
-		}
 	}
 	status, err := client.git(
 		ctx,
@@ -222,6 +216,37 @@ func (client Client) VerifyIdentity(ctx context.Context, specification Specifica
 			ErrIdentity,
 		)
 	}
+	if err := client.verifyRepository(ctx, specification); err != nil {
+		return err
+	}
+	branch, err := client.git(ctx, specification.Path, "symbolic-ref", "HEAD")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(branch) != "refs/heads/"+specification.Branch {
+		return fmt.Errorf("%w: worktree branch differs from the reserved branch", ErrIdentity)
+	}
+	return nil
+}
+
+func (client Client) checkCheckoutIndex(ctx context.Context, specification Specification) error {
+	index, err := client.git(ctx, specification.Path, "ls-files", "-v", "-z")
+	if err != nil {
+		return err
+	}
+	// Skip-worktree and assume-unchanged flags can hide missing or modified files from status.
+	for _, entry := range strings.Split(index, "\x00") {
+		if entry != "" && !strings.HasPrefix(entry, "H ") {
+			return fmt.Errorf(
+				"%w: initial worktree index can hide tracked checkout differences",
+				ErrIdentity,
+			)
+		}
+	}
+	return nil
+}
+
+func (client Client) verifyRepository(ctx context.Context, specification Specification) error {
 	projectCommon, err := client.git(
 		ctx,
 		specification.Project,
@@ -244,13 +269,6 @@ func (client Client) VerifyIdentity(ctx context.Context, specification Specifica
 	}
 	if !samePath(strings.TrimSpace(projectCommon), strings.TrimSpace(workerCommon)) {
 		return fmt.Errorf("%w: worktree belongs to a different repository", ErrIdentity)
-	}
-	branch, err := client.git(ctx, specification.Path, "symbolic-ref", "HEAD")
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(branch) != "refs/heads/"+specification.Branch {
-		return fmt.Errorf("%w: worktree branch differs from the reserved branch", ErrIdentity)
 	}
 	return nil
 }

@@ -13,15 +13,16 @@ import (
 
 // Config binds every external dependency before host admission starts.
 type Config struct {
-	Supervision     supervise.Config
-	Diagnostics     io.Writer
-	Root            string
-	MessageRoot     string
-	Recipient       inbox.Recipient
-	HerdrExecutable string
-	GitExecutable   string
-	WorkerCommands  taskops.CommandPaths
-	Session         string
+	Supervision         supervise.Config
+	Diagnostics         io.Writer
+	Root                string
+	MessageRoot         string
+	Recipient           inbox.Recipient
+	HerdrExecutable     string
+	GitExecutable       string
+	TreehouseExecutable string
+	WorkerCommands      taskops.CommandPaths
+	Session             string
 }
 
 // Expectations reject conflicting client settings without selecting host resources.
@@ -33,9 +34,11 @@ type Expectations struct {
 }
 
 func (config Config) validate() error {
-	if config.GitExecutable != "" {
-		if _, err := firstmate.ParseAbsolutePath(config.GitExecutable); err != nil {
-			return err
+	for _, executable := range []string{config.GitExecutable, config.TreehouseExecutable} {
+		if executable != "" {
+			if _, err := firstmate.ParseAbsolutePath(executable); err != nil {
+				return err
+			}
 		}
 	}
 	if err := validateSupervisionConfig(config.Supervision); err != nil {

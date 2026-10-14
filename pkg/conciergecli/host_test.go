@@ -507,3 +507,33 @@ func TestHostRejectsExplicitZeroMonitorConfig(t *testing.T) {
 		t.Fatalf("invalid configuration acquired host lock: %v", err)
 	}
 }
+
+func TestHostRequiresTreehouseBeforeOpeningSocket(t *testing.T) {
+	root := shortTaskRoot(t)
+	executable := unusedHerdr(t)
+	tools := t.TempDir()
+	for _, name := range []string{"git", "tincan"} {
+		if err := os.WriteFile(filepath.Join(tools, name), []byte("#!/bin/sh\nexit 72\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", tools)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	var output bytes.Buffer
+	code := Run(
+		ctx,
+		[]string{"--root", root, "host", "--herdr", executable, "serve"},
+		nil,
+		&output,
+		io.Discard,
+	)
+	if code != 2 || !strings.Contains(output.String(), "install treehouse") {
+		t.Fatalf("missing treehouse code %d: %s", code, &output)
+	}
+	for _, path := range []string{"host.sock", ".host.lock"} {
+		if _, err := os.Lstat(filepath.Join(root, path)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("host opened %s before dependency validation: %v", path, err)
+		}
+	}
+}

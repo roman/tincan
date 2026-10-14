@@ -55,7 +55,11 @@ func (server *Server) abandonLaunch(
 		if _, err := locked.Apply(func(task taskstate.Task) (taskstate.Task, error) { return task.AbandonInitialLaunch(input.Generation) }); err != nil {
 			return err
 		}
-		result.Worktree, result.Branch = intent.Worktree, intent.Branch
+		receipt, ok := locked.Current().LaunchAbandonment(input.Generation)
+		if !ok {
+			return taskstate.ErrInvalidTransition
+		}
+		*result = receipt
 		clearedIntent = true
 		return nil
 	})

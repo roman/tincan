@@ -18,6 +18,7 @@ func TestTrackedLaunchOutcomeSurvivesHostTransport(t *testing.T) {
 	_, _, socket := fixture(t, func(server *Server) {
 		server.authorize = func(primary.Caller) error { return nil }
 		server.config.Session = "work"
+		server.config.TreehouseExecutable = "/tools/missing-treehouse"
 		git := filepath.Join(t.TempDir(), "git")
 		if err := os.WriteFile(git, []byte("#!/bin/sh\ncase \"$3\" in\ncheck-ref-format) exit 0 ;;\ncat-file) printf 'commit\\n'; exit 0 ;;\nesac\nexit 72\n"), 0700); err != nil {
 			t.Fatal(err)
@@ -40,7 +41,7 @@ func TestTrackedLaunchOutcomeSurvivesHostTransport(t *testing.T) {
 		TaskID:     "task-1",
 		Harness:    "codex",
 		Project:    "/repo",
-		Worktree:   "/worker",
+		Worktree:   "",
 		Branch:     "task-1",
 		BaseCommit: strings.Repeat("a", 40),
 		Workspace:  "w1",
@@ -296,6 +297,9 @@ func TestTrackedLaunchResourceConflictsReportBlocked(t *testing.T) {
 			)
 			input.BaseCommit = run("rev-parse", "HEAD")
 			if mode == "conflicting worktree" {
+				if _, err := server.reserveInitialLaunch(ctx, input); err != nil {
+					t.Fatal(err)
+				}
 				if err := os.Mkdir(input.Worktree, 0700); err != nil {
 					t.Fatal(err)
 				}

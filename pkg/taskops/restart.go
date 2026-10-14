@@ -24,6 +24,9 @@ func (worker *SupervisedWorker) Restart(ctx context.Context) error {
 		worker.taskID,
 		func(task *taskstate.LockedTask) error {
 			if bound := task.Current().Snapshot().Worker; bound != nil {
+				if err := checkWorktreeLease(ctx, bound.Lease, worker.service.pool); err != nil {
+					return err
+				}
 				if err := validateNativeLaunch(bound.Harness, bound.AgentArgs); err != nil {
 					return err
 				}
@@ -84,6 +87,9 @@ func (worker *SupervisedWorker) Restart(ctx context.Context) error {
 			if _, err := task.Apply(func(current taskstate.Task) (taskstate.Task, error) {
 				return current.AdvanceGeneration(generation)
 			}); err != nil {
+				return err
+			}
+			if err := checkWorktreeLease(ctx, bound.Lease, worker.service.pool); err != nil {
 				return err
 			}
 			if err := client.StartWithArgs(ctx, bound.Pane, bound.Name, bound.Harness, arguments); err != nil {

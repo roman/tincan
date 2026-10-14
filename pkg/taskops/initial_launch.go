@@ -18,6 +18,7 @@ var ErrInitialLaunchIdentity = errors.New("initial launch identity conflict")
 var ErrNativeCheckpoint = errors.New("native checkpoint requires operator review")
 
 type InitialLaunchConfig struct {
+	Pool        worktree.PoolClient
 	Git         worktree.Client
 	Herdr       herdr.Client
 	MessageRoot string
@@ -75,11 +76,17 @@ func (service *Service) ContinueInitialLaunch(
 	if err != nil {
 		return taskstate.Task{}, err
 	}
+	if err := checkInitialLease(ctx, intent, config.Pool); err != nil {
+		return taskstate.Task{}, err
+	}
 	if err := service.prepareInitialPane(ctx, taskID, intent, config, client); err != nil {
 		return taskstate.Task{}, err
 	}
 	_, intent, err = service.initialLaunch(ctx, taskID, generation)
 	if err != nil {
+		return taskstate.Task{}, err
+	}
+	if err := checkInitialLease(ctx, intent, config.Pool); err != nil {
 		return taskstate.Task{}, err
 	}
 	if err := service.prepareInitialAgent(ctx, taskID, intent, config.Git, client, arguments); err != nil {
@@ -132,6 +139,9 @@ func (service *Service) ContinueInitialLaunch(
 		return taskstate.Task{}, err
 	}
 	if err := service.checkInitialLaunchActive(ctx, taskID, generation); err != nil {
+		return taskstate.Task{}, err
+	}
+	if err := checkInitialLease(ctx, intent, config.Pool); err != nil {
 		return taskstate.Task{}, err
 	}
 	adopted, err := service.AdoptWorker(ctx, AdoptionInput{
@@ -211,12 +221,24 @@ func (service *Service) prepareInitialPane(
 		}
 		intent.Phase = taskstate.LaunchPreparing
 	}
+	var leaseErr error
+	intent, leaseErr = service.prepareInitialLease(ctx, taskID, intent, config.Pool)
+	if leaseErr != nil {
+		return leaseErr
+	}
 	var details herdr.PaneDetails
-	if intent.Phase == taskstate.LaunchPreparing {
+	if intent.Phase == taskstate.LaunchPreparing || intent.Phase == taskstate.LaunchLeaseReady {
 		if err := service.checkInitialLaunchActive(ctx, taskID, generation); err != nil {
 			return err
 		}
-		if err := config.Git.Prepare(ctx, launchWorktree(intent)); err != nil {
+		if intent.Lease != (taskstate.WorktreeLease{}) {
+			if err := checkInitialLease(ctx, intent, config.Pool); err != nil {
+				return err
+			}
+			if err := config.Git.PrepareLeased(ctx, launchWorktree(intent)); err != nil {
+				return err
+			}
+		} else if err := config.Git.Prepare(ctx, launchWorktree(intent)); err != nil {
 			return err
 		}
 		if _, err := service.store.Update(ctx, taskID, func(task taskstate.Task) (taskstate.Task, error) {

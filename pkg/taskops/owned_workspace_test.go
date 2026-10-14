@@ -28,6 +28,11 @@ func (runner *ownedLaunchRunner) RunSession(
 		if err != nil || current.Snapshot().LaunchIntent.Phase != taskstate.LaunchPaneRequested {
 			return nil, nil, errors.New("workspace creation precedes reservation")
 		}
+		for index, arg := range args {
+			if arg == "--cwd" && index+1 < len(args) {
+				runner.intent.Worktree = args[index+1]
+			}
+		}
 		runner.workspaceCreates++
 		runner.created = true
 		if runner.loseResponse {

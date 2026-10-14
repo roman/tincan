@@ -15,7 +15,7 @@ type launchCommand struct {
 	TaskID     string   `arg:"" help:"Queued task ID."`
 	Harness    string   `required:"" enum:"codex,claude" help:"Worker harness."`
 	Project    string   `required:"" help:"Absolute source repository path."`
-	Worktree   string   `required:"" help:"Absolute isolated worktree path."`
+	Worktree   string   `help:"Existing launch worktree path; omit for a treehouse lease."`
 	Branch     string   `required:"" help:"New literal worktree branch."`
 	BaseCommit string   `required:"" help:"Full commit ID from the source repository."`
 	Workspace  string   `help:"Existing shared Herdr workspace ID; omit to create a task-owned workspace. Labels are unsupported."`

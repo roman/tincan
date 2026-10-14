@@ -78,8 +78,12 @@ func (server *Server) reconcileInitialTask(ctx context.Context, key controllerKe
 	}
 	snapshot := task.Snapshot()
 	if intent := snapshot.LaunchIntent; intent != nil {
+		originalWorktree := intent.Worktree
+		if intent.LeaseHolder != "" {
+			originalWorktree = ""
+		}
 		_, err := server.executeInitialLaunch(ctx, LaunchRequest{
-			TaskID: key.id, Harness: intent.Harness, Project: intent.Project, Worktree: intent.Worktree,
+			TaskID: key.id, Harness: intent.Harness, Project: intent.Project, Worktree: originalWorktree,
 			Branch: intent.Branch, BaseCommit: intent.BaseCommit, Workspace: intent.Workspace,
 			AgentArgs: intent.AgentArgs, Body: intent.Body,
 		}, recoveryLaunch)

@@ -129,9 +129,23 @@ func (server *Server) executeInitialLaunch(
 	if _, err := existing.ReserveInitialLaunch(candidate); err != nil {
 		return Response{}, err
 	}
+	if existing.Snapshot().LaunchIntent == nil && input.Worktree != "" {
+		return Response{}, errors.New(
+			"fresh launches use a treehouse lease; omit the worktree path",
+		)
+	}
+	if input.Worktree == "" {
+		if _, err := firstmate.ParseAbsolutePath(server.config.TreehouseExecutable); err != nil {
+			return Response{}, errors.New("host launch requires an absolute treehouse executable")
+		}
+	}
+	validationPath := input.Worktree
+	if validationPath == "" {
+		validationPath = input.Project
+	}
 	git := worktree.Client{Executable: server.config.GitExecutable}
 	if err := git.Validate(ctx, worktree.Specification{
-		Project: input.Project, Path: input.Worktree, Branch: input.Branch, BaseCommit: input.BaseCommit,
+		Project: input.Project, Path: validationPath, Branch: input.Branch, BaseCommit: input.BaseCommit,
 	}); err != nil {
 		return Response{}, err
 	}
@@ -165,6 +179,7 @@ func (server *Server) executeInitialLaunch(
 		input.TaskID,
 		task.Snapshot().LaunchIntent.Generation,
 		taskops.InitialLaunchConfig{
+			Pool:        worktree.PoolClient{Executable: server.config.TreehouseExecutable},
 			Git:         git,
 			Herdr:       herdr.NewClient(server.config.HerdrExecutable),
 			MessageRoot: server.config.MessageRoot,
@@ -231,7 +246,8 @@ func validateLaunchResponse(response Response, request Request) error {
 		return errors.New("host returned an unapplied launch")
 	}
 	if task.ID() != input.TaskID || worker.Project != input.Project ||
-		worker.Worktree != input.Worktree ||
+		(input.Worktree != "" && worker.Worktree != input.Worktree) ||
+		(input.Worktree == "" && (worker.Lease.State != taskstate.LeaseHeld || worker.Lease.Branch != input.Branch || worker.Lease.BaseCommit != input.BaseCommit)) ||
 		worker.Harness != input.Harness ||
 		(input.Workspace != "" && (worker.Workspace != input.Workspace || worker.OwnedWorkspaceLabel != "")) ||
 		(input.Workspace == "" && worker.OwnedWorkspaceLabel != "concierge-"+worker.Generation) {

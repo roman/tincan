@@ -275,6 +275,30 @@ func checkWorkerIdentity(tasks []Task, candidate Task) error {
 		return nil
 	}
 	for _, task := range tasks {
+		path := ""
+		if worker != nil {
+			path = worker.Worktree
+		} else if launch != nil {
+			path = launch.Worktree
+		}
+		if path != "" {
+			snapshot := task.Snapshot()
+			leases := []WorktreeLease{}
+			if snapshot.Receipt != nil {
+				leases = append(leases, snapshot.Receipt.Lease)
+			}
+			for _, receipt := range snapshot.PriorReceipts {
+				leases = append(leases, receipt.Lease)
+			}
+			for _, receipt := range snapshot.AbandonedLaunches {
+				leases = append(leases, receipt.Lease)
+			}
+			for _, lease := range leases {
+				if lease.State == LeaseHeld && lease.Path == path {
+					return ErrWorkerConflict
+				}
+			}
+		}
 		if task.ID() == candidate.ID() {
 			continue
 		}
@@ -300,7 +324,7 @@ func launchConflicts(launch, other *LaunchIntent, worker *Worker) bool {
 			(launch.Endpoint != nil && launch.Endpoint.Pane == worker.Pane)))) {
 		return true
 	}
-	return other != nil && (launch.Worktree == other.Worktree ||
+	return other != nil && ((launch.Worktree != "" && launch.Worktree == other.Worktree) ||
 		(launch.Project == other.Project && launch.Branch == other.Branch) ||
 		(launch.Session == other.Session && (launch.Name == other.Name ||
 			(launch.Workspace == other.Workspace && launch.Label == other.Label) ||

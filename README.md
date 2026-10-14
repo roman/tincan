@@ -375,12 +375,12 @@ identity failures remain separate launch blockers.
 
 ## Automated worker launch
 
-Queue the task first, then ask the host to prepare an isolated worktree and
+Queue the task first, then ask the host to lease a treehouse worktree and
 launch its worker:
 
 ```sh
 concierge launch task-1 --harness codex \
-  --project /repo --worktree /worktrees/task-1 --branch task/task-1 \
+  --project /repo --branch task/task-1 \
   --base-commit FULL_COMMIT_ID --body-file brief.txt
 ```
 
@@ -390,6 +390,19 @@ response. Stop closes only the recorded worker pane. Herdr removes the workspace
 when its last pane closes; any additional user panes keep the workspace open.
 Cleanup then records the retired task. Existing shared workspaces remain
 available through `--workspace WORKSPACE_ID`; labels are unsupported.
+
+Treehouse is a required host dependency and is included in the Concierge Nix
+package. The host selects the leased path. Fresh requests omit `--worktree`;
+that option exists only for recovery of an already recorded raw-worktree launch.
+The lease must be clean. Concierge creates the new task branch at the exact
+base commit. Changed files, ignored-file conflicts, and existing branch conflicts
+stop preparation without a forced reset.
+
+Acquisition identity is recorded before requesting a lease. An uncertain request
+recovers its existing lease by holder instead of acquiring another worktree.
+Launch and restart verify the captured lease ID, holder, and path before native
+startup. The task record retains the lease and result branch through restart
+and retirement. A changed or missing lease requires inspection.
 
 Use a full commit ID from the project and a new branch name. The host must have
 an explicit Herdr session. `--harness claude` selects Claude. Repeat
@@ -420,8 +433,8 @@ another creation attempt.
 ## Initial launch state
 
 The task-state API preserves an initial launch request inside its authoritative
-task record. Its phases are `reserved`, `preparing`, `pane_requested`, and
-`agent_requested`. Each new reservation needs a fresh generation. Exact retries
+task record. Its phases are `reserved`, `preparing`, `lease_requested`,
+`lease_ready`, `pane_requested`, and `agent_requested`. Each new reservation needs a fresh generation. Exact retries
 retain that generation and request. Every progress transition checks the expected
 generation. A rejected or uncertain write must stop the executor before further
 external effects.

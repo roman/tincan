@@ -192,6 +192,9 @@ func (task Task) RetireResult(generation string) (Task, error) {
 		snapshot.PriorReceipts = append(snapshot.PriorReceipts, *snapshot.Receipt)
 	}
 	snapshot.Receipt = &Receipt{Generation: generation, Mode: completion.Mode}
+	if snapshot.Worker != nil {
+		snapshot.Receipt.Lease = snapshot.Worker.Lease
+	}
 	snapshot.Completion = nil
 	snapshot.Worker = nil
 	return newTransition(snapshot)

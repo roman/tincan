@@ -71,6 +71,7 @@ type RestartPlan struct {
 
 // Worker preserves the exact launch and endpoint identity for recovery.
 type Worker struct {
+	Lease               WorktreeLease   `json:"lease,omitzero"`
 	OwnedWorkspaceLabel string          `json:"owned_workspace_label,omitempty"`
 	PromptProgress      *PromptProgress `json:"prompt_progress,omitempty"`
 	Restarts            []RestartPlan   `json:"restarts,omitempty"`
@@ -114,15 +115,19 @@ type Completion struct {
 
 // Receipt preserves the latest retired generation after worker records disappear.
 type Receipt struct {
+	Lease      WorktreeLease  `json:"lease,omitzero"`
 	Generation string         `json:"generation"`
 	Mode       CompletionMode `json:"mode"`
 }
 
 // LaunchAbandonment preserves retained resources across interrupted client calls.
 type LaunchAbandonment struct {
-	Generation string `json:"generation"`
-	Worktree   string `json:"worktree"`
-	Branch     string `json:"branch"`
+	Lease       WorktreeLease `json:"lease,omitzero"`
+	LeaseHolder string        `json:"lease_holder,omitempty"`
+	Project     string        `json:"project,omitempty"`
+	Generation  string        `json:"generation"`
+	Worktree    string        `json:"worktree"`
+	Branch      string        `json:"branch"`
 }
 
 type record struct {
@@ -342,7 +347,8 @@ func validate(selected record) error {
 		}
 	}
 	if selected.Receipt != nil {
-		if firstmate.ValidateSpawnGeneration(selected.Receipt.Generation) != nil ||
+		if !validWorktreeLease(selected.Receipt.Lease) ||
+			firstmate.ValidateSpawnGeneration(selected.Receipt.Generation) != nil ||
 			(selected.Receipt.Mode != Close && selected.Receipt.Mode != Retain) {
 			return ErrInvalidTask
 		}
@@ -374,8 +380,10 @@ func validate(selected record) error {
 	}
 	seenReceipts := make(map[string]bool, len(selected.PriorReceipts))
 	for _, receipt := range selected.PriorReceipts {
-		if firstmate.ValidateSpawnGeneration(receipt.Generation) != nil ||
-			receipt.Mode != Retain || seenReceipts[receipt.Generation] {
+		if !validWorktreeLease(receipt.Lease) ||
+			firstmate.ValidateSpawnGeneration(receipt.Generation) != nil ||
+			receipt.Mode != Retain ||
+			seenReceipts[receipt.Generation] {
 			return ErrInvalidTask
 		}
 		seenReceipts[receipt.Generation] = true
@@ -471,6 +479,10 @@ func validWorker(worker Worker) bool {
 
 	if worker.OwnedWorkspaceLabel != "" &&
 		(!validAtom(worker.OwnedWorkspaceLabel, false) || worker.Workspace == "" || worker.PendingAdoption) {
+		return false
+	}
+	if !validWorktreeLease(worker.Lease) ||
+		(worker.Lease != (WorktreeLease{}) && (worker.Lease.State != LeaseHeld || worker.Lease.Path != worker.Worktree || worker.Lease.Project != worker.Project || worker.PendingAdoption)) {
 		return false
 	}
 	if !validAtom(worker.Name, false) || len(worker.AgentArgs) == 0 ||

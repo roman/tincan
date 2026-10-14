@@ -17,6 +17,7 @@ import (
 	"github.com/roman/tincan/pkg/supervise"
 	"github.com/roman/tincan/pkg/taskops"
 	"github.com/roman/tincan/pkg/taskstate"
+	"github.com/roman/tincan/pkg/worktree"
 	"golang.org/x/sys/unix"
 )
 
@@ -109,7 +110,14 @@ func New(config Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	service, err := taskops.NewWithWorkerCommands(root, recipient, config.WorkerCommands)
+	service, err := taskops.NewWithWorkerTools(
+		root,
+		recipient,
+		taskops.WorkerTools{
+			Commands: config.WorkerCommands,
+			Pool:     worktree.PoolClient{Executable: config.TreehouseExecutable},
+		},
+	)
 	if err != nil {
 		return nil, err
 	}

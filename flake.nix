@@ -32,7 +32,7 @@
         pkgs.buildGoModule ((goModule pkgs) // {
           pname = "tincan-commands";
           subPackages = [ "cmd/..." ];
-          nativeCheckInputs = [ pkgs.git ];
+          nativeCheckInputs = [ pkgs.git treehouse.packages.${pkgs.stdenv.hostPlatform.system}.default ];
           TREEHOUSE_TEST_EXECUTABLE = "${treehouse.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/treehouse";
           checkPhase = ''
             runHook preCheck

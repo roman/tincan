@@ -30,8 +30,6 @@ func launchArguments(root string) []string {
 		"codex",
 		"--project",
 		"/repo",
-		"--worktree",
-		"/worker",
 		"--branch",
 		"task/work",
 		"--base-commit",
@@ -105,6 +103,17 @@ func TestLaunchPreservesRequestAndReportsHostOutcome(t *testing.T) {
 						},
 					}
 				}
+				if response.Transition != nil && response.Transition.Worker != nil {
+					response.Transition.Worker.Lease = taskstate.WorktreeLease{
+						ID:         "lease-1",
+						Holder:     "holder",
+						Project:    "/repo",
+						Path:       "/worker",
+						Branch:     "task/work",
+						BaseCommit: strings.Repeat("a", 40),
+						State:      taskstate.LeaseHeld,
+					}
+				}
 				if mode == "owned" {
 					response.Transition.Worker.OwnedWorkspaceLabel = "concierge-gen-1"
 				}
@@ -155,6 +164,17 @@ func TestLaunchPreservesRequestAndReportsHostOutcome(t *testing.T) {
 				}
 				if mode == "native checkpoint" {
 					response.Outcome = hostservice.Blocked
+					response.Transition.LaunchIntent.Worktree = "/worker"
+					response.Transition.LaunchIntent.LeaseHolder = "holder"
+					response.Transition.LaunchIntent.Lease = taskstate.WorktreeLease{
+						ID:         "lease-1",
+						Holder:     "holder",
+						Project:    "/repo",
+						Path:       "/worker",
+						Branch:     "task/work",
+						BaseCommit: strings.Repeat("a", 40),
+						State:      taskstate.LeaseHeld,
+					}
 					response.Transition.LaunchIntent.Phase = taskstate.LaunchAgentRequested
 					response.Transition.LaunchIntent.Endpoint = &taskstate.LaunchEndpoint{
 						Workspace: request.Launch.Workspace,
@@ -221,7 +241,7 @@ func TestLaunchPreservesRequestAndReportsHostOutcome(t *testing.T) {
 					TaskID:     "task-1",
 					Harness:    "codex",
 					Project:    "/repo",
-					Worktree:   "/worker",
+					Worktree:   "",
 					Branch:     "task/work",
 					BaseCommit: strings.Repeat("a", 40),
 					Workspace:  "w1",

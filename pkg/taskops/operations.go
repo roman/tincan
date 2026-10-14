@@ -11,6 +11,7 @@ import (
 	"github.com/roman/tincan/pkg/inbox"
 	"github.com/roman/tincan/pkg/taskstate"
 	"github.com/roman/tincan/pkg/taskview"
+	"github.com/roman/tincan/pkg/worktree"
 )
 
 var ErrBlockedDependency = errors.New("task has an unfinished dependency")
@@ -23,6 +24,7 @@ type Service struct {
 	store            *taskstate.Store
 	primaryRecipient inbox.Recipient
 	workerCommands   CommandPaths
+	pool             worktree.PoolClient
 }
 
 // New prepares backlog operations for the selected task root.

@@ -89,6 +89,8 @@ esac
 
 func TestUncertainLaunchReservationRemainsTrackedForRecovery(t *testing.T) {
 	server, input := launchRequestFixture(t)
+	input.Worktree = ""
+	server.config.TreehouseExecutable = "/tools/treehouse"
 	git := filepath.Join(t.TempDir(), "git")
 	if err := os.WriteFile(git, []byte("#!/bin/sh\ncase \"$3\" in\ncheck-ref-format) exit 0 ;;\ncat-file) printf 'commit\\n'; exit 0 ;;\nesac\nexit 72\n"), 0700); err != nil {
 		t.Fatal(err)
@@ -130,11 +132,12 @@ func TestUncertainLaunchReservationRemainsTrackedForRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	recovered := after.Snapshot().LaunchIntent
-	if recovered == nil || recovered.Phase != taskstate.LaunchPreparing {
+	if recovered == nil || recovered.Phase != taskstate.LaunchLeaseRequested {
 		t.Fatal("background recovery did not confirm and continue the stored reservation")
 	}
 	copy := *recovered
 	copy.Phase = intent.Phase
+	copy.LeaseHolder = intent.LeaseHolder
 	if !reflect.DeepEqual(*intent, copy) {
 		t.Fatal("recovery changed the reserved launch identity or request")
 	}

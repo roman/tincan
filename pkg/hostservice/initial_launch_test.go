@@ -82,6 +82,9 @@ func TestHostLaunchFailurePreservesIntentAndReleasesReservation(t *testing.T) {
 	}
 	server.config.GitExecutable = git
 	ctx := context.Background()
+	if _, err := server.reserveInitialLaunch(ctx, input); err != nil {
+		t.Fatal(err)
+	}
 	response, err := server.perform(ctx, Request{Operation: Launch, Launch: &input})
 	if err != nil || response.Outcome != Outcome("pending") || response.Transition == nil ||
 		response.Error == "" {
@@ -108,6 +111,8 @@ func TestHostLaunchPreflightFailureLeavesTaskUnchanged(t *testing.T) {
 	for _, invalid := range []string{"branch", "missing commit", "blob", "Git invocation"} {
 		t.Run(invalid, func(t *testing.T) {
 			server, input := launchRequestFixture(t)
+			input.Worktree = ""
+			server.config.TreehouseExecutable = "/tools/treehouse"
 			t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 			t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 			input.Project = t.TempDir()
@@ -491,6 +496,8 @@ func TestHostLaunchRejectsInvalidWorkspaceBeforeReservation(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			server, input := launchRequestFixture(t)
+			input.Worktree = ""
+			server.config.TreehouseExecutable = "/tools/treehouse"
 			ctx := context.Background()
 			git := filepath.Join(t.TempDir(), "git")
 			script := "#!/bin/sh\ncase \"$3\" in\ncheck-ref-format) exit 0 ;;\ncat-file) printf 'commit\\n'; exit 0 ;;\nesac\nexit 72\n"
