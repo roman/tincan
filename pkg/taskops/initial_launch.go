@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/roman/tincan/pkg/firstmate"
@@ -103,6 +104,7 @@ func (service *Service) ContinueInitialLaunch(
 		}
 		return taskstate.Task{}, err
 	}
+	resume = append(slices.Clone(intent.AgentArgs), resume...)
 	if err := config.Git.VerifyIdentity(ctx, launchWorktree(intent)); err != nil {
 		return taskstate.Task{}, err
 	}

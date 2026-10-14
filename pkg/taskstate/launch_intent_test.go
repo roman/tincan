@@ -343,3 +343,65 @@ func TestInitialLaunchEndpointRejectsAnotherTasksPane(t *testing.T) {
 		t.Fatalf("conflict changed intent: %v", err)
 	}
 }
+
+func TestLaunchResumeUpgradePreservesCapturedIdentity(t *testing.T) {
+	for _, harness := range []string{"codex", "claude"} {
+		t.Run(harness, func(t *testing.T) {
+			intent := launchForTest()
+			intent.Harness = harness
+			task, err := taskForTransition(t).ReserveInitialLaunch(intent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, advance := range []func(Task) (Task, error){
+				func(task Task) (Task, error) { return task.BeginLaunchPreparation("gen-1") },
+				func(task Task) (Task, error) { return task.RequestLaunchPane("gen-1") },
+				func(task Task) (Task, error) {
+					return task.RecordLaunchEndpoint("gen-1", LaunchEndpoint{Workspace: intent.Workspace, Tab: "t1", Pane: "p1"})
+				},
+				func(task Task) (Task, error) { return task.RequestLaunchAgent("gen-1") },
+			} {
+				task, err = advance(task)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			selector := "resume"
+			if harness == "claude" {
+				selector = "--resume"
+			}
+			task, err = task.RecordLaunchResume("gen-1", []string{selector, "native-session"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, arguments := range [][]string{
+				{"--model", "other-model", selector, "native-session"},
+				{"--model", "example", selector, "other-session"},
+				{selector, "native-session", "--model", "example"},
+				{"--model", "example", "--model", "example", selector, "native-session"},
+			} {
+				if _, err := task.RecordLaunchResume("gen-1", arguments); !errors.Is(
+					err,
+					ErrInvalidTransition,
+				) {
+					t.Fatalf("accepted conflicting resume upgrade %v: %v", arguments, err)
+				}
+			}
+			expected := []string{"--model", "example", selector, "native-session"}
+			upgraded, err := task.RecordLaunchResume("gen-1", expected)
+			if err != nil {
+				t.Fatal(err)
+			}
+			retried, err := upgraded.RecordLaunchResume("gen-1", expected)
+			if err != nil || !reflect.DeepEqual(upgraded.Snapshot(), retried.Snapshot()) {
+				t.Fatalf("upgrade retry changed state: %v", err)
+			}
+			if _, err := upgraded.RecordLaunchResume("gen-1", append([]string{"--model", "example"}, expected...)); !errors.Is(
+				err,
+				ErrInvalidTransition,
+			) {
+				t.Fatalf("upgraded caller options twice: %v", err)
+			}
+		})
+	}
+}

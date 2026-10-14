@@ -138,7 +138,7 @@ func (task Task) advanceInitialLaunch(generation string, previous, next LaunchPh
 	return newTransition(snapshot)
 }
 
-// RecordLaunchResume captures arguments derived from the actual native session.
+// RecordLaunchResume captures caller options and the actual native session identity.
 func (task Task) RecordLaunchResume(generation string, arguments []string) (Task, error) {
 	intent := task.record.LaunchIntent
 	if intent == nil || intent.Generation != generation || intent.Phase != LaunchAgentRequested ||
@@ -149,10 +149,22 @@ func (task Task) RecordLaunchResume(generation string, arguments []string) (Task
 		if slices.Equal(intent.ResumeArgs, arguments) {
 			return task, nil
 		}
-		return Task{}, ErrInvalidTransition
+		selector := "resume"
+		if intent.Harness == "claude" {
+			selector = "--resume"
+		}
+		expected := append(slices.Clone(intent.AgentArgs), intent.ResumeArgs...)
+		if len(intent.ResumeArgs) != 2 || intent.ResumeArgs[0] != selector ||
+			len(intent.AgentArgs) == 0 ||
+			!slices.Equal(arguments, expected) {
+			return Task{}, ErrInvalidTransition
+		}
 	}
 	snapshot := task.Snapshot()
 	snapshot.LaunchIntent.ResumeArgs = slices.Clone(arguments)
+	if snapshot.Worker != nil {
+		snapshot.Worker.AgentArgs = slices.Clone(arguments)
+	}
 	return newTransition(snapshot)
 }
 

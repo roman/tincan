@@ -403,6 +403,16 @@ func TestInitialLaunchSuppliesStaticWorkerProtocol(t *testing.T) {
 			}
 			runner.intent.Harness = harness
 			runner.intent.AgentArgs = []string{"--model", "custom-model"}
+			if harness == "codex" {
+				runner.intent.AgentArgs = append(
+					runner.intent.AgentArgs,
+					"--profile",
+					"worker-profile",
+				)
+			} else {
+				runner.intent.AgentArgs = append(runner.intent.AgentArgs, "--append-system-prompt", "worker context")
+			}
+
 			runner.intent.Body = "private-assignment-canary"
 			if _, err := service.store.ReserveInitialLaunch(ctx, "task-1", runner.intent); err != nil {
 				t.Fatal(err)
@@ -428,16 +438,132 @@ func TestInitialLaunchSuppliesStaticWorkerProtocol(t *testing.T) {
 			if harness == "claude" {
 				resume = "--resume"
 			}
-			want := []string{resume, "native-session"}
-			if got := runner.startArgs[len(runner.startArgs)-3 : len(runner.startArgs)-1]; !reflect.DeepEqual(
+			want := append(
+				append([]string(nil), runner.intent.AgentArgs...),
+				resume,
+				"native-session",
+			)
+			if got := runner.startArgs[len(runner.startArgs)-1-len(runner.intent.AgentArgs) : len(runner.startArgs)-1]; !reflect.DeepEqual(
 				got,
-				[]string{"--model", "custom-model"},
+				runner.intent.AgentArgs,
 			) {
 				t.Fatalf("launch options changed: %v", got)
 			}
 			if got := task.Snapshot().Worker.AgentArgs; !reflect.DeepEqual(got, want) {
 				t.Fatalf("reusable arguments changed: %v", got)
 			}
+			bound := task.Snapshot().Worker
+			restarted := &workerRunner{
+				worktree: bound.Worktree,
+				pane:     bound.Pane,
+				harness:  harness,
+				absent:   true,
+			}
+			worker, err := service.SupervisedWorker(
+				"task-1",
+				config.MessageRoot,
+				herdr.Client{SessionRunner: restarted},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for restart := 0; restart < 2; restart++ {
+				restarted.absent = true
+				if err := worker.Restart(ctx); err != nil {
+					t.Fatal(err)
+				}
+				loaded, err := service.store.Read(ctx, "task-1")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := loaded.Snapshot().Worker.AgentArgs; !reflect.DeepEqual(got, want) {
+					t.Fatalf("restart changed stored options: %v", got)
+				}
+				arguments := restarted.startArgs
+				if len(arguments) != 10+len(want)+1 ||
+					!reflect.DeepEqual(arguments[10:len(arguments)-1], want) ||
+					arguments[len(arguments)-1] != protocol {
+					t.Fatalf("restart dropped or duplicated caller options/protocol: %v", arguments)
+				}
+				if !strings.Contains(arguments[9], loaded.Snapshot().Worker.Generation) {
+					t.Fatalf("restart lost its new generation: %v", arguments[:10])
+				}
+			}
+
 		})
+	}
+}
+
+func TestInterruptedLaunchRestoresCallerOptions(t *testing.T) {
+	for _, harness := range []string{"codex", "claude"} {
+		for _, phase := range []string{"native recorded", "adoption reserved", "adoption confirmed", "worker started"} {
+			t.Run(harness+"/"+phase, func(t *testing.T) {
+				service, runner, config := initialLaunchFixture(t)
+				ctx := context.Background()
+				if _, err := service.store.Update(ctx, "task-1", func(task taskstate.Task) (taskstate.Task, error) { return task.CancelInitialLaunch("gen-1") }); err != nil {
+					t.Fatal(err)
+				}
+				runner.intent.Harness = harness
+				runner.intent.AgentArgs = []string{"--model", "custom-model"}
+				if _, err := service.store.ReserveInitialLaunch(ctx, "task-1", runner.intent); err != nil {
+					t.Fatal(err)
+				}
+				if err := config.Git.Prepare(ctx, launchWorktree(&runner.intent)); err != nil {
+					t.Fatal(err)
+				}
+				for _, advance := range []func(taskstate.Task) (taskstate.Task, error){
+					func(task taskstate.Task) (taskstate.Task, error) { return task.BeginLaunchPreparation("gen-1") },
+					func(task taskstate.Task) (taskstate.Task, error) { return task.RequestLaunchPane("gen-1") },
+				} {
+					if _, err := service.store.Update(ctx, "task-1", advance); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if _, err := service.store.RecordLaunchEndpoint(ctx, "task-1", "gen-1", taskstate.LaunchEndpoint{Workspace: "w1", Tab: "w1:t2", Pane: "w1:p2"}); err != nil {
+					t.Fatal(err)
+				}
+				selector := "resume"
+				if harness == "claude" {
+					selector = "--resume"
+				}
+				bare := []string{selector, "native-session"}
+				for _, advance := range []func(taskstate.Task) (taskstate.Task, error){
+					func(task taskstate.Task) (taskstate.Task, error) { return task.RequestLaunchAgent("gen-1") },
+					func(task taskstate.Task) (taskstate.Task, error) { return task.RecordLaunchResume("gen-1", bare) },
+				} {
+					if _, err := service.store.Update(ctx, "task-1", advance); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if phase != "native recorded" {
+					if _, err := service.store.ReserveAdoption(ctx, "task-1", taskstate.Worker{Name: runner.intent.Name, Harness: harness, Session: "work", Pane: "w1:p2", Project: runner.intent.Project, Worktree: runner.intent.Worktree, Generation: "gen-1", AgentArgs: bare}); err != nil {
+						t.Fatal(err)
+					}
+					if phase == "adoption confirmed" || phase == "worker started" {
+						if _, err := service.store.Update(ctx, "task-1", func(task taskstate.Task) (taskstate.Task, error) { return task.ConfirmAdoption("w1", "w1:t2") }); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				if phase == "worker started" {
+					if _, err := service.Start(ctx, "task-1"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				runner.created, runner.started = true, true
+				task, err := service.ContinueInitialLaunch(ctx, "task-1", "gen-1", config)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := append(append([]string(nil), runner.intent.AgentArgs...), bare...)
+				if got := task.Snapshot().Worker.AgentArgs; !reflect.DeepEqual(got, want) {
+					t.Fatalf("interrupted launch lost options: %v", got)
+				}
+				if task.Snapshot().LaunchIntent != nil || runner.creates != 0 ||
+					runner.starts != 0 {
+					t.Fatal("recovery repeated native effects or retained intent")
+				}
+			})
+		}
 	}
 }
