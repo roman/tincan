@@ -1,96 +1,68 @@
 {
-  description = "Tincan communication and Concierge supervisor tools";
+  description = "Tincan durable agent messages and notifications";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/release-25.11";
   inputs.herdr.url = "github:herdrdev/herdr/v0.9.3";
 
-  inputs.treehouse.url = "github:kunchenguid/treehouse/v3.1.1";
-  inputs.treehouse.inputs.nixpkgs.follows = "nixpkgs";
-
-  outputs = { self, nixpkgs, herdr, treehouse }:
+  outputs = { self, nixpkgs, herdr }:
     let
-      systems = [
-        "x86_64-linux"
-        "aarch64-linux"
-        "x86_64-darwin"
-        "aarch64-darwin"
-      ];
+      systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
       forEachSystem = function:
         nixpkgs.lib.genAttrs systems (system: function (import nixpkgs { inherit system; }));
       golinesFlags = "-m 100 --no-reformat-tags --base-formatter=gofmt";
       goSource = pkgs: pkgs.lib.fileset.toSource {
         root = ./.;
-        fileset = pkgs.lib.fileset.unions [ ./go.mod ./go.sum ./cmd ./pkg ./internal ];
+        fileset = pkgs.lib.fileset.unions [ ./go.mod ./go.sum ./cmd ./pkg ];
       };
-      goModule = pkgs: {
+      buildTransport = pkgs: pkgs.buildGoModule {
+        pname = "tincan-command";
         version = "0.1.0";
         src = goSource pkgs;
         go = pkgs.go_1_25;
-        vendorHash = "sha256-dnZtAeufL7NxseT95FGiPCvq6oGp6eUO7/sIQEHNRa0=";
+        vendorHash = "sha256-Fx5aHPDPjwe9iomWBJa3yMcuIHx4W2CtHwMg1q62rDI=";
+        subPackages = [ "cmd/tincan" ];
+        checkPhase = ''
+          runHook preCheck
+          go list -buildvcs=false ./... > tincan-packages
+          while IFS= read -r package; do
+            case "$package" in
+              github.com/roman/tincan/cmd/tincan|github.com/roman/tincan/pkg/tincancli|github.com/roman/tincan/pkg/inbox|github.com/roman/tincan/pkg/notify|github.com/roman/tincan/pkg/herdr) ;;
+              *)
+                printf 'Tincan repository contains a non-transport package: %s\n' "$package" >&2
+                exit 1
+                ;;
+            esac
+          done < tincan-packages
+          go list -deps ./cmd/tincan > tincan-dependencies
+          while IFS= read -r dependency; do
+            case "$dependency" in
+              github.com/roman/tincan/cmd/tincan|github.com/roman/tincan/pkg/tincancli|github.com/roman/tincan/pkg/inbox|github.com/roman/tincan/pkg/notify|github.com/roman/tincan/pkg/herdr) ;;
+              github.com/roman/tincan/*|github.com/roman/concierge|github.com/roman/concierge/*)
+                printf 'Forbidden Tincan dependency: %s\n' "$dependency" >&2
+                exit 1
+                ;;
+            esac
+          done < tincan-dependencies
+          go test ./...
+          runHook postCheck
+        '';
       };
-      buildTransport = pkgs:
-        pkgs.buildGoModule ((goModule pkgs) // {
-          pname = "tincan-command";
-          subPackages = [ "cmd/tincan" ];
-          checkPhase = ''
-            runHook preCheck
-            go list -deps ./cmd/tincan > tincan-dependencies
-            while IFS= read -r dependency; do
-              case "$dependency" in
-                github.com/roman/tincan/cmd/tincan|github.com/roman/tincan/pkg/tincancli|github.com/roman/tincan/pkg/inbox|github.com/roman/tincan/pkg/notify|github.com/roman/tincan/pkg/herdr) ;;
-                github.com/roman/tincan/*)
-                  printf 'Forbidden Tincan dependency: %s\n' "$dependency" >&2
-                  exit 1
-                  ;;
-              esac
-            done < tincan-dependencies
-            go test ./cmd/tincan ./pkg/tincancli ./pkg/inbox ./pkg/notify ./pkg/herdr
-            runHook postCheck
-          '';
-        });
-      buildCommands = pkgs:
-        pkgs.buildGoModule ((goModule pkgs) // {
-          pname = "tincan-commands";
-          subPackages = [ "cmd/concierge" ];
-          nativeCheckInputs = [ pkgs.git treehouse.packages.${pkgs.stdenv.hostPlatform.system}.default ];
-          TREEHOUSE_TEST_EXECUTABLE = "${treehouse.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/treehouse";
-          checkPhase = ''
-            runHook preCheck
-            go test ${pkgs.lib.optionalString pkgs.stdenv.isDarwin ''-ldflags "-X=github.com/roman/tincan/pkg/presentation.presentationNamespace=$TMPDIR/presentation-locks"''} ./...
-            runHook postCheck
-          '';
-        });
     in
     {
       packages = forEachSystem (pkgs:
         let
-          system = pkgs.stdenv.hostPlatform.system;
-          herdrPackage = herdr.packages.${system}.default;
-          transportCommand = buildTransport pkgs;
-          supervisorCommand = buildCommands pkgs;
-          mkProgram = { name, command, runtime ? null }: pkgs.runCommand "${name}-0.1.0" {
-            nativeBuildInputs = pkgs.lib.optionals (runtime != null) [ pkgs.makeWrapper ];
-            disallowedRequisites = pkgs.lib.optionals (runtime == null) [ herdrPackage ];
+          command = buildTransport pkgs;
+          herdrPackage = herdr.packages.${pkgs.stdenv.hostPlatform.system}.default;
+          tincan = pkgs.runCommand "tincan-0.1.0" {
+            nativeBuildInputs = [ pkgs.makeWrapper ];
           } ''
-            install -Dm755 ${command}/bin/${name} "$out/bin/${name}"
-            ${pkgs.lib.optionalString (runtime != null) ''
-              wrapProgram "$out/bin/${name}" --prefix PATH : ${runtime}/bin
-            ''}
+            install -Dm755 ${command}/bin/tincan "$out/bin/tincan"
+            wrapProgram "$out/bin/tincan" --prefix PATH : ${herdrPackage}/bin
           '';
-          tincan = mkProgram { name = "tincan"; command = transportCommand; runtime = herdrPackage; };
-          processTools = if pkgs.stdenv.isLinux then pkgs.procps else
-            pkgs.writeShellScriptBin "ps" ''
-              exec /bin/ps "$@"
-            '';
-          conciergeRuntime = pkgs.symlinkJoin {
-            name = "concierge-runtime";
-            paths = [ herdrPackage processTools pkgs.git tincan treehouse.packages.${system}.default ];
-          };
-          concierge = mkProgram { name = "concierge"; command = supervisorCommand; runtime = conciergeRuntime; };
         in
         {
           default = tincan;
-          inherit tincan concierge;
+          inherit tincan;
         });
 
       formatter = forEachSystem (pkgs: pkgs.writeShellApplication {
@@ -107,18 +79,9 @@
       checks = forEachSystem (pkgs:
         let
           packages = self.packages.${pkgs.stdenv.hostPlatform.system};
-          healthHerdr = pkgs.writeShellScript "concierge-health-herdr" ''
-            case "$1 $2" in
-              'pane get') printf '{"result":{"pane":{"pane_id":"p1","foreground_cwd":"%s","workspace_id":"w1","tab_id":"t1"}}}\n' "$SMOKE_WORKTREE" ;;
-              'agent get') printf '%s\n' '{"result":{"agent":{"pane_id":"p1","agent_status":"working","agent":"codex"}}}' ;;
-              'pane process-info') printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"p1","shell_pid":%s,"foreground_processes":%s}}}\n' "$SMOKE_SHELL_PID" "$SMOKE_FOREGROUND" ;;
-              'status --json') printf '%s\n' '{"server":{"running":true}}' ;;
-              *) exit 71 ;;
-            esac
-          '';
         in
         {
-          inherit (packages) tincan concierge;
+          inherit (packages) tincan;
           tincan-smoke = pkgs.runCommand "tincan-smoke" { } ''
             unset TINCAN_HOME HERDR_SESSION HERDR_SOCKET_PATH HERDR_WORKSPACE_ID HERDR_TAB_ID HERDR_PANE_ID
             export PATH=
@@ -131,90 +94,14 @@
             ${packages.tincan}/bin/tincan notify --help >/dev/null
             : > "$out"
           '';
-          go-source = pkgs.runCommand "tincan-go-source" { src = (goModule pkgs).src; } ''
+          go-source = pkgs.runCommand "tincan-go-source" { src = goSource pkgs; } ''
             test -e "$src/go.mod"
-            test -e "$src/cmd"
-            test -e "$src/pkg"
+            test -e "$src/cmd/tincan"
+            test -e "$src/pkg/inbox"
+            test ! -e "$src/cmd/concierge"
+            test ! -e "$src/pkg/taskops"
             test ! -e "$src/README.md"
             touch "$out"
-          '';
-          concierge-smoke = pkgs.runCommand "concierge-smoke" { } ''
-            unset CONCIERGE_HOME TINCAN_HOME TINCAN_HERDR HERDR_SESSION HERDR_SOCKET_PATH HERDR_WORKSPACE_ID HERDR_TAB_ID HERDR_PANE_ID
-            export PATH=
-            test -x ${packages.concierge}/bin/concierge
-            test "$(${packages.concierge}/bin/concierge --version)" = 0.1.0
-            set -- ${packages.concierge}/bin/*
-            test "$#" -eq 1
-            test "$1" = ${packages.concierge}/bin/concierge
-            set -- ${packages.tincan}/bin/*
-            test "$#" -eq 1
-            test "$1" = ${packages.tincan}/bin/tincan
-            ${packages.concierge}/bin/concierge --root "$TMPDIR/state" state init > initialized
-            ${pkgs.gnugrep}/bin/grep -qx 'version: 2' initialized
-            ${pkgs.coreutils}/bin/cp ${pkgs.bash}/bin/bash "$TMPDIR/codex"
-            "$TMPDIR/codex" -e <<'INTAKE'
-            ${pkgs.jq}/bin/jq -n --arg cwd "$TMPDIR" \
-              '{cwd:$cwd,session_id:"packaged-intake",hook_event_name:"SessionStart"}' | \
-              ${packages.concierge}/bin/concierge --root "$TMPDIR/state" primary claim >/dev/null
-            ${packages.concierge}/bin/concierge --root "$TMPDIR/state" host serve > "$TMPDIR/host-output" &
-            host_pid=$!
-            trap 'kill "$host_pid" 2>/dev/null || true; wait "$host_pid" 2>/dev/null || true' EXIT
-            for attempt in {1..100}; do
-              test ! -S "$TMPDIR/state/host.sock" || break
-              kill -0 "$host_pid"
-              ${pkgs.coreutils}/bin/sleep 0.01
-            done
-            ${packages.concierge}/bin/concierge --root "$TMPDIR/state" backlog add smoke-a1 'Packaged intake' \
-              --kind task --repo exmachina >/dev/null
-            INTAKE
-            ${packages.concierge}/bin/concierge --root "$TMPDIR/state" backlog list > backlog
-            ${pkgs.gnugrep}/bin/grep -Fx '  "smoke-a1",queued,"task","exmachina","Packaged intake"' backlog
-            ${packages.concierge}/bin/concierge --root "$TMPDIR/state" backlog show smoke-a1 --full > detail
-            ${pkgs.gnugrep}/bin/grep -Fx '  title: "Packaged intake"' detail
-            ${packages.tincan}/bin/tincan --root "$TMPDIR/messages" inbox send concierge --key wake --body 'Packaged wake' >/dev/null
-            ${packages.concierge}/bin/concierge --root "$TMPDIR/state" --message-root "$TMPDIR/messages" > brief
-            ${pkgs.gnugrep}/bin/grep -Fx 'wakes: 1 pending for concierge' brief
-            ${pkgs.gnugrep}/bin/grep -Fx 'backlog: 1 queued' brief
-            ${packages.concierge}/bin/concierge task reply --help >/dev/null
-            ${packages.concierge}/bin/concierge primary --help >/dev/null
-            ${packages.concierge}/bin/concierge control --help >/dev/null
-            ${packages.concierge}/bin/concierge supervise --help >/dev/null
-
-            export SMOKE_WORKTREE="$TMPDIR"
-            # Health checks exclude PID 1, which Nix uses for the builder shell.
-            "$TMPDIR/codex" -e <<'HEALTH'
-            export SMOKE_SHELL_PID=$$
-            (exec -a codex ${pkgs.coreutils}/bin/coreutils --coreutils-prog=sleep 60) &
-            agent_pid=$!
-            export SMOKE_FOREGROUND='[]'
-            ${pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
-              # Darwin's Nix sandbox blocks /bin/ps; native acceptance covers it.
-              SMOKE_FOREGROUND="$(printf '[{"pid":%s,"name":"codex"}]' "$agent_pid")"
-            ''}
-            trap 'kill "''${host_pid:-}" "$agent_pid" 2>/dev/null || true; wait "''${host_pid:-}" "$agent_pid" 2>/dev/null || true' EXIT
-            ${pkgs.jq}/bin/jq --arg worktree "$TMPDIR" \
-              '.state = "in_flight" | .worker = {name:"smoke",harness:"codex",session:"smoke",workspace:"w1",tab:"t1",pane:"p1",project:$worktree,worktree:$worktree,generation:"gen-smoke",agent_args:["resume","smoke"]}' \
-              "$TMPDIR/state/records/smoke-a1.json" > record
-            ${pkgs.coreutils}/bin/mv record "$TMPDIR/state/records/smoke-a1.json"
-            ${pkgs.jq}/bin/jq -n --arg cwd "$TMPDIR" \
-              '{cwd:$cwd,session_id:"packaged-health",hook_event_name:"SessionStart"}' | \
-              ${packages.concierge}/bin/concierge --root "$TMPDIR/state" primary claim >/dev/null
-            ${packages.concierge}/bin/concierge --root "$TMPDIR/state" --message-root "$TMPDIR/messages" \
-              host --herdr ${healthHerdr} serve > "$TMPDIR/health-host-output" &
-            host_pid=$!
-            for attempt in {1..100}; do
-              if ${pkgs.gnugrep}/bin/grep -q '^status: ready$' "$TMPDIR/health-host-output"; then break; fi
-              kill -0 "$host_pid"
-              ${pkgs.coreutils}/bin/sleep 0.01
-            done
-            ${pkgs.gnugrep}/bin/grep -q '^status: ready$' "$TMPDIR/health-host-output"
-            ${packages.concierge}/bin/concierge --root "$TMPDIR/state" --message-root "$TMPDIR/messages" \
-              supervise --herdr ${healthHerdr} task smoke-a1 > supervision
-            ${pkgs.gnugrep}/bin/grep -qx 'supervision: active' supervision
-            ${packages.concierge}/bin/concierge --root "$TMPDIR/state" supervise stop task smoke-a1 > stopped
-            ${pkgs.gnugrep}/bin/grep -qx 'supervision: stopped' stopped
-            HEALTH
-            : > "$out"
           '';
           go-format = pkgs.runCommand "tincan-go-format" {
             nativeBuildInputs = [ pkgs.golines pkgs.go_1_25 ];
@@ -228,14 +115,13 @@
             fi
             touch "$out"
           '';
-          go-tests = buildCommands pkgs;
+          go-tests = buildTransport pkgs;
         });
 
-      devShells = forEachSystem (pkgs:
-        {
-          default = pkgs.mkShell {
-            packages = [ pkgs.go_1_25 pkgs.gopls pkgs.golines herdr.packages.${pkgs.stdenv.hostPlatform.system}.default ];
-          };
-        });
+      devShells = forEachSystem (pkgs: {
+        default = pkgs.mkShell {
+          packages = [ pkgs.go_1_25 pkgs.gopls pkgs.golines herdr.packages.${pkgs.stdenv.hostPlatform.system}.default ];
+        };
+      });
     };
 }
