@@ -143,3 +143,65 @@ func TestRestartRecoversMigratedPendingGeneration(t *testing.T) {
 		})
 	}
 }
+
+func TestRestartRejectsHistoryWithoutSourceGeneration(t *testing.T) {
+	running := runningTaskForRestart(t)
+	reserved, err := running.ReserveLaunch("gen-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	advanced, err := reserved.AdvanceGeneration("gen-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := advanced.RecordRestart(RestartPlan{From: "gen-2", To: "gen-2"}); err == nil {
+		t.Fatal("saved a restart plan without the previous generation")
+	}
+	snapshot := advanced.Snapshot()
+	snapshot.Worker.Restarts = []RestartPlan{{From: "gen-2", To: "gen-2"}}
+	if _, err := NewMigrated(snapshot); err == nil {
+		t.Fatal("decoded a restart plan without the previous generation")
+	}
+}
+
+func TestRestartHistoryRejectsMutationAndGenerationReuse(t *testing.T) {
+	running := runningTaskForRestart(t)
+	reserved, err := running.ReserveLaunch("gen-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := RestartPlan{From: "gen-1", To: "gen-2"}
+	recorded, err := reserved.RecordRestart(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := recorded.RecordRestart(plan); err != nil {
+		t.Fatal(err)
+	}
+	plan.From = "gen-3"
+	if _, err := recorded.RecordRestart(plan); err == nil {
+		t.Fatal("changed an existing recovery plan")
+	}
+	advanced, err := recorded.AdvanceGeneration("gen-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed, err := advanced.CompleteLaunch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := completed.ReserveLaunch("gen-1"); err == nil {
+		t.Fatal("reused a retired source generation")
+	}
+}
+
+func TestRestartHistoryRejectsGenerationCycleOnDecode(t *testing.T) {
+	snapshot := runningTaskForRestart(t).Snapshot()
+	snapshot.Worker.Restarts = []RestartPlan{
+		{From: "gen-1", To: "gen-2"},
+		{From: "gen-2", To: "gen-1"},
+	}
+	if _, err := NewMigrated(snapshot); err == nil {
+		t.Fatal("decoded cyclic restart generations")
+	}
+}

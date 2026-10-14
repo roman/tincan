@@ -63,6 +63,19 @@ func (worker *SupervisedWorker) Restart(ctx context.Context) error {
 			}); err != nil {
 				return err
 			}
+			if err := worker.checkPendingResolutions(bound); err != nil {
+				if errors.Is(err, errPendingAcceptance) {
+					_, cancelErr := task.Apply(taskstate.Task.CancelLaunch)
+					return errors.Join(err, cancelErr)
+				}
+				return err
+			}
+			if err := worker.reserveRestartRecovery(task, generation); err != nil {
+				return err
+			}
+			if err := worker.finishRestartRecovery(*task.Current().Snapshot().Worker); err != nil {
+				return err
+			}
 			if err := worker.sendBootstrap(generation); err != nil {
 				return err
 			}

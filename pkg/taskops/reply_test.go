@@ -400,7 +400,7 @@ func TestResolveDoesNotReportUnappliedPartialResult(t *testing.T) {
 				reply.ID.String(),
 				taskstate.Close,
 				"2026-10-12",
-				func(context.Context, string, string, taskstate.CompletionMode, string) (taskstate.Task, error) {
+				func(*taskstate.LockedTask, string, taskstate.CompletionMode, string) (taskstate.Task, error) {
 					return taskstate.Task{}, taskstate.ErrInvalidTransition
 				},
 			)

@@ -89,6 +89,11 @@ func (worker *SupervisedWorker) Observe(ctx context.Context) error {
 			switch worker.client.Health(ctx, target).Endpoint {
 			case herdr.Alive:
 				if bound.PendingLaunch != "" {
+					if bound.PendingLaunch == bound.Generation {
+						if err := worker.finishRestartRecovery(bound); err != nil {
+							return err
+						}
+					}
 					transition := taskstate.Task.CompleteLaunch
 					if bound.PendingLaunch != bound.Generation {
 						transition = taskstate.Task.CancelLaunch

@@ -100,7 +100,7 @@ func (service *Service) receiveAssignment(
 		if err != nil {
 			return err
 		}
-		assignment, err := taskprotocol.DecodeAssignment(message.Body, service.root, taskID)
+		assignment, err := taskprotocol.ReadAssignment(messages, service.root, taskID, message.ID)
 		if err != nil {
 			return err
 		}
@@ -119,7 +119,7 @@ func (service *Service) receiveAssignment(
 			result.State = AssignmentStale
 			return nil
 		}
-		result = AssignmentStatus{State: AssignmentCurrent, Body: assignment.Body}
+		result = AssignmentStatus{State: AssignmentCurrent, Body: assignmentDisplay(assignment)}
 		return nil
 	})
 	return result, err

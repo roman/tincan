@@ -61,6 +61,7 @@ func (worker *SupervisedWorker) sendAssignment(
 		if err != nil {
 			return err
 		}
+		callerKey := key
 		if key != "" {
 			key = fmt.Sprintf(
 				"task-assignment:%s:%s:%s:%s",
@@ -70,7 +71,13 @@ func (worker *SupervisedWorker) sendAssignment(
 				key,
 			)
 		}
-		message, err := send(worker.recipient, key, string(envelope))
+		message, recovered, err := worker.recoveredAssignment(bound, callerKey, body)
+		if err != nil {
+			return err
+		}
+		if !recovered {
+			message, err = send(worker.recipient, key, string(envelope))
+		}
 		if err != nil {
 			return err
 		}

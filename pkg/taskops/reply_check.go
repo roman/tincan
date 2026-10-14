@@ -56,7 +56,8 @@ func (service *Service) CheckReply(
 		return CheckedReply{}, err
 	}
 	worker, err := assignmentWorker(task)
-	if err != nil || worker.Generation != reply.SpawnGeneration {
+	if err != nil ||
+		(worker.Generation != reply.SpawnGeneration && !preservedReply(worker, messageID)) {
 		return stale, nil
 	}
 	if reply.AssignmentID != "" {
@@ -66,7 +67,7 @@ func (service *Service) CheckReply(
 		}
 	}
 	return CheckedReply{
-		State: ReplyCurrent, TaskID: reply.Task, Generation: reply.SpawnGeneration,
+		State: ReplyCurrent, TaskID: reply.Task, Generation: worker.Generation,
 		AssignmentID: reply.AssignmentID, Body: reply.Body,
 	}, nil
 }

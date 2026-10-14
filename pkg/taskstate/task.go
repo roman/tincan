@@ -15,6 +15,7 @@ import (
 
 	"github.com/roman/tincan/pkg/firstmate"
 	"github.com/roman/tincan/pkg/herdr"
+	"github.com/roman/tincan/pkg/inbox"
 )
 
 var ErrInvalidTask = errors.New("invalid task record")
@@ -60,21 +61,30 @@ type Definition struct {
 	Closed       string       `json:"closed,omitempty"`
 }
 
+// RestartPlan freezes the mailbox obligations for one launch reservation.
+type RestartPlan struct {
+	From        string   `json:"from"`
+	To          string   `json:"to"`
+	Assignments []string `json:"assignments,omitempty"`
+	Replies     []string `json:"replies,omitempty"`
+}
+
 // Worker preserves the exact launch and endpoint identity for recovery.
 type Worker struct {
-	Name              string   `json:"name"`
-	Harness           string   `json:"harness"`
-	Session           string   `json:"session"`
-	Workspace         string   `json:"workspace,omitempty"`
-	Tab               string   `json:"tab,omitempty"`
-	Pane              string   `json:"pane"`
-	Project           string   `json:"project"`
-	Worktree          string   `json:"worktree"`
-	Generation        string   `json:"generation"`
-	PendingGeneration string   `json:"pending_generation,omitempty"`
-	PendingLaunch     string   `json:"pending_launch,omitempty"`
-	PendingAdoption   bool     `json:"pending_adoption,omitempty"`
-	AgentArgs         []string `json:"agent_args"`
+	Restarts          []RestartPlan `json:"restarts,omitempty"`
+	Name              string        `json:"name"`
+	Harness           string        `json:"harness"`
+	Session           string        `json:"session"`
+	Workspace         string        `json:"workspace,omitempty"`
+	Tab               string        `json:"tab,omitempty"`
+	Pane              string        `json:"pane"`
+	Project           string        `json:"project"`
+	Worktree          string        `json:"worktree"`
+	Generation        string        `json:"generation"`
+	PendingGeneration string        `json:"pending_generation,omitempty"`
+	PendingLaunch     string        `json:"pending_launch,omitempty"`
+	PendingAdoption   bool          `json:"pending_adoption,omitempty"`
+	AgentArgs         []string      `json:"agent_args"`
 }
 
 // CompletionMode selects the queue state after a worker result.
@@ -257,6 +267,11 @@ func cloneWorker(input *Worker) *Worker {
 	}
 	selected := *input
 	selected.AgentArgs = slices.Clone(input.AgentArgs)
+	selected.Restarts = slices.Clone(input.Restarts)
+	for index := range selected.Restarts {
+		selected.Restarts[index].Assignments = slices.Clone(input.Restarts[index].Assignments)
+		selected.Restarts[index].Replies = slices.Clone(input.Restarts[index].Replies)
+	}
 	return &selected
 }
 
@@ -416,6 +431,38 @@ func validDefinition(input Definition) bool {
 }
 
 func validWorker(worker Worker) bool {
+	seen := map[string]bool{}
+	for index, plan := range worker.Restarts {
+		if index == 0 {
+			seen[plan.From] = true
+		}
+		if firstmate.ValidateSpawnGeneration(plan.From) != nil ||
+			firstmate.ValidateSpawnGeneration(plan.To) != nil ||
+			plan.From == plan.To || seen[plan.To] {
+			return false
+		}
+		seen[plan.To] = true
+		if index > 0 && plan.From != worker.Restarts[index-1].To {
+			return false
+		}
+		for _, ids := range [][]string{plan.Assignments, plan.Replies} {
+			unique := map[string]bool{}
+			for _, id := range ids {
+				if _, err := inbox.ParseMessageID(id); err != nil || unique[id] {
+					return false
+				}
+				unique[id] = true
+			}
+		}
+	}
+	if len(worker.Restarts) > 0 {
+		last := worker.Restarts[len(worker.Restarts)-1]
+		if worker.Generation != last.To &&
+			(worker.Generation != last.From || worker.PendingLaunch != last.To) {
+			return false
+		}
+	}
+
 	if !validAtom(worker.Name, false) || len(worker.AgentArgs) == 0 ||
 		!validAtom(worker.Harness, false) ||
 		firstmate.ValidateSpawnGeneration(worker.Generation) != nil {

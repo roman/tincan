@@ -293,6 +293,30 @@ confirmed missing workers with their exact launch arguments. Recovery records
 a new generation and a durable bootstrap message. A registered agent with no
 live process can require Herdr-side repair before a restart succeeds.
 
+Before advancing a generation, recovery saves a plan for pending assignments
+and individual replies already published by that worker. Those replies remain
+acceptable through later restarts. Fresh publications from an old generation
+remain rejected. Reply inspection reports the current worker generation for
+stop and cleanup. Resolution freezes that generation in its disposition so
+an exact retry still works after retirement.
+
+Recovery delivers each unfinished assignment under a key containing its original
+message ID and the target generation. The envelope retains its original body,
+original message ID, and immediate predecessor ID. `task receive` adds a visible
+redelivery marker and instructions to check prior effects before repeating work.
+Workers reply against the new delivery ID. Caller-key retries return the existing
+delivery, including handled deliveries, rather than reopening work. Unkeyed
+assignments remain independent.
+
+Every restart publishes a durable `task-restart` notice to the primary before
+launch. The notice identifies the reservation, preserved replies, and replacement
+assignments. An interrupted retry uses the saved plan and confirms replacements
+before acknowledging their predecessors. Observation completes these obligations
+before confirming a launch. An unfinished reply disposition blocks a new restart
+until the primary retries its acceptance. Legacy launch reservations that already
+advanced without a recovery plan cannot reconstruct their previous generation;
+their notification omits that unavailable source.
+
 Manual pane supervision uses the host session and the supplied launch arguments.
 Task supervision uses the recorded session. Neither supervisor creates a pane.
 A successful supervise command returns after the resident is ready. The host

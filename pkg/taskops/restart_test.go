@@ -157,6 +157,10 @@ func TestWorkerRestartRecoversAdvancedAndMigratedGenerations(t *testing.T) {
 			if err != nil || len(before) != 1 {
 				t.Fatalf("bootstrap = %#v, %v", before, err)
 			}
+			beforeNotices, err := worker.messages.List(service.primaryRecipient)
+			if err != nil || len(beforeNotices) != 1 {
+				t.Fatalf("restart notice before retry = %+v, %v", beforeNotices, err)
+			}
 			firstLaunch := append([]string(nil), runner.startArgs...)
 			runner.onStart = nil
 			if err := worker.Restart(ctx); err != nil {
@@ -170,11 +174,38 @@ func TestWorkerRestartRecoversAdvancedAndMigratedGenerations(t *testing.T) {
 				!after[0].CreatedAt.Equal(before[0].CreatedAt) {
 				t.Fatalf("retry bootstrap = %#v, %v", after, err)
 			}
+			afterNotices, err := worker.messages.List(service.primaryRecipient)
+			if err != nil || len(afterNotices) != 1 ||
+				!reflect.DeepEqual(beforeNotices, afterNotices) {
+				t.Fatalf("restart retry changed primary notification: %+v, %v", afterNotices, err)
+			}
+			var notice struct {
+				Kind string `json:"kind"`
+				From string `json:"from_generation"`
+				To   string `json:"target_generation"`
+			}
+			if err := json.Unmarshal([]byte(afterNotices[0].Body), &notice); err != nil {
+				t.Fatal(err)
+			}
+			if notice.Kind != "task-restart" || notice.To != bound.Generation {
+				t.Fatalf("restart notification = %+v", notice)
+			}
+			if phase == "migrated generation" {
+				if notice.From != "" {
+					t.Fatalf("legacy notification invented a source: %+v", notice)
+				}
+			} else if notice.From != "gen-1" {
+				t.Fatalf("restart notification lost its source: %+v", notice)
+			}
 			current, err = service.store.Read(ctx, "task-1")
 			if err != nil || current.Snapshot().Worker.Generation != bound.Generation ||
 				current.Snapshot().Worker.PendingLaunch != "" {
 				t.Fatalf("recovered worker = %#v, %v", current.Snapshot(), err)
 			}
+			if phase == "migrated generation" && len(current.Snapshot().Worker.Restarts) != 0 {
+				t.Fatal("legacy recovery invented a restart history")
+			}
+
 		})
 	}
 }
