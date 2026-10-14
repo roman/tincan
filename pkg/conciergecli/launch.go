@@ -100,13 +100,19 @@ func writeLaunchProgress(output io.Writer, taskID string, response hostservice.R
 		quote(taskID), response.Outcome, tracking, quote(generation), phase, quote(response.Error), quote("inspect completion with concierge worker show "+quote(taskID))); err != nil {
 		return 1
 	}
+	if response.Checkpoint != nil {
+		intent := snapshot.LaunchIntent
+		if _, err := fmt.Fprintf(output, "checkpoint: %s\nnotification: %s\nsession: %s\npane: %s\nworktree: %s\ncheckpoint_help: %s\n", response.Checkpoint.Kind, response.Checkpoint.Notification, quote(intent.Session), quote(intent.Endpoint.Pane), quote(intent.Worktree), quote(hostservice.NativeCheckpointHelp(intent))); err != nil {
+			return 1
+		}
+	}
 	if response.Outcome == hostservice.Blocked {
 		if snapshot.LaunchIntent == nil {
 			if _, err := fmt.Fprintf(output, "recovery: %s\n", quote("inspect the worker, then request supervision with concierge supervise task "+quote(taskID))); err != nil {
 				return 1
 			}
 		}
-		if snapshot.LaunchIntent != nil && snapshot.Worker == nil {
+		if response.Checkpoint == nil && snapshot.LaunchIntent != nil && snapshot.Worker == nil {
 			if _, err := fmt.Fprintf(output, "recovery: %s\n", quote("inspect the native checkpoint and launch resources; safe abandonment requires concierge task abandon "+quote(taskID)+" --generation "+quote(generation))); err != nil {
 				return 1
 			}

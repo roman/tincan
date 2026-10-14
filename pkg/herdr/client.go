@@ -44,6 +44,7 @@ var (
 	ErrCommand           = errors.New("herdr command failed")
 	ErrResponse          = errors.New("invalid herdr response")
 	ErrAgentPresent      = errors.New("herdr agent already present")
+	ErrAgentNotReady     = errors.New("herdr agent not ready")
 )
 
 // Runner executes the Herdr binary. Its arguments exclude the executable name.
@@ -145,6 +146,14 @@ func (c Client) run(ctx context.Context, args ...string) ([]byte, error) {
 				"%w: %w: %s",
 				ErrCommand,
 				ErrWorkspaceNotFound,
+				response.Error.Message,
+			)
+		}
+		if response.Error.Code == "agent_not_ready" {
+			return nil, fmt.Errorf(
+				"%w: %w: %s",
+				ErrCommand,
+				ErrAgentNotReady,
 				response.Error.Message,
 			)
 		}

@@ -339,6 +339,26 @@ Concierge state root. One live session owns the primary role. Repository skills
 instruct secondary sessions to leave shared task supervision to that owner.
 The default `concierge` command renders the root brief after state setup.
 
+## Native checkpoints
+
+A blocked initial worker remains an unadopted launch intent. Concierge reports
+`checkpoint: folder_trust` for a recognized Claude workspace trust dialog and
+`checkpoint: native_input` for other blocked input or unavailable screen text.
+The response names the recorded session, pane, and worktree and reports whether
+the primary notification was confirmed. It requires an operator decision in the
+existing native dialog. After the dialog is resolved, retry the exact launch;
+background reconciliation also continues the saved intent without creating a
+second worker.
+
+The host publishes a durable `task-native-checkpoint` message to its configured
+primary, including checkpoints first observed during background reconciliation.
+Retries retain one message per task generation and checkpoint kind. A generic
+checkpoint can receive a separate folder-trust classification notice after a
+screen read recovers. Native screen text is used only for bounded diagnostics;
+it is never forwarded as instructions or used to approve a dialog. Concierge
+keeps existing trust, permission, and sandbox settings intact. Task holds and
+identity failures remain separate launch blockers.
+
 ## Automated worker launch
 
 Queue the task first, then ask the host to prepare an isolated worktree and

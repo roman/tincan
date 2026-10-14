@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -86,7 +87,11 @@ func (server *Server) launch(ctx context.Context, input LaunchRequest) (Response
 	defer release()
 	response, err := server.executeInitialLaunch(ctx, input, operatorLaunch)
 	if err != nil {
-		return server.trackedLaunchResult(ctx, input, err)
+		tracked, inspectionErr := server.trackedLaunchResult(ctx, input, err)
+		if inspectionErr == nil {
+			tracked.Checkpoint = response.Checkpoint
+		}
+		return tracked, inspectionErr
 	}
 	release()
 	if _, err := server.supervisionWithMode(ctx, Supervise, SupervisionRequest{TaskID: input.TaskID}, initialResidentStart); err != nil {
@@ -173,7 +178,18 @@ func (server *Server) executeInitialLaunch(
 		},
 	)
 	if err != nil {
-		return Response{}, err
+		if !errors.Is(err, taskops.ErrNativeCheckpoint) {
+			return Response{}, err
+		}
+		checkpoint, noticeErr := server.launchNativeCheckpoint(ctx, input.TaskID)
+		if checkpoint != nil {
+			err = fmt.Errorf(
+				"native checkpoint (%s) requires operator review: %w",
+				checkpoint.Kind,
+				errors.Join(err, noticeErr),
+			)
+		}
+		return Response{Checkpoint: checkpoint}, err
 	}
 	snapshot := task.Snapshot()
 	return Response{Transition: &snapshot}, nil

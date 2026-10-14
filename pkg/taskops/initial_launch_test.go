@@ -76,9 +76,14 @@ func (runner *initialLaunchRunner) RunSession(
 		if !runner.started {
 			return nil, []byte(`{"error":{"code":"agent_not_found"}}`), errors.New("exit 1")
 		}
+		state := "idle"
+		if runner.failure == "native blocked" || runner.failure == "agent blocked" {
+			state = "blocked"
+		}
 		return []byte(
 			fmt.Sprintf(
-				`{"result":{"agent":{"pane_id":"w1:p2","agent_status":"idle","agent":%q,"agent_session":{"source":%q,"agent":%q,"kind":"id","value":"native-session"}}}}`,
+				`{"result":{"agent":{"pane_id":"w1:p2","agent_status":%q,"agent":%q,"agent_session":{"source":%q,"agent":%q,"kind":"id","value":"native-session"}}}}`,
+				state,
 				runner.intent.Harness,
 				"herdr:"+runner.intent.Harness,
 				runner.intent.Harness,
@@ -92,6 +97,13 @@ func (runner *initialLaunchRunner) RunSession(
 		}
 		runner.starts++
 		runner.started = runner.failure != "agent absent"
+		if runner.failure == "agent blocked" {
+			return nil, []byte(
+					`{"error":{"code":"agent_not_ready","message":"agent is blocked during startup"}}`,
+				), errors.New(
+					"exit 1",
+				)
+		}
 		if strings.HasPrefix(runner.failure, "agent") {
 			return nil, nil, errors.New("startup response lost")
 		}
@@ -562,6 +574,55 @@ func TestInterruptedLaunchRestoresCallerOptions(t *testing.T) {
 				if task.Snapshot().LaunchIntent != nil || runner.creates != 0 ||
 					runner.starts != 0 {
 					t.Fatal("recovery repeated native effects or retained intent")
+				}
+			})
+		}
+	}
+}
+
+func TestInitialLaunchDoesNotAdoptBlockedNativeWithSessionID(t *testing.T) {
+	for _, harness := range []string{"codex", "claude"} {
+		for _, failure := range []string{"native blocked", "agent blocked"} {
+			t.Run(harness+"/"+failure, func(t *testing.T) {
+				service, runner, config := initialLaunchFixture(t)
+				ctx := context.Background()
+				if _, err := service.store.Update(ctx, "task-1", func(task taskstate.Task) (taskstate.Task, error) { return task.CancelInitialLaunch("gen-1") }); err != nil {
+					t.Fatal(err)
+				}
+				runner.intent.Harness = harness
+				if _, err := service.store.ReserveInitialLaunch(ctx, "task-1", runner.intent); err != nil {
+					t.Fatal(err)
+				}
+				runner.failure = failure
+				if _, err := service.ContinueInitialLaunch(ctx, "task-1", "gen-1", config); !errors.Is(
+					err,
+					ErrNativeCheckpoint,
+				) {
+					t.Fatalf("blocked launch = %v", err)
+				}
+				current, err := service.store.Read(ctx, "task-1")
+				if err != nil || current.State() != taskstate.Queued ||
+					current.Snapshot().Worker != nil ||
+					current.Snapshot().LaunchIntent == nil ||
+					current.Snapshot().LaunchIntent.Phase != taskstate.LaunchAgentRequested {
+					t.Fatalf("blocked native session was adopted: %+v, %v", current.Snapshot(), err)
+				}
+				starts, creates := runner.starts, runner.creates
+				if _, err := service.ContinueInitialLaunch(ctx, "task-1", "gen-1", config); !errors.Is(
+					err,
+					ErrNativeCheckpoint,
+				) {
+					t.Fatal(err)
+				}
+				if runner.starts != starts || runner.creates != creates {
+					t.Fatal("blocked retry repeated native effects")
+				}
+				runner.failure = ""
+				if _, err := service.ContinueInitialLaunch(ctx, "task-1", "gen-1", config); err != nil {
+					t.Fatal(err)
+				}
+				if runner.starts != starts || runner.creates != creates {
+					t.Fatal("resolved checkpoint created another worker")
 				}
 			})
 		}

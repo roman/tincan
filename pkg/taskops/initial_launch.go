@@ -15,6 +15,7 @@ import (
 )
 
 var ErrInitialLaunchIdentity = errors.New("initial launch identity conflict")
+var ErrNativeCheckpoint = errors.New("native checkpoint requires operator review")
 
 type InitialLaunchConfig struct {
 	Git         worktree.Client
@@ -82,6 +83,17 @@ func (service *Service) ContinueInitialLaunch(
 		return taskstate.Task{}, err
 	}
 	if err := service.prepareInitialAgent(ctx, taskID, intent, config.Git, client, arguments); err != nil {
+		if errors.Is(err, herdr.ErrAgentNotReady) {
+			agent, inspectionErr := client.Get(ctx, intent.Name)
+			if inspectionErr == nil && agent.PaneID == intent.Endpoint.Pane &&
+				agent.Kind == intent.Harness &&
+				agent.Status == herdr.Blocked {
+				if activeErr := service.checkInitialLaunchActive(ctx, taskID, generation); activeErr != nil {
+					return taskstate.Task{}, activeErr
+				}
+				return taskstate.Task{}, errors.Join(ErrNativeCheckpoint, err)
+			}
+		}
 		return taskstate.Task{}, err
 	}
 	_, intent, err = service.initialLaunch(ctx, taskID, generation)
@@ -96,6 +108,12 @@ func (service *Service) ContinueInitialLaunch(
 		return taskstate.Task{}, fmt.Errorf(
 			"%w: initial agent differs from reserved endpoint or harness", ErrInitialLaunchIdentity,
 		)
+	}
+	if agent.Status == herdr.Blocked {
+		if err := service.checkInitialLaunchActive(ctx, taskID, generation); err != nil {
+			return taskstate.Task{}, err
+		}
+		return taskstate.Task{}, ErrNativeCheckpoint
 	}
 	resume, err := nativeResumeArguments(intent.Harness, agent.Session)
 	if err != nil {

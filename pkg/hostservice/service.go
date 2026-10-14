@@ -68,6 +68,7 @@ type StopResult struct {
 }
 
 type Response struct {
+	Checkpoint  *NativeCheckpoint    `json:"checkpoint,omitempty"`
 	Abandoned   *AbandonedLaunch     `json:"abandoned,omitempty"`
 	Status      *StatusResult        `json:"status,omitempty"`
 	Supervision *SupervisionResult   `json:"supervision,omitempty"`
@@ -322,6 +323,9 @@ func Call(ctx context.Context, socket string, request Request) (Response, error)
 }
 
 func validateResponse(response Response, request Request) error {
+	if response.Checkpoint != nil && (request.Operation != Launch || response.Outcome != Blocked) {
+		return errors.New("host returned unrelated native checkpoint data")
+	}
 	if response.Outcome == Pending || response.Outcome == Blocked {
 		if err := validateRequest(request); err != nil {
 			return err

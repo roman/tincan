@@ -46,7 +46,7 @@ func launchArguments(root string) []string {
 }
 
 func TestLaunchPreservesRequestAndReportsHostOutcome(t *testing.T) {
-	for _, mode := range []string{"completed", "pending", "blocked", "supervision stopped", "lost response", "already bound"} {
+	for _, mode := range []string{"completed", "pending", "blocked", "native checkpoint", "supervision stopped", "lost response", "already bound"} {
 		t.Run(mode, func(t *testing.T) {
 			root := shortTaskRoot(t)
 			listener, err := net.ListenUnix(
@@ -109,7 +109,7 @@ func TestLaunchPreservesRequestAndReportsHostOutcome(t *testing.T) {
 					response.Outcome = hostservice.Blocked
 					response.Error = "supervision registration stopped"
 				}
-				if mode == "pending" || mode == "blocked" {
+				if mode == "pending" || mode == "blocked" || mode == "native checkpoint" {
 					input := request.Launch
 					task, err := taskstate.NewQueued(
 						taskstate.Definition{
@@ -150,6 +150,19 @@ func TestLaunchPreservesRequestAndReportsHostOutcome(t *testing.T) {
 						Transition: &snapshot,
 					}
 				}
+				if mode == "native checkpoint" {
+					response.Outcome = hostservice.Blocked
+					response.Transition.LaunchIntent.Phase = taskstate.LaunchAgentRequested
+					response.Transition.LaunchIntent.Endpoint = &taskstate.LaunchEndpoint{
+						Workspace: request.Launch.Workspace,
+						Tab:       "t1",
+						Pane:      "w1:p1",
+					}
+					response.Checkpoint = &hostservice.NativeCheckpoint{
+						Kind:         "native_input",
+						Notification: "sent",
+					}
+				}
 				done <- json.NewEncoder(connection).Encode(response)
 			}()
 			body := " \nDo the requested work.\n "
@@ -165,6 +178,15 @@ func TestLaunchPreservesRequestAndReportsHostOutcome(t *testing.T) {
 			} else if mode == "supervision stopped" {
 				if code != 1 || !strings.Contains(output.String(), "tracking: stopped") || !strings.Contains(output.String(), "phase: supervision_stopped") || !strings.Contains(output.String(), "concierge supervise task") {
 					t.Fatalf("stopped supervision code %d: %s", code, &output)
+				}
+			} else if mode == "native checkpoint" {
+				if code != 1 {
+					t.Fatalf("checkpoint code %d: %s", code, &output)
+				}
+				for _, part := range []string{"launch: blocked", "tracking: automatic", "checkpoint: native_input", "notification: sent", "session: \"work\"", "pane: \"w1:p1\"", "worktree: \"/worker\"", "operator", "native dialog"} {
+					if !strings.Contains(output.String(), part) {
+						t.Fatalf("checkpoint output lacks %q: %s", part, &output)
+					}
 				}
 			} else if mode == "pending" || mode == "blocked" {
 				wantCode := 0

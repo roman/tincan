@@ -46,6 +46,7 @@ func (server *Server) trackedLaunchResult(
 		if snapshot.Definition.Hold != nil || errors.Is(cause, herdr.ErrWorkspaceNotFound) ||
 			errors.Is(cause, herdr.ErrResponse) || errors.Is(cause, herdr.ErrAgentPresent) ||
 			errors.Is(cause, taskops.ErrInitialLaunchIdentity) ||
+			errors.Is(cause, taskops.ErrNativeCheckpoint) ||
 			errors.Is(cause, worktree.ErrIdentity) ||
 			errors.Is(cause, taskstate.ErrInvalidTransition) ||
 			(intent.Endpoint == nil && intent.Phase == taskstate.LaunchPaneRequested && errors.Is(cause, herdr.ErrNotFound)) {
@@ -78,6 +79,9 @@ func validateLaunchProgress(response Response, request Request) error {
 		return errors.New("host returned another launch")
 	}
 	intent := task.Snapshot().LaunchIntent
+	if err := validateNativeCheckpoint(response); err != nil {
+		return err
+	}
 	if intent == nil {
 		completed := response
 		completed.Error = ""

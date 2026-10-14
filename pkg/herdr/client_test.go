@@ -339,3 +339,24 @@ func TestStartWithArgs(t *testing.T) {
 		t.Fatalf("start call = %v, want %v", runner.calls[1], want)
 	}
 }
+
+func TestAgentNotReadyPreservesTypedCause(t *testing.T) {
+	for _, channel := range []string{"stdout", "stderr"} {
+		t.Run(channel, func(t *testing.T) {
+			result := runResponse{err: errors.New("exit 1")}
+			body := []byte(
+				`{"error":{"code":"agent_not_ready","message":"agent requires interactive input"}}`,
+			)
+			if channel == "stdout" {
+				result.stdout = body
+			} else {
+				result.stderr = body
+			}
+			client := Client{Runner: &fakeRunner{responses: []runResponse{result}}}
+			_, err := client.Get(context.Background(), "worker")
+			if !errors.Is(err, ErrAgentNotReady) || !errors.Is(err, ErrCommand) {
+				t.Fatalf("native readiness cause lost: %v", err)
+			}
+		})
+	}
+}
