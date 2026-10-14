@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"github.com/roman/tincan/internal/lockfile"
 	"io"
 	"os"
 	"path/filepath"
@@ -136,7 +137,7 @@ func acquire(ctx context.Context, path string, mode int) (*Guard, error) {
 	}
 	baseName := filepath.Base(path)
 	lockName := "." + strings.TrimPrefix(baseName, ".") + lockSuffix
-	lock, err := parent.OpenFile(lockName, os.O_CREATE|os.O_RDWR, 0o600)
+	lock, err := lockfile.Open(parent, lockName)
 	if err != nil {
 		parent.Close()
 		return nil, err

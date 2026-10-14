@@ -13,7 +13,7 @@ skills and lifecycle hooks supply the session instructions.
 | `concierge backlog` | Queue work, manage holds, dispatch, accept results, and retire worker bindings. |
 | `concierge task` | Adopt workers, exchange bound assignments and replies, stop panes, and inspect tasks. |
 | `concierge worker` | Inspect recorded worker identities and recovery markers. |
-| `concierge primary` | Claim, verify, and release root ownership from Linux lifecycle hooks. |
+| `concierge primary` | Claim, verify, and release root ownership from native lifecycle hooks. |
 | `concierge control` | Inspect, start, and interrupt live Herdr agents. |
 | `concierge supervise` | Monitor a manual pane or supervise a task with inbox delivery and worker recovery. |
 | `concierge brief` | Show pending primary messages, queued work, workers, and unfinished completions. |
@@ -30,7 +30,9 @@ concierge --help
 The primary package outputs each expose one public executable: `tincan` and
 `concierge`. Both include pinned Herdr 0.9.3. Concierge also supplies process
 inspection through Linux `procps` or native `/bin/ps` on macOS. Primary ownership
-requires Linux `/proc`. Herdr is the supported terminal adapter. The commands
+uses Linux `/proc` or native Darwin kernel peer credentials, libproc process identity,
+and the boot-session UUID. Darwin builds require Cgo. Missing identity data
+rejects authorization. Herdr is the supported terminal adapter. The commands
 can use existing panes; they do not create terminal layouts.
 
 ```sh
@@ -42,7 +44,7 @@ nix flake check --system x86_64-linux
 ```
 
 The development shell provides Go 1.25, golines, and Herdr. `nix fmt` formats Go
-at 100 columns. The Linux flake gate builds command packages, checks formatting,
+at 100 columns. The platform flake gate builds command packages, checks formatting,
 runs the Go suite, and tests installed commands with an empty caller `PATH`.
 A dependency check keeps Concierge task packages out of the generic Tincan
 binary.

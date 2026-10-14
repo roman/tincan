@@ -200,7 +200,7 @@ func TestPrimaryMergedRoutingAndRootSelection(t *testing.T) {
 	}
 	var help bytes.Buffer
 	if code := Run(context.Background(), []string{"primary", "claim", "--help"}, strings.NewReader(""), &help, io.Discard); code != 0 ||
-		!strings.Contains(help.String(), "Linux") {
+		!strings.Contains(help.String(), "native process") {
 		t.Fatalf("platform help: %d %s", code, &help)
 	}
 }

@@ -17,7 +17,8 @@ import (
 	"github.com/roman/tincan/pkg/herdr"
 )
 
-const presentationNamespace = "/tmp/firstmate-herdr-presentation"
+// Native build gates override this path at link time to isolate build users.
+var presentationNamespace = "/tmp/firstmate-herdr-presentation"
 
 // WithLock serializes a named session's presentation changes with Firstmate.
 func WithLock(

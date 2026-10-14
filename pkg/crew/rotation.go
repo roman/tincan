@@ -3,6 +3,7 @@ package crew
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/roman/tincan/internal/lockfile"
 	"os"
 	"reflect"
 	"syscall"
@@ -181,7 +182,7 @@ func completePendingGeneration(
 }
 
 func withCrewLock(root *os.Root, operation func() error) error {
-	lock, err := root.OpenFile(".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	lock, err := lockfile.Open(root, ".lock")
 	if err != nil {
 		return err
 	}

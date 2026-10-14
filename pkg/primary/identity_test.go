@@ -1,6 +1,11 @@
 package primary
 
-import "testing"
+import (
+	"errors"
+	"os"
+	"os/exec"
+	"testing"
+)
 
 func TestClassifyExecutable(t *testing.T) {
 	for _, check := range []struct{ path, want string }{
@@ -67,5 +72,16 @@ func TestResolveHookIdentity(t *testing.T) {
 				t.Fatalf("ResolveHookIdentity() = %+v", identity)
 			}
 		})
+	}
+}
+
+func TestReadProcessReportsExitedProcessMissing(t *testing.T) {
+	command := exec.Command(os.Args[0], "-test.run=^$")
+	if err := command.Run(); err != nil {
+		t.Fatal(err)
+	}
+	_, err := readProcess(command.ProcessState.Pid())
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("exited process lookup = %v, want missing process", err)
 	}
 }

@@ -276,7 +276,7 @@ func observeLock(path string) (*lockObservation, error) {
 	observation := &lockObservation{path: path, pathInfo: pathInfo, ownerPath: path}
 	if pathInfo.Mode()&os.ModeSymlink != 0 {
 		target, err := os.Readlink(path)
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.EINVAL) {
 			return nil, nil
 		}
 		if err != nil {

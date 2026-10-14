@@ -40,7 +40,7 @@ type cli struct {
 	Launch      launchCommand       `cmd:"" help:"Launch an isolated worker and dispatch its assignment through the host."`
 	Supervise   supervisionCommands `cmd:"" help:"Monitor workers and recover missing agents."`
 	Control     controlCommands     `cmd:"" help:"Inspect and control live Herdr agents."`
-	Primary     primaryCommands     `cmd:"" help:"Manage the root session owner through Linux /proc lifecycle hooks."`
+	Primary     primaryCommands     `cmd:"" help:"Manage the root session owner through native process lifecycle hooks."`
 	Root        string              `help:"Absolute Concierge state root; defaults to .concierge in the current directory." env:"CONCIERGE_HOME"`
 	MessageRoot string              `help:"Absolute message root; defaults to .tincan in the current directory." env:"TINCAN_HOME"`
 	Recipient   string              `help:"Primary inbox recipient." default:"${primaryRecipient}"`

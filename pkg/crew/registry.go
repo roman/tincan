@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/roman/tincan/internal/lockfile"
 	"io"
 	"os"
 	"path/filepath"
@@ -335,7 +336,7 @@ func (registry *Registry) register(record Record, prepare func() error) error {
 		return err
 	}
 	defer root.Close()
-	lock, err := root.OpenFile(".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	lock, err := lockfile.Open(root, ".lock")
 	if err != nil {
 		return err
 	}

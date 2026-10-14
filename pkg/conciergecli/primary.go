@@ -9,12 +9,12 @@ import (
 	"github.com/roman/tincan/pkg/primary"
 )
 
-const primaryHelp = "concierge primary claim|verify|release < HOOK_JSON; requires Linux /proc and a Claude or Codex lifecycle hook"
+const primaryHelp = "concierge primary claim|verify|release < HOOK_JSON; requires native process identity and a Claude or Codex lifecycle hook"
 
 type primaryCommands struct {
-	Claim   struct{} `cmd:"" help:"Claim primary ownership from a SessionStart hook; requires Linux /proc."`
-	Verify  struct{} `cmd:"" help:"Verify primary ownership from a Stop hook; requires Linux /proc."`
-	Release struct{} `cmd:"" help:"Release primary ownership from a SessionEnd hook; requires Linux /proc."`
+	Claim   struct{} `cmd:"" help:"Claim primary ownership from a SessionStart hook; requires native process identity."`
+	Verify  struct{} `cmd:"" help:"Verify primary ownership from a Stop hook; requires native process identity."`
+	Release struct{} `cmd:"" help:"Release primary ownership from a SessionEnd hook; requires native process identity."`
 }
 
 func runPrimary(

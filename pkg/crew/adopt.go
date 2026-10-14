@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/roman/tincan/internal/lockfile"
 	"os"
 	"slices"
 	"syscall"
@@ -123,7 +124,7 @@ func (registry *Registry) CancelPendingAdoption(taskID string) error {
 			return err
 		}
 		defer crewRoot.Close()
-		lock, err := crewRoot.OpenFile(".lock", os.O_CREATE|os.O_RDWR, 0o600)
+		lock, err := lockfile.Open(crewRoot, ".lock")
 		if err != nil {
 			return err
 		}

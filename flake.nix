@@ -56,7 +56,7 @@
           TREEHOUSE_TEST_EXECUTABLE = "${treehouse.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/treehouse";
           checkPhase = ''
             runHook preCheck
-            go test ./...
+            go test ${pkgs.lib.optionalString pkgs.stdenv.isDarwin ''-ldflags "-X=github.com/roman/tincan/pkg/presentation.presentationNamespace=$TMPDIR/presentation-locks"''} ./...
             runHook postCheck
           '';
         });
@@ -111,7 +111,7 @@
             case "$1 $2" in
               'pane get') printf '{"result":{"pane":{"pane_id":"p1","foreground_cwd":"%s","workspace_id":"w1","tab_id":"t1"}}}\n' "$SMOKE_WORKTREE" ;;
               'agent get') printf '%s\n' '{"result":{"agent":{"pane_id":"p1","agent_status":"working","agent":"codex"}}}' ;;
-              'pane process-info') printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"p1","shell_pid":%s,"foreground_processes":[]}}}\n' "$SMOKE_SHELL_PID" ;;
+              'pane process-info') printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"p1","shell_pid":%s,"foreground_processes":%s}}}\n' "$SMOKE_SHELL_PID" "$SMOKE_FOREGROUND" ;;
               'status --json') printf '%s\n' '{"server":{"running":true}}' ;;
               *) exit 71 ;;
             esac
@@ -186,6 +186,11 @@
             export SMOKE_SHELL_PID=$$
             (exec -a codex ${pkgs.coreutils}/bin/coreutils --coreutils-prog=sleep 60) &
             agent_pid=$!
+            export SMOKE_FOREGROUND='[]'
+            ${pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+              # Darwin's Nix sandbox blocks /bin/ps; native acceptance covers it.
+              SMOKE_FOREGROUND="$(printf '[{"pid":%s,"name":"codex"}]' "$agent_pid")"
+            ''}
             trap 'kill "''${host_pid:-}" "$agent_pid" 2>/dev/null || true; wait "''${host_pid:-}" "$agent_pid" 2>/dev/null || true' EXIT
             ${pkgs.jq}/bin/jq --arg worktree "$TMPDIR" \
               '.state = "in_flight" | .worker = {name:"smoke",harness:"codex",session:"smoke",workspace:"w1",tab:"t1",pane:"p1",project:$worktree,worktree:$worktree,generation:"gen-smoke",agent_args:["resume","smoke"]}' \

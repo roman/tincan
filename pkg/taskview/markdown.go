@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"github.com/roman/tincan/internal/lockfile"
 	"io"
 	"os"
 	"strings"
@@ -188,7 +189,7 @@ func syncProjectionDirectory(root *os.Root) error {
 
 func withProjectionLock(ctx context.Context, root *os.Root, operation func() error) error {
 	const name = ".backlog-view.lock"
-	lock, err := root.OpenFile(name, os.O_CREATE|os.O_RDWR, 0o600)
+	lock, err := lockfile.Open(root, name)
 	if err != nil {
 		return err
 	}

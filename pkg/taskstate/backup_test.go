@@ -102,10 +102,14 @@ func TestBackupLegacyPreservesSymlinkWithoutFollowingIt(t *testing.T) {
 	if err != nil || target != "../outside" {
 		t.Fatalf("backed up link = %q, %v", target, err)
 	}
+	sourceLink, err := os.Lstat(filepath.Join(source, "profile"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	digest := sha256.Sum256([]byte("../outside"))
 	entry := BackupFile{
 		Path: "profile", Kind: "symlink", Target: "../outside", Size: int64(len("../outside")),
-		SHA256: hex.EncodeToString(digest[:]), Mode: 0o777,
+		SHA256: hex.EncodeToString(digest[:]), Mode: uint32(sourceLink.Mode().Perm()),
 	}
 	if !slices.Contains(manifest.Files, entry) {
 		t.Fatalf("manifest lacks link entry %#v: %#v", entry, manifest.Files)
