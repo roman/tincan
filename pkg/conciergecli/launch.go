@@ -18,7 +18,7 @@ type launchCommand struct {
 	Worktree   string   `required:"" help:"Absolute isolated worktree path."`
 	Branch     string   `required:"" help:"New literal worktree branch."`
 	BaseCommit string   `required:"" help:"Full commit ID from the source repository."`
-	Workspace  string   `required:"" help:"Existing Herdr workspace ID for the worker tab (labels are unsupported)."`
+	Workspace  string   `help:"Existing shared Herdr workspace ID; omit to create a task-owned workspace. Labels are unsupported."`
 	AgentArgs  []string `name:"agent-arg" sep:"none" help:"Worker launch argument; repeat in order, using --agent-arg=VALUE for options."`
 	BodyFile   string   `required:"" help:"Assignment file, or - for stdin."`
 }

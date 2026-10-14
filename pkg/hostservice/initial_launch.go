@@ -135,7 +135,7 @@ func (server *Server) executeInitialLaunch(
 	}); err != nil {
 		return Response{}, err
 	}
-	if existing.Snapshot().LaunchIntent == nil {
+	if existing.Snapshot().LaunchIntent == nil && input.Workspace != "" {
 		client, err := herdr.NewClient(server.config.HerdrExecutable).
 			ForSession(server.config.Session)
 		if err != nil {
@@ -233,7 +233,8 @@ func validateLaunchResponse(response Response, request Request) error {
 	if task.ID() != input.TaskID || worker.Project != input.Project ||
 		worker.Worktree != input.Worktree ||
 		worker.Harness != input.Harness ||
-		worker.Workspace != input.Workspace {
+		(input.Workspace != "" && (worker.Workspace != input.Workspace || worker.OwnedWorkspaceLabel != "")) ||
+		(input.Workspace == "" && worker.OwnedWorkspaceLabel != "concierge-"+worker.Generation) {
 		return errors.New("host returned a different launched worker")
 	}
 	return nil

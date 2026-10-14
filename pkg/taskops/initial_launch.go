@@ -228,21 +228,34 @@ func (service *Service) prepareInitialPane(
 			return err
 		}
 		var err error
-		details, err = client.CreateTab(ctx, herdr.TabInput{
-			Workspace: intent.Workspace, Directory: intent.Worktree, Label: intent.Label,
-			Environment: []string{
-				"CONCIERGE_WORKER=1",
-				"CONCIERGE_HOME=" + service.root,
-				"TINCAN_HOME=" + config.MessageRoot,
-				"CONCIERGE_TASK_ID=" + taskID,
-			},
-		})
+		environment := []string{
+			"CONCIERGE_WORKER=1",
+			"CONCIERGE_HOME=" + service.root,
+			"TINCAN_HOME=" + config.MessageRoot,
+			"CONCIERGE_TASK_ID=" + taskID,
+		}
+		if intent.Workspace == "" {
+			details, err = client.CreateWorkspace(
+				ctx,
+				herdr.WorkspaceInput{
+					Directory:   intent.Worktree,
+					Label:       intent.Label,
+					Environment: environment,
+				},
+			)
+		} else {
+			details, err = client.CreateTab(ctx, herdr.TabInput{Workspace: intent.Workspace, Directory: intent.Worktree, Label: intent.Label, Environment: environment})
+		}
 		if err != nil {
 			return err
 		}
 	} else if intent.Endpoint == nil {
 		var err error
-		details, err = client.FindTab(ctx, intent.Workspace, intent.Label)
+		if intent.Workspace == "" {
+			details, err = client.FindWorkspace(ctx, intent.Label)
+		} else {
+			details, err = client.FindTab(ctx, intent.Workspace, intent.Label)
+		}
 		if err != nil {
 			return fmt.Errorf("initial pane creation remains unresolved: %w", err)
 		}

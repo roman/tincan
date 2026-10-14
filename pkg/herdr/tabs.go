@@ -33,43 +33,11 @@ func (client Client) CreateTab(ctx context.Context, input TabInput) (PaneDetails
 	if err := validateTabIdentity(input.Workspace, input.Label); err != nil {
 		return PaneDetails{}, err
 	}
-	if !filepath.IsAbs(input.Directory) || filepath.Clean(input.Directory) != input.Directory ||
-		strings.IndexFunc(input.Directory, unicode.IsControl) >= 0 {
-		return PaneDetails{}, fmt.Errorf(
-			"%w: a clean absolute tab directory is required",
-			ErrResponse,
-		)
+	options, err := creationOptions(input.Directory, input.Label, input.Environment)
+	if err != nil {
+		return PaneDetails{}, err
 	}
-	arguments := []string{
-		"tab",
-		"create",
-		"--workspace",
-		input.Workspace,
-		"--cwd",
-		input.Directory,
-		"--label",
-		input.Label,
-		"--no-focus",
-	}
-	seen := make(map[string]bool)
-	for _, assignment := range input.Environment {
-		key, _, present := strings.Cut(assignment, "=")
-		if !present || key == "" || seen[key] ||
-			strings.IndexFunc(assignment, unicode.IsControl) >= 0 {
-			return PaneDetails{}, fmt.Errorf(
-				"%w: invalid or duplicate tab environment assignment",
-				ErrResponse,
-			)
-		}
-		for index, character := range key {
-			if character != '_' && (character < 'A' || character > 'Z') &&
-				(character < 'a' || character > 'z') && (index == 0 || character < '0' || character > '9') {
-				return PaneDetails{}, fmt.Errorf("%w: invalid tab environment name", ErrResponse)
-			}
-		}
-		seen[key] = true
-		arguments = append(arguments, "--env", assignment)
-	}
+	arguments := append([]string{"tab", "create", "--workspace", input.Workspace}, options...)
 	output, err := client.run(ctx, arguments...)
 	if err != nil {
 		return PaneDetails{}, err
@@ -177,4 +145,38 @@ func (client Client) tabPane(
 		return PaneDetails{}, fmt.Errorf("%w: pane location changed from its tab", ErrResponse)
 	}
 	return details, nil
+}
+
+func creationOptions(directory, label string, environment []string) ([]string, error) {
+	if !healthAtom(label, false) {
+		return nil, ErrResponse
+	}
+	if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory ||
+		strings.IndexFunc(directory, unicode.IsControl) >= 0 {
+		return nil, fmt.Errorf(
+			"%w: a clean absolute tab directory is required",
+			ErrResponse,
+		)
+	}
+	arguments := []string{"--cwd", directory, "--label", label, "--no-focus"}
+	seen := make(map[string]bool)
+	for _, assignment := range environment {
+		key, _, present := strings.Cut(assignment, "=")
+		if !present || key == "" || seen[key] ||
+			strings.IndexFunc(assignment, unicode.IsControl) >= 0 {
+			return nil, fmt.Errorf(
+				"%w: invalid or duplicate tab environment assignment",
+				ErrResponse,
+			)
+		}
+		for index, character := range key {
+			if character != '_' && (character < 'A' || character > 'Z') &&
+				(character < 'a' || character > 'z') && (index == 0 || character < '0' || character > '9') {
+				return nil, fmt.Errorf("%w: invalid tab environment name", ErrResponse)
+			}
+		}
+		seen[key] = true
+		arguments = append(arguments, "--env", assignment)
+	}
+	return arguments, nil
 }

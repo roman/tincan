@@ -176,6 +176,9 @@ func (task Task) CompleteInitialLaunch(generation string) (Task, error) {
 		return Task{}, ErrInvalidTransition
 	}
 	snapshot := task.Snapshot()
+	if intent := snapshot.LaunchIntent; intent != nil && intent.Workspace == "" {
+		snapshot.Worker.OwnedWorkspaceLabel = intent.Label
+	}
 	snapshot.LaunchIntent = nil
 	return newTransition(snapshot)
 }
@@ -236,7 +239,7 @@ func validLaunchIntent(selected record) bool {
 		!validAtom(
 			intent.Name,
 			false,
-		) || !validAtom(intent.Workspace, false) || !validAtom(intent.Label, false) ||
+		) || (intent.Workspace != "" && !validAtom(intent.Workspace, false)) || !validAtom(intent.Label, false) ||
 		!singleLine(intent.Branch) || strings.HasPrefix(intent.Branch, "-") ||
 		!utf8.ValidString(intent.Body) || strings.ContainsRune(intent.Body, 0) {
 		return false
@@ -277,7 +280,9 @@ func validLaunchIntent(selected record) bool {
 		return false
 	}
 	if endpoint := intent.Endpoint; endpoint != nil {
-		if endpoint.Workspace != intent.Workspace || !validAtom(endpoint.Tab, true) {
+		if !validAtom(endpoint.Workspace, false) ||
+			(intent.Workspace != "" && endpoint.Workspace != intent.Workspace) ||
+			!validAtom(endpoint.Tab, true) {
 			return false
 		}
 		if _, err := herdr.ParseTarget(intent.Session, endpoint.Pane); err != nil {

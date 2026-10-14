@@ -381,8 +381,15 @@ launch its worker:
 ```sh
 concierge launch task-1 --harness codex \
   --project /repo --worktree /worktrees/task-1 --branch task/task-1 \
-  --base-commit FULL_COMMIT_ID --workspace w1 --body-file brief.txt
+  --base-commit FULL_COMMIT_ID --body-file brief.txt
 ```
+
+By default, Concierge creates a task-owned workspace and runs the worker in its
+first pane. The reserved workspace label supports recovery after a lost creation
+response. Stop closes only the recorded worker pane. Herdr removes the workspace
+when its last pane closes; any additional user panes keep the workspace open.
+Cleanup then records the retired task. Existing shared workspaces remain
+available through `--workspace WORKSPACE_ID`; labels are unsupported.
 
 Use a full commit ID from the project and a new branch name. The host must have
 an explicit Herdr session. `--harness claude` selects Claude. Repeat

@@ -28,7 +28,8 @@ func (client Client) CheckLaunchAbsent(ctx context.Context, launch LaunchResourc
 	var response struct {
 		Result struct {
 			Workspaces *[]struct {
-				ID string `json:"workspace_id"`
+				ID    string `json:"workspace_id"`
+				Label string `json:"label"`
 			} `json:"workspaces"`
 		} `json:"result"`
 	}
@@ -37,6 +38,9 @@ func (client Client) CheckLaunchAbsent(ctx context.Context, launch LaunchResourc
 	}
 	seen := map[string]struct{}{}
 	for _, workspace := range *response.Result.Workspaces {
+		if workspace.Label == launch.Label {
+			return errors.New("launch workspace still exists; inspect it before abandonment")
+		}
 		if !healthAtom(workspace.ID, false) {
 			return ErrResponse
 		}

@@ -27,7 +27,7 @@ func TestLaunchPayloadRejectsMissingMixedAndInvalidRequests(t *testing.T) {
 		func(r *Request) { r.Launch.Body = " " },
 		func(r *Request) { r.Launch.TaskID = "../escape" },
 		func(r *Request) { r.Launch.Project = "relative" },
-		func(r *Request) { r.Launch.Workspace = "" },
+		func(r *Request) { r.Launch.Workspace = "bad\nworkspace" },
 		func(r *Request) { r.Launch.BaseCommit = "main" },
 	} {
 		input := valid
@@ -522,5 +522,27 @@ func TestHostLaunchRejectsInvalidWorkspaceBeforeReservation(t *testing.T) {
 				t.Fatal("invalid workspace reserved or advanced the task")
 			}
 		})
+	}
+}
+
+func TestLaunchResponseRequiresOwnedWorkspaceForDefaultRequest(t *testing.T) {
+	server, input := launchRequestFixture(t)
+	input.TaskID, input.Worktree, input.Workspace = "task-1", "/worktree", ""
+	task, err := server.store.Read(context.Background(), input.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := task.Snapshot()
+	request := Request{Operation: Launch, Launch: &input}
+	if err := validateResponse(Response{Outcome: Completed, Transition: &snapshot}, request); err == nil {
+		t.Fatal("owned request accepted shared workspace")
+	}
+	snapshot.Worker.OwnedWorkspaceLabel = "concierge-" + snapshot.Worker.Generation
+	if err := validateResponse(Response{Outcome: Completed, Transition: &snapshot}, request); err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Worker.OwnedWorkspaceLabel = "different"
+	if err := validateResponse(Response{Outcome: Completed, Transition: &snapshot}, request); err == nil {
+		t.Fatal("owned response accepted unrelated label")
 	}
 }

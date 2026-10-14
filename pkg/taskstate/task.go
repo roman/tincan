@@ -71,21 +71,22 @@ type RestartPlan struct {
 
 // Worker preserves the exact launch and endpoint identity for recovery.
 type Worker struct {
-	PromptProgress    *PromptProgress `json:"prompt_progress,omitempty"`
-	Restarts          []RestartPlan   `json:"restarts,omitempty"`
-	Name              string          `json:"name"`
-	Harness           string          `json:"harness"`
-	Session           string          `json:"session"`
-	Workspace         string          `json:"workspace,omitempty"`
-	Tab               string          `json:"tab,omitempty"`
-	Pane              string          `json:"pane"`
-	Project           string          `json:"project"`
-	Worktree          string          `json:"worktree"`
-	Generation        string          `json:"generation"`
-	PendingGeneration string          `json:"pending_generation,omitempty"`
-	PendingLaunch     string          `json:"pending_launch,omitempty"`
-	PendingAdoption   bool            `json:"pending_adoption,omitempty"`
-	AgentArgs         []string        `json:"agent_args"`
+	OwnedWorkspaceLabel string          `json:"owned_workspace_label,omitempty"`
+	PromptProgress      *PromptProgress `json:"prompt_progress,omitempty"`
+	Restarts            []RestartPlan   `json:"restarts,omitempty"`
+	Name                string          `json:"name"`
+	Harness             string          `json:"harness"`
+	Session             string          `json:"session"`
+	Workspace           string          `json:"workspace,omitempty"`
+	Tab                 string          `json:"tab,omitempty"`
+	Pane                string          `json:"pane"`
+	Project             string          `json:"project"`
+	Worktree            string          `json:"worktree"`
+	Generation          string          `json:"generation"`
+	PendingGeneration   string          `json:"pending_generation,omitempty"`
+	PendingLaunch       string          `json:"pending_launch,omitempty"`
+	PendingAdoption     bool            `json:"pending_adoption,omitempty"`
+	AgentArgs           []string        `json:"agent_args"`
 }
 
 // CompletionMode selects the queue state after a worker result.
@@ -468,6 +469,10 @@ func validWorker(worker Worker) bool {
 		}
 	}
 
+	if worker.OwnedWorkspaceLabel != "" &&
+		(!validAtom(worker.OwnedWorkspaceLabel, false) || worker.Workspace == "" || worker.PendingAdoption) {
+		return false
+	}
 	if !validAtom(worker.Name, false) || len(worker.AgentArgs) == 0 ||
 		!validAtom(worker.Harness, false) ||
 		firstmate.ValidateSpawnGeneration(worker.Generation) != nil {

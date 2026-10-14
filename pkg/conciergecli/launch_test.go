@@ -46,7 +46,7 @@ func launchArguments(root string) []string {
 }
 
 func TestLaunchPreservesRequestAndReportsHostOutcome(t *testing.T) {
-	for _, mode := range []string{"completed", "pending", "blocked", "native checkpoint", "supervision stopped", "lost response", "already bound"} {
+	for _, mode := range []string{"completed", "owned", "pending", "blocked", "native checkpoint", "supervision stopped", "lost response", "already bound"} {
 		t.Run(mode, func(t *testing.T) {
 			root := shortTaskRoot(t)
 			listener, err := net.ListenUnix(
@@ -80,7 +80,7 @@ func TestLaunchPreservesRequestAndReportsHostOutcome(t *testing.T) {
 					Outcome: hostservice.Failed,
 					Error:   hostservice.ErrLaunchAlreadyBound.Error(),
 				}
-				if mode == "completed" || mode == "supervision stopped" {
+				if mode == "completed" || mode == "owned" || mode == "supervision stopped" {
 					response = hostservice.Response{
 						Outcome: hostservice.Completed,
 						Transition: &taskstate.Snapshot{
@@ -104,6 +104,9 @@ func TestLaunchPreservesRequestAndReportsHostOutcome(t *testing.T) {
 							},
 						},
 					}
+				}
+				if mode == "owned" {
+					response.Transition.Worker.OwnedWorkspaceLabel = "concierge-gen-1"
 				}
 				if mode == "supervision stopped" {
 					response.Outcome = hostservice.Blocked
@@ -169,8 +172,17 @@ func TestLaunchPreservesRequestAndReportsHostOutcome(t *testing.T) {
 			var output bytes.Buffer
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			code := Run(ctx, launchArguments(root), strings.NewReader(body), &output, io.Discard)
-			if mode == "completed" {
+			arguments := launchArguments(root)
+			if mode == "owned" {
+				for index, arg := range arguments {
+					if arg == "--workspace" {
+						arguments = append(arguments[:index], arguments[index+2:]...)
+						break
+					}
+				}
+			}
+			code := Run(ctx, arguments, strings.NewReader(body), &output, io.Discard)
+			if mode == "completed" || mode == "owned" {
 				if code != 0 || !strings.Contains(output.String(), "generation: \"gen-1\"") ||
 					!strings.Contains(output.String(), "pane: \"w1:p1\"") {
 					t.Fatalf("launch code %d: %s", code, &output)
@@ -215,6 +227,9 @@ func TestLaunchPreservesRequestAndReportsHostOutcome(t *testing.T) {
 					Workspace:  "w1",
 					AgentArgs:  []string{"--model", "example,model"},
 					Body:       body,
+				}
+				if mode == "owned" {
+					expected.Workspace = ""
 				}
 				if request.Operation != hostservice.Launch ||
 					!reflect.DeepEqual(request.Launch, expected) {
