@@ -55,6 +55,9 @@ func (server *Server) perform(ctx context.Context, request Request) (Response, e
 }
 
 func (server *Server) performOperation(ctx context.Context, request Request) (Response, error) {
+	if request.Operation == AbandonLaunch {
+		return server.abandonLaunch(ctx, *request.Transition)
+	}
 	if request.Operation == Launch {
 		return server.launch(ctx, *request.Launch)
 	}

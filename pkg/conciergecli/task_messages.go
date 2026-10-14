@@ -19,6 +19,11 @@ type assignmentSelection struct {
 }
 
 type taskCommands struct {
+	Abandon struct {
+		TaskID     string `arg:"" help:"Task ID."`
+		Generation string `required:"" help:"Launch intent generation to abandon."`
+	} `cmd:"" help:"Clear an unbound launch after verifying its Herdr resources are absent; retain its worktree and branch."`
+
 	Stop struct {
 		TaskID     string `arg:"" help:"Task ID."`
 		Generation string `required:"" help:"Worker generation to stop."`

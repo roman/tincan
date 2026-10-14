@@ -106,8 +106,16 @@ type Receipt struct {
 	Mode       CompletionMode `json:"mode"`
 }
 
+// LaunchAbandonment preserves retained resources across interrupted client calls.
+type LaunchAbandonment struct {
+	Generation string `json:"generation"`
+	Worktree   string `json:"worktree"`
+	Branch     string `json:"branch"`
+}
+
 type record struct {
-	Format int `json:"format"`
+	AbandonedLaunches []LaunchAbandonment `json:"abandoned_launches,omitempty"`
+	Format            int                 `json:"format"`
 	Definition
 	State         State         `json:"state"`
 	Worker        *Worker       `json:"worker,omitempty"`
@@ -119,13 +127,14 @@ type record struct {
 
 // Snapshot carries one complete task across the explicit migration boundary.
 type Snapshot struct {
-	Definition    Definition
-	State         State
-	Worker        *Worker
-	LaunchIntent  *LaunchIntent
-	Completion    *Completion
-	Receipt       *Receipt
-	PriorReceipts []Receipt
+	AbandonedLaunches []LaunchAbandonment
+	Definition        Definition
+	State             State
+	Worker            *Worker
+	LaunchIntent      *LaunchIntent
+	Completion        *Completion
+	Receipt           *Receipt
+	PriorReceipts     []Receipt
 }
 
 // Task keeps a validated snapshot private. Changes create a new snapshot.
@@ -143,7 +152,8 @@ func NewQueued(input Definition) (Task, error) {
 // NewMigrated accepts a complete legacy task only when its combined state is valid.
 func NewMigrated(input Snapshot) (Task, error) {
 	selected := record{
-		Format: formatVersion, Definition: cloneDefinition(input.Definition),
+		AbandonedLaunches: slices.Clone(input.AbandonedLaunches),
+		Format:            formatVersion, Definition: cloneDefinition(input.Definition),
 		State: input.State, Worker: cloneWorker(input.Worker),
 		LaunchIntent: cloneLaunchIntent(input.LaunchIntent),
 		Completion:   cloneCompletion(input.Completion),
@@ -203,7 +213,8 @@ func (task Task) Definition() Definition { return cloneDefinition(task.record.De
 // Snapshot returns a detached copy for migration checks and task transitions.
 func (task Task) Snapshot() Snapshot {
 	return Snapshot{
-		Definition: cloneDefinition(task.record.Definition), State: task.record.State,
+		AbandonedLaunches: slices.Clone(task.record.AbandonedLaunches),
+		Definition:        cloneDefinition(task.record.Definition), State: task.record.State,
 		Worker:        cloneWorker(task.record.Worker),
 		LaunchIntent:  cloneLaunchIntent(task.record.LaunchIntent),
 		Completion:    cloneCompletion(task.record.Completion),
@@ -266,6 +277,10 @@ func cloneReceipt(input *Receipt) *Receipt {
 }
 
 func validate(selected record) error {
+	if !validLaunchAbandonments(selected) {
+		return ErrInvalidTask
+	}
+
 	if selected.Format != formatVersion || !validDefinition(selected.Definition) {
 		return ErrInvalidTask
 	}

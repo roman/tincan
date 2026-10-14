@@ -107,7 +107,7 @@ func validateRequest(request Request) error {
 		if input.Hold == nil || input.Generation != "" || input.Mode != "" || input.ClosedOn != "" {
 			return errors.New("hold requires only a task ID and hold")
 		}
-	case Cleanup, Stop:
+	case Cleanup, Stop, AbandonLaunch:
 		if input.Generation == "" || input.Mode != "" || input.ClosedOn != "" || input.Hold != nil {
 			return errors.New("cleanup requires only a task ID and generation")
 		}

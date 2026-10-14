@@ -180,6 +180,39 @@ func (task Task) CancelInitialLaunch(generation string) (Task, error) {
 	return newTransition(snapshot)
 }
 
+// AbandonInitialLaunch clears an unbound intent after external absence verification.
+// The host must exclude launch execution and verify Herdr resources before applying it.
+func (task Task) AbandonInitialLaunch(generation string) (Task, error) {
+	if _, ok := task.LaunchAbandonment(generation); ok {
+		return task, nil
+	}
+	if firstmate.ValidateSpawnGeneration(generation) != nil || task.State() != Queued ||
+		task.record.Worker != nil {
+		return Task{}, ErrInvalidTransition
+	}
+	intent := task.record.LaunchIntent
+	if intent == nil || intent.Generation != generation {
+		return Task{}, ErrInvalidTransition
+	}
+	snapshot := task.Snapshot()
+	snapshot.AbandonedLaunches = append(
+		snapshot.AbandonedLaunches,
+		LaunchAbandonment{Generation: generation, Worktree: intent.Worktree, Branch: intent.Branch},
+	)
+	snapshot.LaunchIntent = nil
+	return newTransition(snapshot)
+}
+
+// LaunchAbandonment returns a detached receipt for a previously abandoned generation.
+func (task Task) LaunchAbandonment(generation string) (LaunchAbandonment, bool) {
+	for _, receipt := range task.record.AbandonedLaunches {
+		if receipt.Generation == generation {
+			return receipt, true
+		}
+	}
+	return LaunchAbandonment{}, false
+}
+
 func validLaunchIntent(selected record) bool {
 	intent := selected.LaunchIntent
 	if intent == nil {
@@ -257,6 +290,49 @@ func validLaunchIntent(selected record) bool {
 	}
 	for _, receipt := range selected.PriorReceipts {
 		if receipt.Generation == intent.Generation {
+			return false
+		}
+	}
+	return true
+}
+
+func validLaunchAbandonments(selected record) bool {
+	seen := map[string]bool{}
+	for _, receipt := range selected.AbandonedLaunches {
+		if firstmate.ValidateSpawnGeneration(receipt.Generation) != nil ||
+			seen[receipt.Generation] ||
+			!singleLine(receipt.Branch) ||
+			strings.HasPrefix(receipt.Branch, "-") {
+			return false
+		}
+		if _, err := firstmate.ParseAbsolutePath(receipt.Worktree); err != nil {
+			return false
+		}
+		seen[receipt.Generation] = true
+	}
+	generations := []string{}
+	if worker := selected.Worker; worker != nil {
+		generations = append(
+			generations,
+			worker.Generation,
+			worker.PendingGeneration,
+			worker.PendingLaunch,
+		)
+	}
+	if selected.LaunchIntent != nil {
+		generations = append(generations, selected.LaunchIntent.Generation)
+	}
+	if selected.Completion != nil {
+		generations = append(generations, selected.Completion.Generation)
+	}
+	if selected.Receipt != nil {
+		generations = append(generations, selected.Receipt.Generation)
+	}
+	for _, receipt := range selected.PriorReceipts {
+		generations = append(generations, receipt.Generation)
+	}
+	for _, generation := range generations {
+		if seen[generation] {
 			return false
 		}
 	}

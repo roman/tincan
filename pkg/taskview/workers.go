@@ -54,6 +54,9 @@ func writeWorkerRows(output io.Writer, name string, tasks []taskstate.Task) erro
 func WriteWorker(output io.Writer, task taskstate.Task) error {
 	worker := task.Snapshot().Worker
 	if worker == nil {
+		if intent := task.Snapshot().LaunchIntent; intent != nil {
+			return writeUnboundLaunch(output, task.ID(), *intent)
+		}
 		return fmt.Errorf("no worker record for task %s", task.ID())
 	}
 	if _, err := fmt.Fprintf(output, "task: %s\nname: %s\nkind: %s\npane_id: %s\nherdr_session: %s\nworkspace: %s\ntab: %s\nproject: %s\nworktree: %s\nspawn_generation: %s\n", task.ID(), worker.Name, worker.Harness, worker.Pane, worker.Session, worker.Workspace, worker.Tab, quote(worker.Project), quote(worker.Worktree), worker.Generation); err != nil {
@@ -136,4 +139,25 @@ func writeCompletionRows(output io.Writer, tasks []taskstate.Task) error {
 		}
 	}
 	return nil
+}
+
+func writeUnboundLaunch(output io.Writer, taskID string, intent taskstate.LaunchIntent) error {
+	_, err := fmt.Fprintf(
+		output,
+		"task: %s\nlaunch_generation: %s\nlaunch_phase: %s\nname: %s\nherdr_session: %s\nworkspace: %s\nworktree: %s\nbranch: %s\nhelp: %s\n",
+		quote(
+			taskID,
+		),
+		quote(intent.Generation),
+		intent.Phase,
+		quote(intent.Name),
+		quote(intent.Session),
+		quote(intent.Workspace),
+		quote(intent.Worktree),
+		quote(intent.Branch),
+		quote(
+			"inspect launch resources before abandonment; concierge task abandon "+taskID+" --generation "+intent.Generation,
+		),
+	)
+	return err
 }

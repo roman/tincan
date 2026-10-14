@@ -66,6 +66,7 @@ type StopResult struct {
 }
 
 type Response struct {
+	Abandoned   *AbandonedLaunch     `json:"abandoned,omitempty"`
 	Status      *StatusResult        `json:"status,omitempty"`
 	Supervision *SupervisionResult   `json:"supervision,omitempty"`
 	Control     *ControlResult       `json:"control,omitempty"`
@@ -316,6 +317,17 @@ func Call(ctx context.Context, socket string, request Request) (Response, error)
 }
 
 func validateResponse(response Response, request Request) error {
+	if response.Abandoned != nil &&
+		(request.Operation != AbandonLaunch || response.Outcome != Completed) {
+		return errors.New("host returned unrelated abandonment data")
+	}
+	if request.Operation == AbandonLaunch && response.Outcome == Completed {
+		if err := validateRequest(request); err != nil {
+			return err
+		}
+		return validateAbandonedLaunchResponse(response, request)
+	}
+
 	if request.Operation == HostStatus && response.Outcome == Completed {
 		if err := validateRequest(request); err != nil {
 			return err

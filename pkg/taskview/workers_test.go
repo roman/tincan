@@ -221,3 +221,39 @@ func TestWorkerViewsReportWriterFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkerInspectionShowsUnboundLaunchForAbandonment(t *testing.T) {
+	task, err := taskstate.NewQueued(
+		taskstate.Definition{ID: "task-1", Title: "Work", Repo: "repo", Kind: "task"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err = task.ReserveInitialLaunch(
+		taskstate.LaunchIntent{
+			Generation: "gen-1",
+			Name:       "worker",
+			Label:      "launch-label",
+			Harness:    "codex",
+			Session:    "work",
+			Project:    "/repo",
+			Worktree:   "/worker",
+			Branch:     "task-1",
+			BaseCommit: strings.Repeat("a", 40),
+			Workspace:  "review-label",
+			Body:       "Do work",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := WriteWorker(&output, task); err != nil {
+		t.Fatal(err)
+	}
+	for _, part := range []string{"launch_generation: \"gen-1\"", "launch_phase: reserved", "workspace: \"review-label\"", "worktree: \"/worker\"", "branch: \"task-1\"", "concierge task abandon task-1 --generation gen-1"} {
+		if !strings.Contains(output.String(), part) {
+			t.Fatalf("missing %q: %s", part, &output)
+		}
+	}
+}
