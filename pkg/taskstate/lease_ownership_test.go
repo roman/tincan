@@ -157,3 +157,102 @@ func TestWorkerLeaseSurvivesRestartAndRetirement(t *testing.T) {
 		})
 	}
 }
+
+func TestAbandonedLeaseCaptureChecksEveryPathOwner(t *testing.T) {
+	for _, owner := range []string{"task-1", "task-2"} {
+		for _, resource := range []string{"worker", "launch", "current receipt", "prior receipt", "abandoned receipt", "returned receipt"} {
+			t.Run(owner+"/"+resource, func(t *testing.T) {
+				ctx := context.Background()
+				store, err := NewStore(versionTwoRoot(t))
+				if err != nil {
+					t.Fatal(err)
+				}
+				input := launchForTest()
+				input.Worktree = ""
+				task, err := taskForTransition(t).ReserveInitialLaunch(input)
+				if err != nil {
+					t.Fatal(err)
+				}
+				task, err = task.BeginLaunchPreparation(input.Generation)
+				if err != nil {
+					t.Fatal(err)
+				}
+				task, err = task.RequestLaunchLease(input.Generation, "holder")
+				if err != nil {
+					t.Fatal(err)
+				}
+				task, err = task.AbandonInitialLaunch(input.Generation)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := store.Create(ctx, task); err != nil {
+					t.Fatal(err)
+				}
+				if owner != "task-1" {
+					other, err := NewQueued(
+						Definition{ID: owner, Title: "Other", Repo: "repo", Kind: "ship"},
+					)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := store.Create(ctx, other); err != nil {
+						t.Fatal(err)
+					}
+				}
+				lease := WorktreeLease{
+					ID:         "lease-1",
+					Holder:     "holder",
+					Project:    input.Project,
+					Path:       "/worktree",
+					Branch:     input.Branch,
+					BaseCommit: input.BaseCommit,
+					State:      LeaseHeld,
+				}
+				switch resource {
+				case "worker":
+					worker := workerForTransition()
+					worker.Name, worker.Generation = "next-worker", "gen-2"
+					if _, err := store.ReserveAdoption(ctx, owner, worker); err != nil {
+						t.Fatal(err)
+					}
+				case "launch":
+					next := launchForTest()
+					next.Name, next.Generation, next.Label, next.Branch = "next-worker", "gen-2", "concierge-gen-2", "task/next"
+					if _, err := store.ReserveInitialLaunch(ctx, owner, next); err != nil {
+						t.Fatal(err)
+					}
+				default:
+					if _, err := store.Update(ctx, owner, func(task Task) (Task, error) {
+						snapshot := task.Snapshot()
+						occupied := lease
+						occupied.ID, occupied.Holder = "other-lease", "other-holder"
+						receipt := Receipt{Generation: "old", Mode: Retain, Lease: occupied}
+						switch resource {
+						case "current receipt":
+							snapshot.Receipt = &receipt
+						case "prior receipt":
+							snapshot.Receipt = &Receipt{Generation: "recent", Mode: Retain}
+							snapshot.PriorReceipts = []Receipt{receipt}
+						case "returned receipt":
+							receipt.Lease.State = LeaseReturned
+							snapshot.Receipt = &receipt
+						case "abandoned receipt":
+							snapshot.AbandonedLaunches = append(snapshot.AbandonedLaunches, LaunchAbandonment{Generation: "old", Lease: occupied, LeaseHolder: occupied.Holder, Project: occupied.Project, Worktree: occupied.Path, Branch: occupied.Branch})
+						}
+						return NewMigrated(snapshot)
+					}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				_, err = store.RecordAbandonedLease(ctx, "task-1", input.Generation, lease)
+				if resource == "returned receipt" {
+					if err != nil {
+						t.Fatalf("returned path prevented capture: %v", err)
+					}
+				} else if !errors.Is(err, ErrWorkerConflict) {
+					t.Fatalf("captured occupied path: %v", err)
+				}
+			})
+		}
+	}
+}

@@ -62,6 +62,11 @@ func (command *backlogCommands) runLifecycle(
 	case "backlog release <task-id>":
 		request.Operation = hostservice.Release
 		input.TaskID = command.Release.TaskID
+	case "backlog release-worktree <task-id>":
+		request.Operation = hostservice.ReleaseWorktree
+		input.TaskID = command.ReleaseWorktree.TaskID
+		input.Generation = command.ReleaseWorktree.Generation
+		generation = input.Generation
 	case "backlog cleanup <task-id>":
 		request.Operation = hostservice.Cleanup
 		input.TaskID = command.Cleanup.TaskID
@@ -107,6 +112,11 @@ func (command *backlogCommands) runLifecycle(
 	}
 	if generation != "" {
 		if _, err := fmt.Fprintf(output, "generation: %s\n", quote(generation)); err != nil {
+			return 1
+		}
+	}
+	if lease, found := task.RetiredLease(generation); found && lease.ID != "" {
+		if _, err := fmt.Fprintf(output, "lease: %s\nworktree: %s\nbranch: %s\n", lease.State, quote(lease.Path), quote(lease.Branch)); err != nil {
 			return 1
 		}
 	}

@@ -17,6 +17,7 @@ func TestLifecycleNeverFallsBackToLocalWrites(t *testing.T) {
 			{"backlog", "start", "task-1"},
 			{"backlog", "hold", "task-1", "--reason", "Wait"},
 			{"backlog", "release", "task-1"},
+			{"backlog", "release-worktree", "task-1", "--generation", "gen-1"},
 			{"backlog", "finish", "task-1", "--generation", "gen-1", "--closed-on", "2026-10-12"},
 		} {
 			t.Run(mode+"/"+args[1], func(t *testing.T) {

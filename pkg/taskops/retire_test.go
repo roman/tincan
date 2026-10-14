@@ -15,6 +15,7 @@ import (
 )
 
 type retirementRunner struct {
+	pane     string
 	response string
 	calls    int
 	onCheck  func()
@@ -26,8 +27,12 @@ func (runner *retirementRunner) RunSession(
 	args ...string,
 ) ([]byte, []byte, error) {
 	runner.calls++
+	pane := runner.pane
+	if pane == "" {
+		pane = "pane-1"
+	}
 	if session != "work" ||
-		!reflect.DeepEqual(args, []string{"pane", "get", "pane-1", "--session", "work"}) {
+		!reflect.DeepEqual(args, []string{"pane", "get", pane, "--session", "work"}) {
 		return nil, nil, fmt.Errorf("unexpected pane check: %s %v", session, args)
 	}
 	if runner.onCheck != nil {

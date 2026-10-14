@@ -65,6 +65,20 @@ func (command *taskCommands) runControl(
 				return 1
 			}
 		}
+		if result.LeaseHolder != "" {
+			status := "unresolved"
+			if result.Lease.ID != "" {
+				status = string(result.Lease.State)
+			}
+			help := fmt.Sprintf(
+				"concierge backlog release-worktree %s --generation %s",
+				command.Abandon.TaskID,
+				result.Generation,
+			)
+			if _, err := fmt.Fprintf(output, "lease: %s\nlease_holder: %s\nproject: %s\nrelease_help: %s\n", status, quote(result.LeaseHolder), quote(result.Project), quote(help)); err != nil {
+				return 1
+			}
+		}
 	case "task stop <task-id>":
 		input := command.Stop
 		if _, err := fmt.Fprintf(output, "task: %s\ngeneration: %s\n", quote(input.TaskID), quote(input.Generation)); err != nil {

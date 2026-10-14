@@ -401,7 +401,7 @@ stop preparation without a forced reset.
 Acquisition identity is recorded before requesting a lease. An uncertain request
 recovers its existing lease by holder instead of acquiring another worktree.
 Launch and restart verify the captured lease ID, holder, and path before native
-startup. The task record retains the lease and result branch through restart
+startup. The task record retains the lease identity and result branch through restart
 and retirement. A changed or missing lease requires inspection.
 
 Use a full commit ID from the project and a new branch name. The host must have
@@ -450,3 +450,46 @@ must confirm durable assignment publication before clearing it. Results and
 ordinary restart are blocked during initial launch finalization. A potentially
 submitted pane creation requires reconciliation; an empty lookup after a timeout
 does not permit another creation attempt.
+
+
+## Worktree lease cleanup
+
+Accept the result, stop the worker, and retire the accepted generation:
+
+```sh
+concierge task stop task-1 --generation GEN
+concierge backlog cleanup task-1 --generation GEN
+```
+
+Cleanup requires confirmation that the exact worker pane departed. For a closed
+result, it returns the lease and records `lease: returned`. A retained result
+keeps its lease and records `lease: held`. Unaccepted results keep their leases.
+Removing a task hold does not release its worktree.
+
+Explicitly release a retained result or an abandoned acquisition with:
+
+```sh
+concierge backlog release-worktree task-1 --generation GEN
+```
+
+The command uses the primary host admission and the recorded generation. It
+preserves a newer worker and its supervision. The lease ID and holder must still
+match. The pool must report no live processes. Return uses neither --force nor
+approval to discard changes. The result branch remains in the repository.
+
+Return requires a clean checkout, including ignored files. Hidden index flags,
+detached result commits, changed branches, and dirty work prevent return and
+keep the lease. Commit or move useful files before retrying. Treehouse 3.1.1 can
+remove a task branch's ignore rules while parking its checkout, then delete
+previously ignored files. Concierge checks those files before invoking return.
+
+An abandoned acquisition whose response was lost retains its holder and original
+base commit. Explicit release finds that holder's existing lease and captures its
+identity before returning it. An unused detached checkout can return only when
+its commit remains reachable from a branch, remote reference, or tag. Missing
+or ambiguous acquisition identity requires pool inspection. Historical records
+that lack the original base commit cannot infer it during release.
+
+A successful pool return followed by an interrupted task write can complete on
+an identical retry while the checkout remains unleased. A rebound lease rejects
+that retry for inspection. Already recorded returns use no external tools.

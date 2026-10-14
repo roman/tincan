@@ -2,6 +2,8 @@ package taskstate
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -120,5 +122,43 @@ func TestAbandonedLeaseRejectsMixedRawAndPooledIdentity(t *testing.T) {
 		if _, err := NewMigrated(snapshot); err == nil {
 			t.Fatalf("accepted mixed abandonment identity: %+v", receipt)
 		}
+	}
+}
+
+func TestPooledAbandonmentRequiresLowercaseBaseCommit(t *testing.T) {
+	for _, uppercase := range []bool{false, true} {
+		t.Run(fmt.Sprint(uppercase), func(t *testing.T) {
+			input := launchForTest()
+			input.Worktree = ""
+			if uppercase {
+				input.BaseCommit = strings.ToUpper(input.BaseCommit)
+			}
+			task, err := taskForTransition(t).ReserveInitialLaunch(input)
+			if uppercase {
+				if err == nil {
+					t.Fatal("accepted uppercase pooled base before abandonment")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			task, err = task.BeginLaunchPreparation(input.Generation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			task, err = task.RequestLaunchLease(input.Generation, "holder")
+			if err != nil {
+				t.Fatal(err)
+			}
+			task, err = task.AbandonInitialLaunch(input.Generation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			receipt, found := task.LaunchAbandonment(input.Generation)
+			if !found || receipt.BaseCommit != input.BaseCommit {
+				t.Fatalf("abandonment lost base: %+v", receipt)
+			}
+		})
 	}
 }

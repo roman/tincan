@@ -232,12 +232,15 @@ func (task Task) AbandonInitialLaunch(generation string) (Task, error) {
 	}
 	snapshot := task.Snapshot()
 	project := ""
+	baseCommit := ""
 	if intent.LeaseHolder != "" || intent.Worktree == "" {
 		project = intent.Project
+		baseCommit = intent.BaseCommit
 	}
 	snapshot.AbandonedLaunches = append(
 		snapshot.AbandonedLaunches,
 		LaunchAbandonment{
+			BaseCommit:  baseCommit,
 			Generation:  generation,
 			Worktree:    intent.Worktree,
 			Branch:      intent.Branch,
@@ -297,7 +300,8 @@ func validLaunchIntent(selected record) bool {
 			return false
 		}
 	}
-	if len(intent.BaseCommit) != 40 && len(intent.BaseCommit) != 64 {
+	if (len(intent.BaseCommit) != 40 && len(intent.BaseCommit) != 64) ||
+		strings.ToLower(intent.BaseCommit) != intent.BaseCommit {
 		return false
 	}
 	if _, err := hex.DecodeString(intent.BaseCommit); err != nil {
@@ -379,6 +383,19 @@ func validLaunchAbandonments(selected record) bool {
 			!singleLine(receipt.Branch) ||
 			strings.HasPrefix(receipt.Branch, "-") {
 			return false
+		}
+		if receipt.BaseCommit != "" {
+			if (len(receipt.BaseCommit) != 40 && len(receipt.BaseCommit) != 64) ||
+				strings.ToLower(receipt.BaseCommit) != receipt.BaseCommit {
+				return false
+			}
+			if _, err := hex.DecodeString(receipt.BaseCommit); err != nil {
+				return false
+			}
+			if receipt.Lease != (WorktreeLease{}) &&
+				receipt.Lease.BaseCommit != receipt.BaseCommit {
+				return false
+			}
 		}
 		if !validWorktreeLease(receipt.Lease) || !optionalLine(receipt.LeaseHolder) {
 			return false

@@ -15,9 +15,13 @@ import (
 
 const resolveUsage = "concierge backlog resolve REPLY_ID [--mode close|retain] [--closed-on YYYY-MM-DD]"
 
-const backlogHelp = "global flags: --root, --help; commands: backlog add ID TITLE --kind KIND --repo REPO [--body-file FILE|-] [--blocked-by ID]; backlog list [--state queued|in_flight|held|done]; backlog show ID [--full]; backlog start|hold|release ID; backlog finish|cleanup ID --generation GEN; run concierge backlog COMMAND --help for arguments; " + resolveUsage
+const backlogHelp = "global flags: --root, --help; commands: backlog add ID TITLE --kind KIND --repo REPO [--body-file FILE|-] [--blocked-by ID]; backlog list [--state queued|in_flight|held|done]; backlog show ID [--full]; backlog start|hold|release ID; backlog finish|cleanup ID --generation GEN; backlog release-worktree ID --generation GEN; run concierge backlog COMMAND --help for arguments; " + resolveUsage
 
 type backlogCommands struct {
+	ReleaseWorktree struct {
+		TaskID     string `arg:"" help:"Task ID."`
+		Generation string `required:"" help:"Retired or abandoned generation whose lease to return."`
+	} `cmd:"" help:"Return a retired or abandoned worktree lease while preserving its branch."`
 	Resolve struct {
 		ReplyID  string `arg:"" help:"Bound reply message ID in the primary inbox."`
 		Mode     string `enum:"close,retain" default:"close" help:"Close the task or retain held work in the queue."`

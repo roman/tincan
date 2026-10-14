@@ -122,6 +122,7 @@ type Receipt struct {
 
 // LaunchAbandonment preserves retained resources across interrupted client calls.
 type LaunchAbandonment struct {
+	BaseCommit  string        `json:"base_commit,omitempty"`
 	Lease       WorktreeLease `json:"lease,omitzero"`
 	LeaseHolder string        `json:"lease_holder,omitempty"`
 	Project     string        `json:"project,omitempty"`

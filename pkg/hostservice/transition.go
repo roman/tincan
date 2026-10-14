@@ -13,13 +13,14 @@ import (
 )
 
 const (
-	Start   Operation = "start"
-	Finish  Operation = "finish"
-	Hold    Operation = "hold"
-	Release Operation = "release"
-	Cleanup Operation = "cleanup"
-	Cancel  Operation = "cancel"
-	Stop    Operation = "stop"
+	Start           Operation = "start"
+	Finish          Operation = "finish"
+	Hold            Operation = "hold"
+	Release         Operation = "release"
+	Cleanup         Operation = "cleanup"
+	ReleaseWorktree Operation = "release_worktree"
+	Cancel          Operation = "cancel"
+	Stop            Operation = "stop"
 )
 
 type TransitionRequest struct {
@@ -107,9 +108,9 @@ func validateRequest(request Request) error {
 		if input.Hold == nil || input.Generation != "" || input.Mode != "" || input.ClosedOn != "" {
 			return errors.New("hold requires only a task ID and hold")
 		}
-	case Cleanup, Stop, AbandonLaunch:
+	case Cleanup, Stop, AbandonLaunch, ReleaseWorktree:
 		if input.Generation == "" || input.Mode != "" || input.ClosedOn != "" || input.Hold != nil {
-			return errors.New("cleanup requires only a task ID and generation")
+			return errors.New("operation requires only a task ID and generation")
 		}
 		return firstmate.ValidateSpawnGeneration(input.Generation)
 	case Finish:
@@ -159,6 +160,8 @@ func (server *Server) execute(ctx context.Context, request Request) (taskstate.T
 		return server.service.ReleaseHold(ctx, input.TaskID)
 	case Cancel:
 		return server.service.CancelAdoption(ctx, input.TaskID)
+	case ReleaseWorktree:
+		return server.service.ReleaseWorktree(ctx, input.TaskID, input.Generation)
 	case Cleanup:
 		return server.service.Retire(
 			ctx,
@@ -197,6 +200,13 @@ func validateTransitionResponse(response Response, request Request) error {
 		repeated, err = task.ReleaseHold()
 	case Finish:
 		repeated, err = task.AcceptResult(input.Generation, input.Mode, input.ClosedOn)
+	case ReleaseWorktree:
+		lease, found := task.RetiredLease(input.Generation)
+		if !found || lease == (taskstate.WorktreeLease{}) ||
+			lease.State != taskstate.LeaseReturned {
+			return errors.New("host returned an unreleased worktree lease")
+		}
+		repeated, err = task.RecordLeaseReturned(input.Generation, lease)
 	case Cleanup:
 		repeated, err = task.RetireResult(input.Generation)
 	case Cancel:

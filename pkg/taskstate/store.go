@@ -213,6 +213,15 @@ func (store *Store) RecordLaunchEndpoint(
 func (store *Store) reserveWorkerResources(
 	ctx context.Context, taskID string, transition func(Task) (Task, error),
 ) (Task, error) {
+	return store.reserveCheckedResources(ctx, taskID, transition, checkWorkerIdentity)
+}
+
+func (store *Store) reserveCheckedResources(
+	ctx context.Context,
+	taskID string,
+	transition func(Task) (Task, error),
+	check func([]Task, Task) error,
+) (Task, error) {
 	id, err := parseStoreTaskID(taskID)
 	if err != nil {
 		return Task{}, err
@@ -229,7 +238,7 @@ func (store *Store) reserveWorkerResources(
 				if err != nil {
 					return Task{}, err
 				}
-				if err := checkWorkerIdentity(tasks, candidate); err != nil {
+				if err := check(tasks, candidate); err != nil {
 					return Task{}, err
 				}
 				return candidate, nil

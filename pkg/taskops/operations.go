@@ -25,6 +25,7 @@ type Service struct {
 	primaryRecipient inbox.Recipient
 	workerCommands   CommandPaths
 	pool             worktree.PoolClient
+	git              worktree.Client
 }
 
 // New prepares backlog operations for the selected task root.

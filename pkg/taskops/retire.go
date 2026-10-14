@@ -22,6 +22,12 @@ func (service *Service) Retire(
 			if snapshot.Completion == nil || snapshot.Completion.Generation != generation {
 				if task.HasReceipt(generation, taskstate.Close) ||
 					task.HasReceipt(generation, taskstate.Retain) {
+					if task.HasReceipt(generation, taskstate.Close) {
+						lease, _ := task.RetiredLease(generation)
+						if lease != (taskstate.WorktreeLease{}) {
+							return service.returnRetiredLease(ctx, task, generation)
+						}
+					}
 					return task, nil
 				}
 				return taskstate.Task{}, taskstate.ErrInvalidTransition
@@ -38,6 +44,10 @@ func (service *Service) Retire(
 				if err := client.ConfirmPaneGone(ctx, target); err != nil {
 					return taskstate.Task{}, err
 				}
+			}
+			if snapshot.Completion.Mode == taskstate.Close && snapshot.Worker != nil &&
+				snapshot.Worker.Lease != (taskstate.WorktreeLease{}) {
+				return service.returnRetiredLease(ctx, retired, generation)
 			}
 			return retired, nil
 		},

@@ -14,6 +14,7 @@ import (
 type WorkerTools struct {
 	Commands CommandPaths
 	Pool     worktree.PoolClient
+	Git      worktree.Client
 }
 
 func NewWithWorkerTools(
@@ -21,9 +22,11 @@ func NewWithWorkerTools(
 	recipient inbox.Recipient,
 	tools WorkerTools,
 ) (*Service, error) {
-	if tools.Pool.Executable != "" {
-		if _, err := firstmate.ParseAbsolutePath(tools.Pool.Executable); err != nil {
-			return nil, err
+	for _, executable := range []string{tools.Pool.Executable, tools.Git.Executable} {
+		if executable != "" {
+			if _, err := firstmate.ParseAbsolutePath(executable); err != nil {
+				return nil, err
+			}
 		}
 	}
 	service, err := NewWithWorkerCommands(root, recipient, tools.Commands)
@@ -31,6 +34,7 @@ func NewWithWorkerTools(
 		return nil, err
 	}
 	service.pool = tools.Pool
+	service.git = tools.Git
 	return service, nil
 }
 
