@@ -2,12 +2,15 @@ package worktree
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
+
+var ErrIdentity = errors.New("worktree identity conflict")
 
 type Client struct {
 	Executable string
@@ -130,7 +133,10 @@ func (client Client) Prepare(ctx context.Context, specification Specification) e
 	}
 	if registered == nil {
 		if _, err := os.Lstat(specification.Path); err == nil {
-			return fmt.Errorf("worktree path already exists without a matching registration")
+			return fmt.Errorf(
+				"%w: worktree path already exists without a matching registration",
+				ErrIdentity,
+			)
 		} else if !os.IsNotExist(err) {
 			return err
 		}
@@ -165,7 +171,10 @@ func (client Client) Prepare(ctx context.Context, specification Specification) e
 		return err
 	}
 	if strings.TrimSpace(head) != specification.BaseCommit {
-		return fmt.Errorf("initial worktree HEAD differs from the reserved base commit")
+		return fmt.Errorf(
+			"%w: initial worktree HEAD differs from the reserved base commit",
+			ErrIdentity,
+		)
 	}
 	index, err := client.git(ctx, specification.Path, "ls-files", "-v", "-z")
 	if err != nil {
@@ -174,7 +183,10 @@ func (client Client) Prepare(ctx context.Context, specification Specification) e
 	// Skip-worktree and assume-unchanged flags can hide missing or modified files from status.
 	for _, entry := range strings.Split(index, "\x00") {
 		if entry != "" && !strings.HasPrefix(entry, "H ") {
-			return fmt.Errorf("initial worktree index can hide tracked checkout differences")
+			return fmt.Errorf(
+				"%w: initial worktree index can hide tracked checkout differences",
+				ErrIdentity,
+			)
 		}
 	}
 	status, err := client.git(
@@ -189,7 +201,7 @@ func (client Client) Prepare(ctx context.Context, specification Specification) e
 		return err
 	}
 	if status != "" {
-		return fmt.Errorf("initial worktree checkout is incomplete or changed")
+		return fmt.Errorf("%w: initial worktree checkout is incomplete or changed", ErrIdentity)
 	}
 	return nil
 }
@@ -205,7 +217,10 @@ func (client Client) VerifyIdentity(ctx context.Context, specification Specifica
 	}
 	if registered == nil || registered.locked || registered.stale ||
 		registered.branch != "refs/heads/"+specification.Branch {
-		return fmt.Errorf("worktree registration does not match the reserved branch and path")
+		return fmt.Errorf(
+			"%w: worktree registration does not match the reserved branch and path",
+			ErrIdentity,
+		)
 	}
 	projectCommon, err := client.git(
 		ctx,
@@ -228,14 +243,14 @@ func (client Client) VerifyIdentity(ctx context.Context, specification Specifica
 		return err
 	}
 	if !samePath(strings.TrimSpace(projectCommon), strings.TrimSpace(workerCommon)) {
-		return fmt.Errorf("worktree belongs to a different repository")
+		return fmt.Errorf("%w: worktree belongs to a different repository", ErrIdentity)
 	}
 	branch, err := client.git(ctx, specification.Path, "symbolic-ref", "HEAD")
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(branch) != "refs/heads/"+specification.Branch {
-		return fmt.Errorf("worktree branch differs from the reserved branch")
+		return fmt.Errorf("%w: worktree branch differs from the reserved branch", ErrIdentity)
 	}
 	return nil
 }

@@ -85,12 +85,12 @@ func (server *Server) launch(ctx context.Context, input LaunchRequest) (Response
 	}
 	defer release()
 	response, err := server.executeInitialLaunch(ctx, input, operatorLaunch)
-	release()
 	if err != nil {
-		return Response{}, err
+		return server.trackedLaunchResult(ctx, input, err)
 	}
+	release()
 	if _, err := server.supervisionWithMode(ctx, Supervise, SupervisionRequest{TaskID: input.TaskID}, initialResidentStart); err != nil {
-		return Response{}, err
+		return server.launchRegistrationFailure(input, response, err)
 	}
 	return response, nil
 }

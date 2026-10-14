@@ -46,7 +46,7 @@ func launchArguments(root string) []string {
 }
 
 func TestLaunchPreservesRequestAndReportsHostOutcome(t *testing.T) {
-	for _, mode := range []string{"completed", "lost response", "already bound"} {
+	for _, mode := range []string{"completed", "pending", "blocked", "supervision stopped", "lost response", "already bound"} {
 		t.Run(mode, func(t *testing.T) {
 			root := shortTaskRoot(t)
 			listener, err := net.ListenUnix(
@@ -80,7 +80,7 @@ func TestLaunchPreservesRequestAndReportsHostOutcome(t *testing.T) {
 					Outcome: hostservice.Failed,
 					Error:   hostservice.ErrLaunchAlreadyBound.Error(),
 				}
-				if mode == "completed" {
+				if mode == "completed" || mode == "supervision stopped" {
 					response = hostservice.Response{
 						Outcome: hostservice.Completed,
 						Transition: &taskstate.Snapshot{
@@ -105,6 +105,51 @@ func TestLaunchPreservesRequestAndReportsHostOutcome(t *testing.T) {
 						},
 					}
 				}
+				if mode == "supervision stopped" {
+					response.Outcome = hostservice.Blocked
+					response.Error = "supervision registration stopped"
+				}
+				if mode == "pending" || mode == "blocked" {
+					input := request.Launch
+					task, err := taskstate.NewQueued(
+						taskstate.Definition{
+							ID:    input.TaskID,
+							Title: "Work",
+							Repo:  "repo",
+							Kind:  "task",
+						},
+					)
+					if err != nil {
+						done <- err
+						return
+					}
+					task, err = task.ReserveInitialLaunch(
+						taskstate.LaunchIntent{
+							Generation: "gen-1",
+							Name:       "worker",
+							Label:      "launch-one",
+							Harness:    input.Harness,
+							Session:    "work",
+							Project:    input.Project,
+							Worktree:   input.Worktree,
+							Branch:     input.Branch,
+							BaseCommit: input.BaseCommit,
+							Workspace:  input.Workspace,
+							AgentArgs:  input.AgentArgs,
+							Body:       input.Body,
+						},
+					)
+					if err != nil {
+						done <- err
+						return
+					}
+					snapshot := task.Snapshot()
+					response = hostservice.Response{
+						Outcome:    hostservice.Outcome(mode),
+						Error:      "native startup awaits inspection",
+						Transition: &snapshot,
+					}
+				}
 				done <- json.NewEncoder(connection).Encode(response)
 			}()
 			body := " \nDo the requested work.\n "
@@ -116,6 +161,18 @@ func TestLaunchPreservesRequestAndReportsHostOutcome(t *testing.T) {
 				if code != 0 || !strings.Contains(output.String(), "generation: \"gen-1\"") ||
 					!strings.Contains(output.String(), "pane: \"w1:p1\"") {
 					t.Fatalf("launch code %d: %s", code, &output)
+				}
+			} else if mode == "supervision stopped" {
+				if code != 1 || !strings.Contains(output.String(), "tracking: stopped") || !strings.Contains(output.String(), "phase: supervision_stopped") || !strings.Contains(output.String(), "concierge supervise task") {
+					t.Fatalf("stopped supervision code %d: %s", code, &output)
+				}
+			} else if mode == "pending" || mode == "blocked" {
+				wantCode := 0
+				if mode == "blocked" {
+					wantCode = 1
+				}
+				if code != wantCode || !strings.Contains(output.String(), "launch: "+mode) || !strings.Contains(output.String(), "concierge worker show") || !strings.Contains(output.String(), "tracking: automatic") {
+					t.Fatalf("tracked launch code %d: %s", code, &output)
 				}
 			} else if code != 1 || !strings.Contains(output.String(), "inspect") {
 				t.Fatalf("failed launch code %d: %s", code, &output)

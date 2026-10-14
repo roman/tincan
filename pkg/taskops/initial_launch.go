@@ -13,6 +13,8 @@ import (
 	"github.com/roman/tincan/pkg/worktree"
 )
 
+var ErrInitialLaunchIdentity = errors.New("initial launch identity conflict")
+
 type InitialLaunchConfig struct {
 	Git         worktree.Client
 	Herdr       herdr.Client
@@ -91,11 +93,14 @@ func (service *Service) ContinueInitialLaunch(
 	}
 	if agent.PaneID != intent.Endpoint.Pane || agent.Kind != intent.Harness {
 		return taskstate.Task{}, fmt.Errorf(
-			"initial agent differs from reserved endpoint or harness",
+			"%w: initial agent differs from reserved endpoint or harness", ErrInitialLaunchIdentity,
 		)
 	}
 	resume, err := nativeResumeArguments(intent.Harness, agent.Session)
 	if err != nil {
+		if agent.Session != nil {
+			return taskstate.Task{}, fmt.Errorf("%w: %w", ErrInitialLaunchIdentity, err)
+		}
 		return taskstate.Task{}, err
 	}
 	if err := config.Git.VerifyIdentity(ctx, launchWorktree(intent)); err != nil {
@@ -225,7 +230,7 @@ func (service *Service) prepareInitialPane(
 		return nil
 	}
 	if err := verifyWorktree(intent.Worktree, details.ForegroundDirectory); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrInitialLaunchIdentity, err)
 	}
 	endpoint := taskstate.LaunchEndpoint{
 		Workspace: details.WorkspaceID, Tab: details.TabID, Pane: details.PaneID,
@@ -250,10 +255,13 @@ func (service *Service) prepareInitialAgent(
 		return err
 	}
 	if details.WorkspaceID != intent.Endpoint.Workspace || details.TabID != intent.Endpoint.Tab {
-		return fmt.Errorf("initial launch pane moved from the recorded location")
+		return fmt.Errorf(
+			"%w: initial launch pane moved from the recorded location",
+			ErrInitialLaunchIdentity,
+		)
 	}
 	if err := verifyWorktree(intent.Worktree, details.ForegroundDirectory); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrInitialLaunchIdentity, err)
 	}
 	if intent.Phase == taskstate.LaunchAgentRequested {
 		return nil

@@ -45,6 +45,10 @@ func (command *launchCommand) run(
 			Workspace: command.Workspace, AgentArgs: command.AgentArgs, Body: body,
 		},
 	})
+	if err == nil &&
+		(response.Outcome == hostservice.Pending || response.Outcome == hostservice.Blocked) {
+		return writeLaunchProgress(output, command.TaskID, response)
+	}
 	if err == nil && response.Outcome != hostservice.Completed {
 		err = errors.New(response.Error)
 	}
@@ -71,6 +75,42 @@ func (command *launchCommand) run(
 		quote(worker.Pane),
 	)
 	if err != nil {
+		return 1
+	}
+	return 0
+}
+
+func writeLaunchProgress(output io.Writer, taskID string, response hostservice.Response) int {
+	snapshot := response.Transition
+	phase := "awaiting_supervision"
+	tracking := "automatic"
+	if snapshot.LaunchIntent == nil && response.Outcome == hostservice.Blocked {
+		phase = "supervision_stopped"
+		tracking = "stopped"
+	}
+	generation := ""
+	if snapshot.Worker != nil {
+		generation = snapshot.Worker.Generation
+	}
+	if intent := snapshot.LaunchIntent; intent != nil {
+		phase = string(intent.Phase)
+		generation = intent.Generation
+	}
+	if _, err := fmt.Fprintf(output, "task: %s\nlaunch: %s\ntracking: %s\ngeneration: %s\nphase: %s\nreason: %s\nhelp: %s\n",
+		quote(taskID), response.Outcome, tracking, quote(generation), phase, quote(response.Error), quote("inspect completion with concierge worker show "+quote(taskID))); err != nil {
+		return 1
+	}
+	if response.Outcome == hostservice.Blocked {
+		if snapshot.LaunchIntent == nil {
+			if _, err := fmt.Fprintf(output, "recovery: %s\n", quote("inspect the worker, then request supervision with concierge supervise task "+quote(taskID))); err != nil {
+				return 1
+			}
+		}
+		if snapshot.LaunchIntent != nil && snapshot.Worker == nil {
+			if _, err := fmt.Fprintf(output, "recovery: %s\n", quote("inspect the native checkpoint and launch resources; safe abandonment requires concierge task abandon "+quote(taskID)+" --generation "+quote(generation))); err != nil {
+				return 1
+			}
+		}
 		return 1
 	}
 	return 0

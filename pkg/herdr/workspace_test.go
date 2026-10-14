@@ -30,3 +30,19 @@ func TestValidateWorkspaceRequiresMatchingID(t *testing.T) {
 		})
 	}
 }
+
+func TestMissingWorkspaceRetainsTypedError(t *testing.T) {
+	response := runResponse{
+		err: errors.New("exit status 1"),
+		stderr: []byte(
+			`{"error":{"code":"workspace_not_found","message":"workspace review-rcl not found"}}`,
+		),
+	}
+	err := (Client{Runner: &fakeRunner{responses: []runResponse{response}}}).ValidateWorkspace(
+		context.Background(),
+		"review-rcl",
+	)
+	if !errors.Is(err, ErrWorkspaceNotFound) || !errors.Is(err, ErrCommand) {
+		t.Fatalf("lost typed workspace error: %v", err)
+	}
+}

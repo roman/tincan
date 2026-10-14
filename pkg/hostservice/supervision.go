@@ -169,16 +169,12 @@ func (server *Server) supervisionWithMode(
 			return server.preparePaneController(ctx, *input.Pane)
 		}
 	}
-	specification, _ := json.Marshal(struct {
-		TaskID string
-		Pane   *PaneSupervision
-		Config supervise.Config
-	}{input.TaskID, input.Pane, server.config.Supervision})
+	specification := supervisionSpecification(input, server.config.Supervision)
 	start := server.controllers.start
 	if mode == initialResidentStart {
 		start = server.controllers.startInitialResident
 	}
-	if _, err := start(ctx, key, endpoint, string(specification), prepare); err != nil {
+	if _, err := start(ctx, key, endpoint, specification, prepare); err != nil {
 		return Response{}, err
 	}
 	return Response{Supervision: &result}, nil
@@ -334,4 +330,13 @@ func validateSupervisionResponse(response Response, request Request) error {
 		return errors.New("host returned an unapplied supervision result")
 	}
 	return nil
+}
+
+func supervisionSpecification(input SupervisionRequest, config supervise.Config) string {
+	specification, _ := json.Marshal(struct {
+		TaskID string
+		Pane   *PaneSupervision
+		Config supervise.Config
+	}{input.TaskID, input.Pane, config})
+	return string(specification)
 }

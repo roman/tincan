@@ -39,10 +39,11 @@ type Agent struct {
 }
 
 var (
-	ErrNotFound     = errors.New("herdr agent not found")
-	ErrCommand      = errors.New("herdr command failed")
-	ErrResponse     = errors.New("invalid herdr response")
-	ErrAgentPresent = errors.New("herdr agent already present")
+	ErrWorkspaceNotFound = errors.New("herdr workspace not found")
+	ErrNotFound          = errors.New("herdr agent not found")
+	ErrCommand           = errors.New("herdr command failed")
+	ErrResponse          = errors.New("invalid herdr response")
+	ErrAgentPresent      = errors.New("herdr agent already present")
 )
 
 // Runner executes the Herdr binary. Its arguments exclude the executable name.
@@ -138,6 +139,14 @@ func (c Client) run(ctx context.Context, args ...string) ([]byte, error) {
 		var response responseEnvelope
 		if json.Unmarshal(output, &response) != nil || response.Error.Code == "" {
 			continue
+		}
+		if response.Error.Code == "workspace_not_found" {
+			return nil, fmt.Errorf(
+				"%w: %w: %s",
+				ErrCommand,
+				ErrWorkspaceNotFound,
+				response.Error.Message,
+			)
 		}
 		if response.Error.Code == "agent_not_found" {
 			return nil, fmt.Errorf("%w: %s", ErrNotFound, response.Error.Message)

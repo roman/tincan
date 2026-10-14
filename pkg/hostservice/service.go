@@ -47,6 +47,8 @@ type Request struct {
 type Outcome string
 
 const (
+	Pending      Outcome = "pending"
+	Blocked      Outcome = "blocked"
 	Completed    Outcome = "completed"
 	Unauthorized Outcome = "unauthorized"
 	Invalid      Outcome = "invalid"
@@ -265,10 +267,13 @@ func (server *Server) handle(ctx context.Context, connection *net.UnixConn) {
 		return
 	}
 	response, err := server.perform(ctx, request)
-	response.Outcome = Completed
+	if response.Outcome == "" {
+		response.Outcome = Completed
+	}
 	if err != nil {
 		response.Outcome, response.Error = Failed, err.Error()
-		if errors.Is(err, taskstate.ErrPublicationUnconfirmed) {
+		if errors.Is(err, taskstate.ErrPublicationUnconfirmed) ||
+			errors.Is(err, ErrOutcomeUnknown) {
 			response.Outcome = Uncertain
 		}
 	}
@@ -317,6 +322,13 @@ func Call(ctx context.Context, socket string, request Request) (Response, error)
 }
 
 func validateResponse(response Response, request Request) error {
+	if response.Outcome == Pending || response.Outcome == Blocked {
+		if err := validateRequest(request); err != nil {
+			return err
+		}
+		return validateLaunchProgress(response, request)
+	}
+
 	if response.Abandoned != nil &&
 		(request.Operation != AbandonLaunch || response.Outcome != Completed) {
 		return errors.New("host returned unrelated abandonment data")

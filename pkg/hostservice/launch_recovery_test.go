@@ -77,8 +77,9 @@ esac
 	if strings.Count(string(data), "find\n") != 2 {
 		t.Fatal("periodic recovery undid pending launch stop")
 	}
-	if _, err := server.launch(ctx, input); err == nil {
-		t.Fatal("missing uncertain pane reported launch success")
+	if response, err := server.launch(ctx, input); err != nil || response.Outcome != Blocked ||
+		response.Transition == nil {
+		t.Fatalf("missing uncertain pane should report blocked tracking: %+v, %v", response, err)
 	}
 	data, _ = os.ReadFile(finds)
 	if strings.Count(string(data), "find\n") != 3 {
@@ -101,8 +102,14 @@ func TestUncertainLaunchReservationRemainsTrackedForRecovery(t *testing.T) {
 		return task, taskstate.ErrPublicationUnconfirmed
 	}
 	ctx := context.Background()
-	if _, err := server.launch(ctx, input); !errors.Is(err, taskstate.ErrPublicationUnconfirmed) {
-		t.Fatalf("uncertain reservation: %v", err)
+	if response, err := server.launch(ctx, input); err != nil || response.Outcome != Pending ||
+		response.Transition == nil ||
+		!strings.Contains(response.Error, taskstate.ErrPublicationUnconfirmed.Error()) {
+		t.Fatalf(
+			"uncertain reservation should report pending reconciliation: %+v, %v",
+			response,
+			err,
+		)
 	}
 	before, err := server.store.Read(ctx, input.TaskID)
 	if err != nil {

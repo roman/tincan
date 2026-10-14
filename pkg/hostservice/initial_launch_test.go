@@ -83,8 +83,9 @@ func TestHostLaunchFailurePreservesIntentAndReleasesReservation(t *testing.T) {
 	server.config.GitExecutable = git
 	ctx := context.Background()
 	response, err := server.perform(ctx, Request{Operation: Launch, Launch: &input})
-	if err == nil || response.Transition != nil {
-		t.Fatalf("failed launch response: %+v, %v", response, err)
+	if err != nil || response.Outcome != Outcome("pending") || response.Transition == nil ||
+		response.Error == "" {
+		t.Fatalf("tracked launch should remain pending: %+v, %v", response, err)
 	}
 	task, err := server.store.Read(ctx, input.TaskID)
 	if err != nil {
