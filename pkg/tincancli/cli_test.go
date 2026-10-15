@@ -154,7 +154,7 @@ func TestMergedInboxHelpAndVersionAvoidRootDiscovery(t *testing.T) {
 			stderr.Len() != 0 {
 			t.Fatalf("%v code%d stdout%s stderr%s", args, code, &stdout, &stderr)
 		}
-		if len(args) == 1 && args[0] != "--help" && stdout.String() != "0.1.0\n" {
+		if len(args) == 1 && args[0] != "--help" && stdout.String() != version+"\n" {
 			t.Fatalf("version=%q", stdout.String())
 		}
 	}

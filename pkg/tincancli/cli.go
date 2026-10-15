@@ -11,7 +11,8 @@ import (
 	"github.com/alecthomas/kong"
 )
 
-const version = "0.1.0"
+// Release builds set version from VERSION through the Go linker.
+var version = "dev"
 
 type cli struct {
 	Root   string         `help:"Directory that stores mailboxes; defaults to .tincan in the current directory." env:"TINCAN_HOME"`
