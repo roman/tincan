@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// SessionRunner executes commands with an explicit session and no inherited
+// Herdr socket, workspace, tab, or pane selection.
 type SessionRunner interface {
 	RunSession(context.Context, string, ...string) ([]byte, []byte, error)
 }
@@ -19,6 +21,7 @@ func (runner boundSessionRunner) Run(ctx context.Context, args ...string) ([]byt
 	return runner.runner.RunSession(ctx, runner.session, args...)
 }
 
+// ForSession returns a copy bound to a session. The original client is unchanged.
 func (client Client) ForSession(session string) (Client, error) {
 	if session == "" ||
 		strings.Trim(
