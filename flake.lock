@@ -74,11 +74,11 @@
         "systems": "systems"
       },
       "locked": {
-        "lastModified": 1788151218,
-        "narHash": "sha256-n1NxJO/GRgZ4PsTAiCzHMmJ7bm/qXnUvpKgpTbqbrHI=",
+        "lastModified": 1792036694,
+        "narHash": "sha256-st34n0fouGs7Q42cQRaDwsY6Cqo/NDxGa+JMKIYB+wY=",
         "owner": "roman",
         "repo": "devshell-modules",
-        "rev": "80a5da03e15a2d2c9b43abf08bd8a9d18442429e",
+        "rev": "320157389046a0f96712018fc57ae30be0200e40",
         "type": "github"
       },
       "original": {
