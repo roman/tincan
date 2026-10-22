@@ -10,5 +10,7 @@ done
 "$tincan/bin/tincan" --root "$TMPDIR/messages" inbox send smoke --body 'Packaged message' > sent
 "$grep" -q '^id: ' sent
 "$tincan/bin/tincan" --root "$TMPDIR/messages" inbox list smoke > pending
-"$grep" -q '^count: 1$' pending
+"$grep" -q '^total: 1$' pending
+"$tincan/bin/tincan" --root "$TMPDIR/messages" inbox list smoke --full > full
+"$grep" -q '^count: 1$' full
 "$tincan/bin/tincan" notify --help >/dev/null

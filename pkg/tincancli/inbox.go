@@ -22,6 +22,7 @@ type InboxCommands struct {
 	} `cmd:"" help:"Store a message for a recipient."`
 	List struct {
 		Recipient string `arg:"" help:"Recipient identifier."`
+		Full      bool   `help:"Include full keys and creation times using the legacy list format."`
 	} `cmd:"" help:"List pending messages."`
 	Wait struct {
 		Recipient string        `arg:"" help:"Recipient identifier."`
@@ -126,6 +127,10 @@ func runInbox(
 		messages, err := store.List(recipient)
 		if err != nil {
 			return err
+		}
+		if !command.List.Full {
+			writeCompactList(stdout, store.Root(), recipient, messages)
+			return nil
 		}
 		fmt.Fprintf(stdout, "count: %d\n", len(messages))
 		if len(messages) > 0 {

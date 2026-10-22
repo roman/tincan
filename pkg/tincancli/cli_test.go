@@ -49,7 +49,7 @@ func TestInboxLifecycleAndOutput(t *testing.T) {
 		t.Fatalf("send=%q", sent)
 	}
 	timestamp := message.CreatedAt.Format("2006-01-02T15:04:05.999999999Z07:00")
-	if got, want := invoke("", "list", "worker"), fmt.Sprintf("count: 1\nmessages[1]{id,key,created_at}:\n  %s,\"retry,1\",%s\n", message.ID, timestamp); got != want {
+	if got, want := invoke("", "list", "worker", "--full"), fmt.Sprintf("count: 1\nmessages[1]{id,key,created_at}:\n  %s,\"retry,1\",%s\n", message.ID, timestamp); got != want {
 		t.Fatalf("list=%q want%q", got, want)
 	}
 	if got, want := invoke("", "read", "worker", message.ID.String()), fmt.Sprintf("id: %s\nrecipient: worker\nkey: \"retry,1\"\nbody: \"first\\nsecond, \\\"quoted\\\"\"\ncreated_at: %s\n", message.ID, timestamp); got != want {
@@ -60,13 +60,13 @@ func TestInboxLifecycleAndOutput(t *testing.T) {
 			t.Fatalf("ack=%q", got)
 		}
 	}
-	if got := invoke("", "list", "worker"); got != "count: 0\n" {
+	if got := invoke("", "list", "worker", "--full"); got != "count: 0\n" {
 		t.Fatalf("empty=%q", got)
 	}
 	if got := invoke("first\nsecond, \"quoted\"", "send", "worker", "--key", "retry,1", "--body-file", "-"); got != sent {
 		t.Fatalf("retry=%q", got)
 	}
-	if got := invoke("", "list", "worker"); got != "count: 0\n" {
+	if got := invoke("", "list", "worker", "--full"); got != "count: 0\n" {
 		t.Fatalf("handled retry=%q", got)
 	}
 }

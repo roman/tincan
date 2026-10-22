@@ -24,6 +24,23 @@ in the current directory. Use `--body-file FILE` for a file body, or
 message. Reusing a key with a different body fails. Acknowledgement moves a
 handled message out of the pending inbox.
 
+`inbox list` returns all pending messages in creation order. Each row contains
+the full message ID and a short `type`: the key prefix before the first colon,
+limited to 32 Unicode characters plus an ellipsis. Keys without a nonempty
+prefix use `message`. This label is a display hint supplied by the sender.
+Applications must still validate message bodies and generations before acting.
+Tincan does not interpret application routing keys or message bodies.
+
+The list reports `total`, `returned`, and `truncated`. It currently returns all
+pending messages, so `returned` equals `total` and `truncated` is `false`.
+The detail hints preserve the selected root and recipient.
+
+Use `tincan inbox list worker-1 --full` for the previous `count` and
+`id,key,created_at` output, including complete keys and creation times.
+`tincan inbox read worker-1 MESSAGE_ID` also returns the complete key and body.
+Consumers of the previous CLI list schema must add `--full`. The Go inbox API
+is unchanged.
+
 ## Notifications
 
 ```sh
